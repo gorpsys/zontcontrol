@@ -86,6 +86,8 @@ class RequestRecord:
     nonce: str
     lease_seconds: float
     state: str
+    grant_id: str | None = None
+    grant_revision: int | None = None
 
     def __post_init__(self):
         for value in (self.owner, self.request_id, self.nonce):
@@ -93,6 +95,12 @@ class RequestRecord:
         _positive(self.lease_seconds)
         if self.state not in ("request", "heartbeat", "finished"):
             raise RecordError()
+        if self.state == "request":
+            if self.grant_id is not None or self.grant_revision is not None:
+                raise RecordError()
+        else:
+            _uuid(self.grant_id)
+            _counter(self.grant_revision)
 
 
 @dataclass(frozen=True)

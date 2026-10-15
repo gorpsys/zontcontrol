@@ -77,6 +77,10 @@ class CodecTests(unittest.TestCase):
                  (leader, {"clock_rho": .005}), (leader, {"clock_rho": True}),
                  (request, {"nonce": ""}), (request, {"request_id": "no"}),
                  (request, {"lease_seconds": float("nan")}),
+                 (request, {"state": "finished"}),
+                 (request, {"state": "heartbeat", "grant_id": NONCE}),
+                 (request, {"grant_id": NONCE, "grant_revision": 0}),
+                 (request, {"state": "finished", "grant_id": NONCE, "grant_revision": True}),
                  (request, {"state": "cancelled"}), (grant, {"grant_id": "bad"}),
                  (grant, {"revision": -1}), (grant, {"leader_token": "z" * 32}),
                  (grant, {"lease_s": 0}), (grant, {"clock_rho": .01})]
@@ -91,7 +95,8 @@ class CodecTests(unittest.TestCase):
                 item = grant(lease_s=period * (1 + rho) / (1 - rho), clock_rho=rho)
                 self.assertEqual(decode_r2(encode_r2(PREFIX, item), PREFIX), item)
         for state in ("request", "heartbeat", "finished"):
-            self.assertEqual(decode_r1(encode_r1(R1Record(request=request(state=state)))).request.state,
+            changes = {} if state == "request" else {"grant_id": NONCE, "grant_revision": 0}
+            self.assertEqual(decode_r1(encode_r1(R1Record(request=request(state=state, **changes)))).request.state,
                              state)
 
     def test_nested_wire_fields_are_strict_and_do_not_accept_absolute_deadlines(self):

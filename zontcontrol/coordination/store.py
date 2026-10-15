@@ -9,7 +9,7 @@ each R2 write. The store itself does not elect or authorize a leader.
 """
 
 from ..controller.contracts import CommandOutcomeUnknown, ControllerError
-from .models import RecordError, decode_r1, decode_r2, encode_r1, encode_r2
+from .models import R1Record, RecordError, decode_r1, decode_r2, encode_r1, encode_r2
 
 
 class RecordCapacityError(RecordError):
@@ -58,6 +58,11 @@ class ExecutorStore:
 
     def write_r1(self, record):
         self._write("notes", encode_r1(record))
+
+    def publish_request(self, request):
+        """Preserve the observed header; this bounded RMW is still not CAS."""
+        record = self.read_r1()
+        self.write_r1(R1Record(record.leader, request))
 
 
 class LeaderStore(ExecutorStore):

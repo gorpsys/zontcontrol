@@ -1,6 +1,6 @@
 # Приведение zontcontrol к согласованной архитектуре
 
-Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–6.
+Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–7.
 Подход: **TDD**, по явному выбору владельца. Облако и деплой исключены.
 План создаётся по skill plan-writer и всем решениям последовательного ревью.
 Техническое обновление после сверки autorepeater/master от 15.10.2026:
@@ -421,15 +421,26 @@ Gate I/O, HTTP и чтения не держат общую блокировку
 **Files:**
 - Create: `zontcontrol/coordination/grants.py`, `tests/test_executor_grants.py`.
 - Modify: `zontcontrol/controller/ownership.py`, `zontcontrol/coordination/models.py`, `zontcontrol/coordination/store.py`.
+- Modify: `tests/test_coordination_store.py` (привязка heartbeat/finished к grant).
 
-- [ ] RED: request → grant → heartbeat/renew → finished → release, неверные owner/request/grant/leader_token и несколько независимых приложений.
-- [ ] GREEN: исполнители публикуют/повторяют запрос R1; лидер один пишет R2 после свежей проверки собственной роли, не заменяет действующий grant.
-- [ ] Реализовать nonce-подтверждения, выбор rho по исходному lease_seconds, lease_s=K*lease_seconds с clock_rho и локальный deadline=nonce_send+lease_s/K, уникальный grant_id/revision; повторное чтение не продлевает аренду. Часы разных машин напрямую не сравнивать.
-- [ ] Новый лидер учитывает существующий R2; отсутствие heartbeat не отзывает lease немедленно. Исполнитель сверяет current leader token; finish относится к конкретному request/grant.
-- [ ] Подключить gate к ownership: сессия только после подтверждённого grant, Busy без скрытой очереди, явный повтор pending-запроса; после обязательных проверок now < deadline разрешает команду без дополнительного d_op, now >= deadline запрещает до отправки.
-- [ ] RED/GREEN для границ 60/300/600 с и значений по обе стороны, противоположных погрешностей всех четырёх ступеней, сохранения clock_rho при переходе lease_s через границу и независимого запаса короткого Delta; ожидания неизменного R2 в течение lease_s от первого ответа до последнего чтения, позднего ack nonce, renewal и повторного чтения; проверить приём прямо до/на/после deadline, завершение принятой команды после deadline и отказ off при истёкшем grant.
-- [ ] RED/GREEN для потерянного request/finished, старого ack, restart UUID, смены лидера во время работы, неизвестного renewal и ошибки off при потерянном доступе без bypass.
-- [ ] REFACTOR и `make check PYTHON=python3`; не обещать безусловную безопасность принятой межклиентской схемы.
+- [x] RED: request → grant → heartbeat/renew → finished → release, неверные owner/request/grant/leader_token и несколько независимых приложений.
+- [x] GREEN: исполнители публикуют/повторяют запрос R1; лидер один пишет R2 после свежей проверки собственной роли, не заменяет действующий grant.
+- [x] Реализовать nonce-подтверждения, выбор rho по исходному lease_seconds, lease_s=K*lease_seconds с clock_rho и локальный deadline=nonce_send+lease_s/K, уникальный grant_id/revision; повторное чтение не продлевает аренду. Часы разных машин напрямую не сравнивать.
+- [x] Новый лидер учитывает существующий R2; отсутствие heartbeat не отзывает lease немедленно. Исполнитель сверяет current leader token; finish относится к конкретному request/grant.
+- [x] Подключить gate к ownership: сессия только после подтверждённого grant, Busy без скрытой очереди, явный повтор pending-запроса; после обязательных проверок now < deadline разрешает команду без дополнительного d_op, now >= deadline запрещает до отправки.
+- [x] RED/GREEN для границ 60/300/600 с и значений по обе стороны, противоположных погрешностей всех четырёх ступеней, сохранения clock_rho при переходе lease_s через границу и независимого запаса короткого Delta; ожидания неизменного R2 в течение lease_s от первого ответа до последнего чтения, позднего ack nonce, renewal и повторного чтения; проверить приём прямо до/на/после deadline, завершение принятой команды после deadline и отказ off при истёкшем grant.
+- [x] RED/GREEN для потерянного request/finished, старого ack, restart UUID, смены лидера во время работы, неизвестного renewal и ошибки off при потерянном доступе без bypass.
+- [x] REFACTOR и `make check PYTHON=python3`; не обещать безусловную безопасность принятой межклиентской схемы.
+
+Факт этапа 7: `ExecutorGate(stores, clock=..., delta=...)` реализует gate
+исполнителя; `GrantCoordinator(store, leader, clock=..., window=...)`.step()
+выполняет один опрос/переход под полным окном LeaderElection.coordinate.
+Внутренний `gate.renew(owner, session, lease_seconds=...)` подтверждает новый
+nonce и возвращает новую immutable ControlSession; прежняя становится недействительной.
+Heartbeat/finished ссылаются на grant_id и grant_revision. Повтор обычного
+try_acquire не продлевает сессию. Повтор release после неизвестной записи
+явный: свежие R2/R1 подтверждают прежний grant/finished; чужой grant не трогается.
+Сбор статистики и композиция runtime остаются следующими этапами.
 
 ### 8. Добавить статистику и воспроизводимые сценарии риска
 

@@ -41,6 +41,7 @@ class _Ownership:
     session: ControlSession | None = None
     in_flight: int = 0
     closing: bool = False
+    releasing: bool = False
 
 
 class CommandExecutor:
@@ -63,14 +64,14 @@ class CommandExecutor:
     def bind(self):
         return _ControlBinding(self)
 
-    def _match(self, binding, session, device_id):
+    def _match(self, binding, session, device_id, *, allow_closing=False):
         if not isinstance(session, ControlSession) or session.device_id != device_id:
             raise ControlOwnershipRequired()
         held = self._devices.get(device_id)
         # DTO equality does not confer ownership. Only the issued object and
         # its DI-bound consumer identify this local acquisition.
         if (held is None or held.binding is not binding or held.session is not session
-                or held.closing):
+                or held.closing and not allow_closing):
             raise ControlOwnershipRequired()
         return held
 
@@ -109,14 +110,23 @@ class CommandExecutor:
     def _release_remote(self, held):
         # Keep the closing reservation while completion is being published.
         # An unconfirmed release leaves it held, rather than risking an overtake.
-        self._gate.release(held.binding._owner, held.session)
+        with self._lock:
+            if held.releasing:
+                return
+            held.releasing = True
+        try:
+            self._gate.release(held.binding._owner, held.session)
+        except BaseException:
+            with self._lock:
+                held.releasing = False
+            raise
         with self._lock:
             del self._devices[held.session.device_id]
 
     def _release(self, binding, session):
         with self._lock:
             device_id = session.device_id if isinstance(session, ControlSession) else None
-            held = self._match(binding, session, device_id)
+            held = self._match(binding, session, device_id, allow_closing=True)
             held.closing = True
             release_now = held.in_flight == 0
         if release_now:
