@@ -1,0 +1,16 @@
+{
+  "devices": [42],
+  "controls": [
+    {"device_id": 42, "kind": "circuit", "element_id": 20496, "actions": ["target-temp"]},
+    {"device_id": 42, "kind": "toggle_buttons", "element_id": 8832, "actions": ["trigger"]}
+  ],
+  "graphs": [
+    {"graph_id": "air", "title": "Air: measured and target", "series": [
+      {"key": {"device_id": 42, "kind": "sensor", "element_id": 8207, "field": "value"}},
+      {"key": {"device_id": 42, "kind": "circuit", "element_id": 20496, "field": "target_temp"}}
+    ]}
+  ],
+  "lease_seconds": 60,
+  "output_directory": "charts",
+  "display_timezone": "Europe/Moscow"
+}

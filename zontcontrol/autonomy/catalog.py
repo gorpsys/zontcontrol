@@ -6,6 +6,7 @@ neither loads module configuration nor constructs any controller or algorithm.
 
 from .contracts import AlgorithmSpec, Mode
 from ..algorithms.boiler_reset import BoilerReset, MINIMUM_SECONDS
+from ..algorithms.boiler_cli import BoilerCLI
 
 
 BUILTIN_SPECS = (AlgorithmSpec(
@@ -13,7 +14,12 @@ BUILTIN_SPECS = (AlgorithmSpec(
     frozenset({Mode.ONCE, Mode.CONTINUOUS}), BoilerReset,
     frozenset({'describe_values', 'read_history', 'list_devices', 'read_current',
                'prepare_command', 'try_acquire_control', 'execute_command', 'release_control'}),
-    MINIMUM_SECONDS),)
+    MINIMUM_SECONDS), AlgorithmSpec(
+    'boiler_cli', 'Persistent interactive readings, explicit commands and SVG history',
+    frozenset({Mode.CONTINUOUS}), BoilerCLI,
+    frozenset({'list_devices', 'describe_values', 'read_current', 'read_history',
+               'list_controls', 'prepare_command', 'try_acquire_control',
+               'release_control', 'execute_command'})),)
 
 
 class AlgorithmCatalog:
