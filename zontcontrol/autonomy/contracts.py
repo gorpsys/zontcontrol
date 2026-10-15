@@ -125,6 +125,13 @@ Algorithm: TypeAlias = OnceAlgorithm | ContinuousAlgorithm
 
 
 class AlgorithmFactory(Protocol):
+    """Config validation/construction only; execution belongs to run methods.
+
+    Registration probes and discards an instance. Every launch constructs a
+    fresh instance with its own consumer binding in the runtime worker.
+    Constructors must not start background work or send control commands.
+    """
+
     def __call__(self, controller: Controller) -> Algorithm: ...
 
 
@@ -157,6 +164,16 @@ class AlgorithmSpec:
         missing = self.required_capabilities - available_capabilities
         if missing:
             raise ValueError('Missing controller capabilities: ' + ', '.join(sorted(missing)))
+
+
+@dataclass(frozen=True)
+class AlgorithmRegistration:
+    """Snapshot of one catalog entry; disabled entries exist only in the report."""
+
+    spec: AlgorithmSpec
+    state: AlgorithmState | None
+    error: Exception | None = None
+    disabled: bool = False
 
 
 def validate_catalog(catalog, config) -> tuple[AlgorithmSpec, ...]:

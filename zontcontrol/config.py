@@ -108,6 +108,16 @@ class RegistryConfig:
     autostart_dual_mode: bool
     once_timeouts: Mapping[str, OnceTimeout]
 
+    def __post_init__(self):
+        if (not isinstance(self.disabled_modules, frozenset)
+                or not all(valid_id(item) for item in self.disabled_modules)
+                or type(self.autostart_dual_mode) is not bool
+                or not isinstance(self.once_timeouts, Mapping)
+                or not all(valid_id(key) and isinstance(pair, OnceTimeout)
+                           for key, pair in self.once_timeouts.items())):
+            raise ValueError('Invalid registrar settings')
+        object.__setattr__(self, 'once_timeouts', MappingProxyType(dict(self.once_timeouts)))
+
     def timeout_for(self, spec) -> OnceTimeout | None:
         if Mode.ONCE not in spec.modes:
             return None
