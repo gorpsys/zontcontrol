@@ -16,17 +16,28 @@ from ..controller.contracts import (
 )
 from .clock import BootClock, _duration, clock_factor, clock_rho
 from .models import GrantRecord, RecordError, RequestRecord
+from .statistics import error_event, observe
 
 
 class GrantCoordinator:
     """One leader's grant polling; independent of algorithm ownership/lifecycle."""
 
-    def __init__(self, store, leader, *, clock=None, window=None):
+    def __init__(self, store, leader, *, clock=None, window=None, statistics=None):
         self._store = store
         self._leader = leader
         self._clock = clock if clock is not None else BootClock()
         self.window = _duration(leader.timing.delta if window is None else window, positive=True)
         self._observation = None
+        self._statistics = statistics
+        self._changed_grant = None
+
+    def _observe(self, event, grant=None, **fields):
+        context = {'device_id': self._store.device_id}
+        if grant is not None:
+            context.update(episode_id=grant.request_id, request_id=grant.request_id,
+                           run_id=grant.owner, grant_id=grant.grant_id,
+                           revision=grant.revision, leader_term=grant.leader_token)
+        observe(self._statistics, event, **{**context, **fields})
 
     @staticmethod
     def _matches(request, grant):
@@ -45,6 +56,12 @@ class GrantCoordinator:
             sent = self._clock.now()
             current = self._store.read_r2()
             received = self._clock.now()
+            self._observe('poll')
+            if current is not None and current.leader_token != record.leader.token:
+                identity = current.grant_id, current.revision, record.leader.token
+                if identity != self._changed_grant:
+                    self._observe('leader_changed_active_grant', current)
+                    self._changed_grant = identity
             expired = False
             if current is None:
                 self._observation = None
@@ -79,6 +96,10 @@ class GrantCoordinator:
             if desired != current:
                 self._store.write_r2(desired)
                 self._observation = None
+                self._observe('cleanup' if desired is None else
+                              'heartbeat' if current is not None and
+                              desired.grant_id == current.grant_id else 'grant',
+                              current if desired is None else desired, outcome='success')
             return desired
 
         return self._leader.coordinate(coordinate, self.window)
@@ -97,6 +118,7 @@ class _Held:
     session: ControlSession
     finished: bool = False
     renewal: _Pending | None = None
+    observed_finished: bool = False
 
 
 class ExecutorGate:
@@ -108,13 +130,23 @@ class ExecutorGate:
     Ordinary reacquisition returns the original session without extending it.
     """
 
-    def __init__(self, stores, *, clock=None, delta):
+    def __init__(self, stores, *, clock=None, delta, statistics=None):
         self._stores = dict(stores)
         self._clock = clock if clock is not None else BootClock()
         self._delta = _duration(delta, positive=True)
         self._locks = {device: RLock() for device in self._stores}
         self._pending = {}
         self._held = {}
+        self._statistics = statistics
+
+    def _observe(self, event, store, request=None, **fields):
+        context = {'device_id': store.device_id}
+        if request is not None:
+            context.update(episode_id=request.request_id, request_id=request.request_id,
+                           run_id=request.owner)
+            if request.grant_id is not None:
+                context['grant_id'] = request.grant_id
+        observe(self._statistics, event, **{**context, **fields})
 
     def _device(self, device_id):
         if type(device_id) is not int or device_id not in self._stores:
@@ -132,9 +164,16 @@ class ExecutorGate:
 
     def _read(self, store):
         start = self._clock.now()
-        grant = store.read_r2()
-        record = store.read_r1()
+        try:
+            grant = store.read_r2()
+            record = store.read_r1()
+        except (ControllerError, RecordError) as error:
+            self._observe(error_event(error), store, outcome='unknown')
+            raise
+        self._observe('rtt', store, rtt_s=self._clock.now() - start)
         if self._clock.now() - start > self._delta:
+            self._observe('delta_breach', store, elapsed_s=self._clock.now() - start,
+                          delta_s=self._delta)
             raise ControlOwnershipRequired()
         return grant, record.leader
 
@@ -165,15 +204,25 @@ class ExecutorGate:
             store.publish_request(pending.request)
         except CommandOutcomeUnknown:
             pending.uncertain = True
+            self._observe('timeout', store, pending.request, outcome='unknown')
             raise
+        except (ControllerError, RecordError) as error:
+            self._observe(error_event(error), store, pending.request, outcome='failure')
+            raise
+        self._observe('rtt', store, pending.request, rtt_s=self._clock.now() - start)
         if self._clock.now() - start > self._delta:
             pending.uncertain = True
+            self._observe('delta_breach', store, pending.request,
+                          elapsed_s=self._clock.now() - start, delta_s=self._delta)
+            self._observe('timeout', store, pending.request, outcome='unknown')
             raise CommandOutcomeUnknown()
+        self._observe(pending.request.state, store, pending.request, outcome='success')
 
     def try_acquire(self, owner, device_id, *, lease_seconds):
         self._arguments(owner, lease_seconds)
         store, lock = self._device(device_id)
         with lock:
+            self._observe('attempt', store)
             key = owner, device_id
             held = self._held.get(key)
             if held is not None and not held.finished:
@@ -185,6 +234,7 @@ class ExecutorGate:
                 pending = _Pending(RequestRecord(str(owner), str(uuid4()), str(uuid4()),
                                                  lease_seconds, "request"), self._clock.now())
                 self._pending[key] = pending
+                self._observe('episode_started', store, pending.request)
                 self._publish(store, pending)
             else:
                 ack = self._ack(store, pending)
@@ -193,10 +243,15 @@ class ExecutorGate:
                     session = ControlSession(device_id, uuid4(), deadline)
                     self._held[key] = _Held(grant, session)
                     del self._pending[key]
+                    self._observe('grant_ack', store, pending.request,
+                                  grant_id=grant.grant_id, leader_term=grant.leader_token,
+                                  revision=grant.revision, wait_s=self._clock.now() - pending.sent)
                     return session
                 # Lost requests are repeated explicitly, with the original nonce
                 # timestamp. An unknown send is only polled, never blindly resent.
                 if not pending.uncertain and store.read_r1().request != pending.request:
+                    self._observe('request_lost', store, pending.request)
+                    self._observe('request_repeated', store, pending.request)
                     self._publish(store, pending)
             raise DeviceControlBusy()
 
@@ -248,6 +303,8 @@ class ExecutorGate:
                     held.renewal = None
                     return held.session
                 if not pending.uncertain and store.read_r1().request != pending.request:
+                    self._observe('request_lost', store, pending.request)
+                    self._observe('request_repeated', store, pending.request)
                     self._publish(store, pending)
             raise DeviceControlBusy()
 
@@ -276,5 +333,12 @@ class ExecutorGate:
             if self._clock.now() - start > self._delta:
                 raise ControlOwnershipRequired()
             if current != grant or record.request == request:
-                return
-            self._publish(store, _Pending(request, self._clock.now()))
+                pass
+            else:
+                self._publish(store, _Pending(request, self._clock.now()))
+            if not held.observed_finished:
+                held.observed_finished = True
+                # Metadata release cannot prove actual command exclusivity or
+                # cleanup. Only an independent resource observer can complete it.
+                self._observe('episode_finished', store, request,
+                              outcome='unknown', coverage='partial')

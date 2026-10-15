@@ -5,7 +5,7 @@ read/modify/write races remain possible, just as in the assumed ZONT resource.
 """
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from threading import RLock
 
 from zontcontrol.controller.contracts import (
@@ -22,6 +22,15 @@ class SentRequest:
     sent_at: float
 
 
+@dataclass(frozen=True)
+class ControlInterval:
+    command_id: int
+    device_id: int
+    owner: str
+    started_at: float
+    finished_at: float | None = None
+
+
 class FakeZontServer:
     def __init__(self, devices, *, clock=None):
         self.clock = clock or FakeClock()
@@ -30,6 +39,40 @@ class FakeZontServer:
         self._requests = []
         self._lock = RLock()
         self.fail_before_send = False
+        self._control_intervals = []
+
+    def begin_control(self, device_id, owner):
+        """Independent resource oracle: record actual effects, not permissions."""
+        with self._lock:
+            if device_id not in self._devices:
+                raise DeviceUnavailable()
+            command = ControlInterval(len(self._control_intervals) + 1, device_id,
+                                      owner, self.clock.now())
+            self._control_intervals.append(command)
+            return command
+
+    def finish_control(self, command):
+        with self._lock:
+            current = self._control_intervals[command.command_id - 1]
+            if current is not command or command.finished_at is not None:
+                raise AssertionError('oracle command already finished or not owned')
+            self._control_intervals[command.command_id - 1] = replace(
+                command, finished_at=self.clock.now())
+
+    @property
+    def control_conflicts(self):
+        """Actual overlapping intervals on the same device, independent of R1/R2."""
+        with self._lock:
+            now = self.clock.now()
+            result = []
+            for index, first in enumerate(self._control_intervals):
+                for second in self._control_intervals[index + 1:]:
+                    end_first = now if first.finished_at is None else first.finished_at
+                    end_second = now if second.finished_at is None else second.finished_at
+                    if (first.device_id == second.device_id and first.owner != second.owner
+                            and max(first.started_at, second.started_at) < min(end_first, end_second)):
+                        result.append((first, second))
+            return tuple(result)
 
     @property
     def requests(self):
@@ -97,6 +140,7 @@ class FakeMetadataAdapter:
         self.fail_confirmation = False
         self.read_delay = 0
         self.write_delay = 0
+        self.write_error = None
         self._confirmation_pending = False
 
     def read_metadata_field(self, device_id, field):
@@ -112,6 +156,9 @@ class FakeMetadataAdapter:
         normalized = self.normalize.get(field, lambda raw: raw)(value)
         request = self.server.send_update(device_id, {field: normalized})
         self.server.clock.advance(self.write_delay)
+        if self.write_error is not None:
+            self.server.reject(request, self.write_error)
+            self.server.respond(request)
         if self.write_mode == "defer":
             self.server.respond(request, lose_response=True)
         self.server.apply(request)

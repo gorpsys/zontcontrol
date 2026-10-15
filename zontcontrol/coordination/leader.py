@@ -13,6 +13,7 @@ from threading import Event, RLock
 from ..controller.contracts import ControllerError
 from .clock import BootClock, _duration
 from .models import LeaderRecord, R1Record, RecordError, _uuid
+from .statistics import error_event, observe
 
 
 class LeaseLost(Exception):
@@ -28,7 +29,7 @@ class LeaderElection:
     The store remains internal to coordination, unavailable to algorithms.
     """
 
-    def __init__(self, store, owner, timing, *, clock=None, token_factory=None):
+    def __init__(self, store, owner, timing, *, clock=None, token_factory=None, statistics=None):
         _uuid(owner)
         self._store = store
         self._owner = owner
@@ -42,8 +43,16 @@ class LeaderElection:
         self.expires_at = None
         self.term_expires_at = None
         self._observation = None
+        self._statistics = statistics
+
+    def _observe(self, event, **fields):
+        context = {'device_id': self._store.device_id, 'run_id': self._owner}
+        if self.record is not None:
+            context['leader_term'] = self.record.token
+        observe(self._statistics, event, **context, **fields)
 
     def _lose(self):
+        self._observe('leader_lost', outcome='unknown')
         self._active = False
         self.role_cancelled.set()
         self._observation = None
@@ -75,10 +84,13 @@ class LeaderElection:
         sent = self._clock.now()
         try:
             record = self._store.read_r1()
-        except (ControllerError, RecordError):
+        except (ControllerError, RecordError) as error:
+            self._observe(error_event(error), outcome='unknown')
             self._lose()
         received = self._clock.now()
+        self._observe('rtt', rtt_s=received - sent)
         if received - sent > self.timing.delta:
+            self._observe('delta_breach', elapsed_s=received - sent, delta_s=self.timing.delta)
             self._lose()
         return record, sent, received
 
@@ -90,6 +102,7 @@ class LeaderElection:
         write abandons this attempt; it never writes FREE as compensation.
         """
         with self._lock:
+            self._observe('leader_attempt')
             if self._active:
                 self._require(0)
                 return True
@@ -112,10 +125,12 @@ class LeaderElection:
             self.expires_at = min(sent + self.timing.valid_for, self.term_expires_at)
             try:
                 self._store.write_r1(R1Record(own, observed.request))
-            except (ControllerError, RecordError):
+            except (ControllerError, RecordError) as error:
+                self._observe(error_event(error), outcome='unknown')
                 self._lose()
             ack = self._clock.now()
             if ack - read_send > self.timing.delta:
+                self._observe('delta_breach', elapsed_s=ack - read_send, delta_s=self.timing.delta)
                 self._lose()
             if self._clock.wait(self.role_cancelled, self.timing.barrier):
                 self._lose()
@@ -129,6 +144,7 @@ class LeaderElection:
                 self._lose()
             self._active = True
             self._observation = None
+            self._observe('leader_acquired', wait_s=self._clock.now() - sent)
             return True
 
     def _confirm(self, duration):
@@ -160,9 +176,11 @@ class LeaderElection:
                 self._lose()
             try:
                 result = operation(record)
-            except (ControllerError, RecordError):
+            except (ControllerError, RecordError) as error:
+                self._observe(error_event(error), outcome='unknown')
                 self._lose()
             if self._clock.now() - start > duration:
+                self._observe('delta_breach', elapsed_s=self._clock.now() - start, delta_s=duration)
                 self._lose()
             self._require(0)
             return result
@@ -181,6 +199,7 @@ class LeaderElection:
             self.coordinate(write, self.timing.delta)
             self.record = renewed
             self.expires_at = min(sent + self.timing.valid_for, self.term_expires_at)
+            self._observe('leader_renewed')
 
     def release(self):
         """Release after caller has settled grants and service in-flight work.
@@ -198,7 +217,11 @@ class LeaderElection:
             self._observation = None
             try:
                 self._store.write_r1(R1Record(request=record.request))
-            except (ControllerError, RecordError):
+            except (ControllerError, RecordError) as error:
+                self._observe(error_event(error), outcome='unknown')
                 self._lose()
             if self._clock.now() - start > self.timing.delta:
+                self._observe('delta_breach', elapsed_s=self._clock.now() - start,
+                              delta_s=self.timing.delta)
                 self._lose()
+            self._observe('leader_released')
