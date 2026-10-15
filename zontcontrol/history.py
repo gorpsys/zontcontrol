@@ -6,9 +6,6 @@ from datetime import datetime, timedelta, timezone
 from .controller.contracts import HistoryPoint, InvalidArguments, Quality, ValueType
 
 
-CIRCUIT_FIELDS = ("target_temp", "setpoint_temp", "mode_id", "status", "worktime", "target_sensor_id")
-
-
 def history_period(start: datetime, end: datetime, *, preserve_precision: bool = False
                    ) -> tuple[datetime, datetime]:
     for value in (start, end):
@@ -77,52 +74,6 @@ def _object_id(key: str) -> int:
     if not isinstance(key, str) or not key.isascii() or not key.isdecimal() or int(key) <= 0:
         raise ValueError("invalid history object ID in API response")
     return int(key)
-
-
-def normalize_device_history(device: dict, response: dict, start: datetime, end: datetime,
-                             circuit_id: int | None) -> dict:
-    truncated = response.get("time_truncated", False)
-    if type(truncated) is not bool:
-        raise ValueError("invalid history truncation flag in API response")
-    sensor_data = response.get("z3k_temperature", {})
-    circuit_data = response.get("z3k_heating_circuit", {})
-    if not isinstance(sensor_data, dict) or not isinstance(circuit_data, dict):
-        raise ValueError("invalid temperature or circuit history in API response")
-    sensor_names = {sensor["id"]: sensor["name"] for sensor in device["sensors"]}
-    circuit_names = {circuit["id"]: circuit["name"] for circuit in device["circuits"]}
-    sensors = []
-    for key, rows in sensor_data.items():
-        object_id = _object_id(key)
-        sensors.append({"id": object_id, "name": sensor_names.get(object_id), "unit": "°C",
-                        "points": decode_delta_array(rows, start, end)})
-    circuits = []
-    for key, fields in circuit_data.items():
-        object_id = _object_id(key)
-        if circuit_id is not None and object_id != circuit_id:
-            continue
-        if not isinstance(fields, dict):
-            raise ValueError("invalid circuit history fields in API response")
-        series = {
-            field: decode_delta_array(fields.get(field, []), start, end,
-                                      integer=field not in ("target_temp", "setpoint_temp"))
-            for field in CIRCUIT_FIELDS
-        }
-        circuits.append({"id": object_id, "name": circuit_names.get(object_id), "series": series})
-    web_data = response.get("z3k_web_element", {})
-    if not isinstance(web_data, dict):
-        raise ValueError("invalid web element history in API response")
-    web_elements = []
-    for key, fields in web_data.items():
-        if not isinstance(fields, dict):
-            raise ValueError("invalid web element history fields in API response")
-        web_elements.append({"id": _object_id(key), "series": {
-            "state": decode_delta_array(fields.get("state", []), start, end),
-        }})
-    return {
-        **{key: device[key] for key in ("id", "name", "model")},
-        "time_truncated": truncated, "temperature_sensors": sensors,
-        "circuits": circuits, "modes": device["modes"], "web_elements": web_elements,
-    }
 
 
 def project_history(response, descriptor, start, end, *, received_at):

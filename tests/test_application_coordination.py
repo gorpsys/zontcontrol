@@ -2,10 +2,12 @@
 
 from copy import deepcopy
 from dataclasses import replace
+import io
 import json
 from queue import Queue
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 import unittest
+from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
 
 from tests.test_application import settings
@@ -13,6 +15,7 @@ from tests.test_inventory import inventory_device
 from zontcontrol.application import create_application
 from zontcontrol.autonomy.contracts import AlgorithmSpec, Mode
 from zontcontrol.controller.contracts import ControlKey, ControlOwnershipRequired, DeviceControlBusy
+from zontcontrol.controller.transport import HttpTransport
 from zontcontrol.coordination.models import RecordError, decode_r1, decode_r2, encode_r1, original_name
 
 
@@ -136,6 +139,86 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertTrue(self.transport.closed)
         self.assertTrue(any(row['event'] == 'grant_ack' for row in self.observations))
         self.assertNotIn('fake-secret', repr(self.observations))
+        command_rows = [row for row in self.observations if row['event'] == 'command']
+        self.assertEqual(len(command_rows), 1)
+        self.assertEqual(command_rows[0]['grant_id'], grant.grant_id)
+        self.assertEqual(command_rows[0]['episode_id'], grant.request_id)
+
+    def test_shutdown_interrupts_fischer_barrier_without_waiting_for_leader_lock(self):
+        with self.assertRaises(DeviceControlBusy):
+            self.owner.try_acquire_control(42, lease_seconds=10)
+        resume, seconds = self.clock.waits.get(timeout=1)
+        done = Event()
+        thread = Thread(target=lambda: (self.app.close(), done.set()))
+        def cleanup():
+            with self.clock.lock:
+                self.clock.time += seconds + 1e-8
+            resume.set()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+        self.addCleanup(cleanup)
+        thread.start()
+        self.assertTrue(done.wait(1), 'close must cancel the barrier immediately')
+        self.assertTrue(self.transport.closed)
+
+    def test_shutdown_rejects_initialization_that_finishes_after_close(self):
+        entered, resume = Event(), Event()
+        errors = []
+        adapter = self.app._controller._adapter
+        read_metadata = adapter.read_metadata
+        def blocked(device_id):
+            entered.set()
+            resume.wait()
+            return read_metadata(device_id)
+        def acquire():
+            try:
+                self.owner.try_acquire_control(42, lease_seconds=10)
+            except Exception as error:
+                errors.append(error)
+        thread = Thread(target=acquire)
+        def cleanup():
+            resume.set()
+            thread.join(2)
+            for _, worker in tuple(self.app._coordination._devices.values()):
+                worker.cancelled.set()
+                worker.leader.stop()
+            self.app._coordination.close()
+            self.assertFalse(thread.is_alive())
+        self.addCleanup(cleanup)
+        with patch.object(adapter, 'read_metadata', side_effect=blocked):
+            thread.start()
+            self.assertTrue(entered.wait(1))
+            self.assertTrue(self.app.close())
+            resume.set()
+            thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], ControlOwnershipRequired)
+        self.assertEqual(self.app._coordination._devices, {})
+
+    def test_deep_metadata_response_does_not_kill_coordinator_worker(self):
+        self.acquire()
+        opener = Mock()
+        def response(request, **kwargs):
+            return io.BytesIO(json.dumps(self.transport.request(request)).encode())
+        opener.open.side_effect = response
+        adapter = self.app._controller._adapter
+        adapter._transport = HttpTransport(opener=opener)
+        malformed = b'{"ok":true,"nested":' + b'[' * 20000 + b']' * 20000 + b'}'
+        def fail_once(request, **kwargs):
+            opener.open.side_effect = response
+            return io.BytesIO(malformed)
+        opener.open.side_effect = fail_once
+        self.clock.advance_wait()
+        scheduled = self.clock.waits.get(timeout=1)
+        self.clock.waits.put(scheduled)
+        worker = self.app._coordination._devices[42][1]
+        self.assertTrue(worker.thread.is_alive())
+        self.assertTrue(any(row['event'] == 'error' for row in self.observations))
+        self.clock.advance_wait()
+        scheduled = self.clock.waits.get(timeout=1)
+        self.clock.waits.put(scheduled)
+        self.assertTrue(worker.thread.is_alive())
 
     def test_changed_leader_rejects_new_send_but_does_not_release_local_owner(self):
         session = self.acquire()

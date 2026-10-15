@@ -7,14 +7,16 @@ Gate I/O and command HTTP never hold the account-wide state lock.
 """
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 from typing import Protocol
 from uuid import UUID, uuid4
 
 from .contracts import (
-    ControlOwnershipRequired, ControlSession, DeviceControlBusy, InvalidArguments,
+    CommandOutcomeUnknown, ControlOwnershipRequired, ControlSession, DeviceControlBusy,
+    InvalidArguments, ValidatedCommand,
 )
+from ..coordination.statistics import error_event, observe
 
 
 class CoordinationGate(Protocol):
@@ -42,6 +44,9 @@ class _Ownership:
     in_flight: int = 0
     closing: bool = False
     releasing: bool = False
+    context: dict = field(default_factory=dict)
+    outcome: str = 'success'
+    cleanup_observed: bool = False
 
 
 class CommandExecutor:
@@ -51,15 +56,33 @@ class CommandExecutor:
     lifecycle cancellation nor a registrar deadline is an admission input.
     Expired local ownership remains held until explicit release; it cannot
     authorize commands, including cleanup, or extend the remote grant.
+    A failed release reservation may be discarded only after local expiry and
+    completion of all in-flight work; no metadata write is retried for this.
     """
 
-    def __init__(self, *, gate: CoordinationGate, clock):
+    def __init__(self, *, gate: CoordinationGate, clock, statistics=None):
         if gate is None or not callable(clock):
             raise InvalidArguments()
         self._gate = gate
         self._clock = clock
         self._lock = Lock()
         self._devices = {}
+        self._statistics = statistics
+
+    def _observe(self, held, event, **fields):
+        try:
+            observe(self._statistics, event, device_id=held.session.device_id,
+                    **held.context, **fields)
+        except Exception:
+            pass
+
+    def _command_observation(self, held, command, outcome):
+        self._observe(held, 'command', phase='command', outcome=outcome)
+        if (isinstance(command, ValidatedCommand)
+                and command.control_key.kind == 'toggle_buttons' and command.action == 'trigger'
+                and dict(command.arguments).get('target_state') is False):
+            self._observe(held, 'cleanup', phase='command', outcome=outcome,
+                          coverage='partial')
 
     def bind(self):
         return _ControlBinding(self)
@@ -87,6 +110,11 @@ class CommandExecutor:
             raise InvalidArguments()
         with self._lock:
             held = self._devices.get(device_id)
+            if (held is not None and held.closing and not held.releasing
+                    and held.in_flight == 0 and held.session is not None
+                    and self._clock() >= held.session.expires_at):
+                del self._devices[device_id]
+                held = None
             if held is not None:
                 if held.binding is binding and held.session is not None and not held.closing:
                     return held.session
@@ -101,6 +129,13 @@ class CommandExecutor:
                 raise ControlOwnershipRequired()
             with self._lock:
                 held.session = session
+            # Instrumentation is optional and must not affect ownership.
+            try:
+                context = getattr(self._gate, 'observation_context', None)
+                if context is not None:
+                    held.context = context(binding._owner, session)
+            except Exception:
+                pass
             return session
         except BaseException:
             with self._lock:
@@ -111,9 +146,18 @@ class CommandExecutor:
         # Keep the closing reservation while completion is being published.
         # An unconfirmed release leaves it held, rather than risking an overtake.
         with self._lock:
+            if self._devices.get(held.session.device_id) is not held:
+                # Another acquisition already discarded this expired, idle
+                # closing reservation. Never publish/delete for its successor.
+                return
             if held.releasing:
                 return
             held.releasing = True
+            report_cleanup = not held.cleanup_observed
+            held.cleanup_observed = True
+        if report_cleanup:
+            self._observe(held, 'cleanup', phase='session', outcome=held.outcome,
+                          coverage='partial')
         try:
             self._gate.release(held.binding._owner, held.session)
         except BaseException:
@@ -135,12 +179,12 @@ class CommandExecutor:
     def _execute(self, binding, command, session, validate, send):
         with self._lock:
             held = self._match(binding, session, command.device_id)
-            if not self._clock() < session.expires_at:
-                raise ControlOwnershipRequired()
             # Reserve validation as well as accepted HTTP so release can never
             # hand the device to a new owner while this call is being admitted.
             held.in_flight += 1
         try:
+            if not self._clock() < session.expires_at:
+                raise ControlOwnershipRequired()
             prepared = validate()
             self._gate.validate(binding._owner, session)
             with self._lock:
@@ -148,7 +192,17 @@ class CommandExecutor:
                 if not self._clock() < session.expires_at:
                     raise ControlOwnershipRequired()
                 # Accepted here. No subsequent expiry/stop/deadline recheck.
-            return send(prepared)
+            result = send(prepared)
+            self._command_observation(held, command, 'success')
+            return result
+        except BaseException as error:
+            outcome = 'unknown' if isinstance(error, CommandOutcomeUnknown) else 'failure'
+            with self._lock:
+                if held.outcome != 'unknown':
+                    held.outcome = outcome
+            self._command_observation(held, command, outcome)
+            self._observe(held, error_event(error), phase='command', outcome=outcome)
+            raise
         finally:
             with self._lock:
                 held.in_flight -= 1

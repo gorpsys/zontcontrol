@@ -20,11 +20,12 @@ from zontcontrol.config import ConfigurationError, OnceTimeout, RegistryConfig
 from zontcontrol.controller.contracts import (
     CommandOutcomeUnknown, ControlKey, ControlOwnershipRequired, ControlSession,
     DeviceControlBusy, DeviceInfo, DeviceUnavailable, HistoryPoint, HistoryResult,
-    HistorySeries, Quality, SeriesKind, Snapshot, ValidatedCommand, ValueDescriptor,
+    HistorySeries, Quality, RateLimited, SeriesKind, Snapshot, ValidatedCommand, ValueDescriptor,
     ValueKey, ValueReading, ValueType,
 )
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 from zontcontrol.controller.ownership import CommandExecutor
+from zontcontrol.coordination.statistics import Statistics
 from zontcontrol.monitor import assess_history
 from tests.fakes.clock import FakeClock
 from tests.test_monitor import packet
@@ -350,6 +351,54 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(sends, [True, False])
         self.assertEqual(len(gate.releases), 1)
         self.assertEqual(gate.sessions, {})
+
+    def test_new_reset_binding_after_unknown_release_waits_for_expiry(self):
+        gate = LocalTestGate(self.clock)
+        executor = CommandExecutor(gate=gate, clock=self.clock.now)
+        gate.release = Mock(side_effect=[CommandOutcomeUnknown(), None])
+        sends = []
+        def bind():
+            binding = executor.bind()
+            self.controller.try_acquire_control.side_effect = binding.try_acquire_control
+            self.controller.release_control.side_effect = binding.release_control
+            self.controller.execute_command.side_effect = lambda command, session: binding.execute(
+                command, session, lambda: command,
+                lambda command: sends.append(dict(command.arguments)['target_state']))
+            return binding
+        bind()
+        with self.assertRaises(CommandOutcomeUnknown):
+            self.module().run_once(self.context)
+        replacement = bind()
+        with self.assertRaises(DeviceControlBusy):
+            replacement.try_acquire_control(42, lease_seconds=140)
+        self.assertEqual(gate.release.call_count, 1)
+        self.clock.advance(140)
+        self.module().run_once(self.context)
+        self.assertEqual(sends, [True, False, True, False])
+        self.assertEqual(gate.release.call_count, 2)
+
+    def test_finally_off_failure_is_observed_and_never_retried(self):
+        gate = LocalTestGate(self.clock)
+        rows = []
+        executor = CommandExecutor(gate=gate, clock=self.clock.now,
+            statistics=Statistics(rows.append, protocol_version='1', profile='offline'))
+        binding = executor.bind()
+        self.controller.try_acquire_control.side_effect = binding.try_acquire_control
+        self.controller.release_control.side_effect = binding.release_control
+        sends = []
+        def send(command):
+            sends.append(dict(command.arguments)['target_state'])
+            if sends[-1] is False:
+                raise RateLimited()
+        self.controller.execute_command.side_effect = lambda command, session: binding.execute(
+            command, session, lambda: command, send)
+        with self.assertRaises(RateLimited):
+            self.module().run_once(self.context)
+        self.assertEqual(sends, [True, False])
+        self.assertEqual(len(gate.releases), 1)
+        cleanup = [row for row in rows if row['event'] == 'cleanup' and row['phase'] == 'command']
+        self.assertEqual(len(cleanup), 1)
+        self.assertEqual(cleanup[0]['outcome'], 'failure')
 
     def test_continuous_pause_starts_after_off_without_ownership_or_once_deadline(self):
         calls = []

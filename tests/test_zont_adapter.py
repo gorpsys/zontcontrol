@@ -85,6 +85,16 @@ class ZontAdapterTests(unittest.TestCase):
         self.assertEqual(state["notes"], "new")
         self.opener.open.assert_called_once()
 
+    def test_deep_response_after_write_is_unknown_and_read_is_typed(self):
+        raw = b'{"ok":true,"nested":' + b'[' * 20000 + b']' * 20000 + b'}'
+        self.opener.open.return_value = io.BytesIO(raw)
+        with self.assertRaises(CommandOutcomeUnknown):
+            self.adapter.send_command(prepare_command('set-switch', 42, 31, target_state=False))
+        self.opener.open.assert_called_once()
+        self.opener.open.return_value = io.BytesIO(raw)
+        with self.assertRaises(InvalidArguments):
+            self.adapter.read_metadata(42)
+
     def test_read_and_write_failures_map_by_outcome_not_error_text(self):
         cases = [(HTTPError("secret", 401, "secret", {}, None), AuthenticationError),
                  (HTTPError("secret", 403, "secret", {}, None), AuthenticationError),

@@ -76,7 +76,7 @@ class _DeviceCoordinator:
             while not self.cancelled.is_set():
                 try:
                     if not self.leader.can_coordinate(self.coordinator.window):
-                        if not self.leader.try_acquire():
+                        if not self.leader.try_acquire(cancelled=self.cancelled):
                             self.clock.wait(self.cancelled, self.leader.timing.poll_after)
                             continue
                         renewed_at = self.clock.now()
@@ -104,8 +104,6 @@ class _DeviceCoordinator:
 
     def close(self):
         self.cancelled.set()
-        if not self.leader.can_coordinate(0):
-            self.leader.stop()  # interrupts an unfinished Fischer barrier
         self.thread.join()
 
 
@@ -149,9 +147,15 @@ class _CoordinationRuntime:
                                              self.clock, self.statistics)
                 gate = ExecutorGate({device_id: executor_store}, clock=self.clock,
                                     delta=self.config.delta_seconds, statistics=self.statistics)
-                self._devices[device_id] = (gate, worker)
-                worker.thread.start()
-            return self._devices[device_id][0]
+                with self._lock:
+                    if self._closed:
+                        raise ControlOwnershipRequired()
+                    self._devices[device_id] = (gate, worker)
+                    worker.thread.start()
+            with self._lock:
+                if self._closed:
+                    raise ControlOwnershipRequired()
+                return self._devices[device_id][0]
 
     def try_acquire(self, owner, device_id, *, lease_seconds):
         return self._device(device_id).try_acquire(owner, device_id, lease_seconds=lease_seconds)
@@ -162,14 +166,15 @@ class _CoordinationRuntime:
     def release(self, owner, session):
         return self._device(session.device_id).release(owner, session)
 
+    def observation_context(self, owner, session):
+        return self._device(session.device_id).observation_context(owner, session)
+
     def close(self):
         with self._lock:
             self._closed = True
             workers = tuple(worker for _, worker in self._devices.values())
         for worker in workers:
             worker.cancelled.set()
-            if not worker.leader.can_coordinate(0):
-                worker.leader.stop()
         for worker in workers:
             worker.close()
 
@@ -262,7 +267,7 @@ def create_application(*, environ=None, reader=read_json, catalog=BUILTIN_SPECS,
             _close_transport(transport)
         raise
     coordination = _CoordinationRuntime(adapter, config.coordination, clock, statistics)
-    executor = CommandExecutor(gate=coordination, clock=clock.now)
+    executor = CommandExecutor(gate=coordination, clock=clock.now, statistics=statistics)
     controller = ControllerService(adapter, executor=executor)
 
     def close_resources():

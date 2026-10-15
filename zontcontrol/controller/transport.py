@@ -96,7 +96,7 @@ class HttpTransport:
             raise TransportError(FailureKind.INVALID_RESPONSE)
         try:
             data = json.loads(raw)
-        except (ValueError, UnicodeError):
+        except (ValueError, UnicodeError, RecursionError):
             raise TransportError(FailureKind.INVALID_RESPONSE) from None
         if not isinstance(data, dict) or type(data.get("ok")) is not bool:
             raise TransportError(FailureKind.INVALID_RESPONSE)

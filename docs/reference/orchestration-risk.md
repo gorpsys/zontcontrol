@@ -93,7 +93,8 @@ statistics.profile маркирует профиль. Для независим�
 Обязательные поля каждой строки: schema=1, event, protocol_version, profile,
 source (runtime, simulation или counterexample). Допустимые дополнительные
 поля: device_id, episode_id, run_id, request_id, grant_id, leader_term,
-revision; wait_s, rtt_s, delta_s, elapsed_s; outcome и coverage.
+revision; wait_s, rtt_s, delta_s, elapsed_s; outcome, coverage и phase
+(command, session или metadata).
 outcome: success, unknown, conflict, failure, busy;
 coverage: complete, partial, none. Строка ограничена 4096 символами, текстовые
 метки и поля проходят allowlist; credentials и произвольные тела API не пишутся.
@@ -103,6 +104,15 @@ request_repeated/request_lost, grant/grant_ack, heartbeat/finished,
 leader_attempt, leader_acquired, leader_renewed, leader_lost, leader_released,
 leader_changed_active_grant,
 delta_breach, rtt, rate_limited, timeout, error, cleanup, conflict, command.
+CommandExecutor записывает исход каждой команды собственной сессии,
+включая отказ допуска, явную ошибку API и неизвестный исход без повтора.
+Для выключения toggle_buttons дополнительно пишет cleanup с phase=command:
+это включает off из finally, но само по себе не определяет назначение
+переключателя. При release после всех in-flight пишет cleanup с phase=session
+и итогом команд сессии (unknown сохраняется даже после успешного off).
+GrantCoordinator пишет cleanup с phase=metadata для удаления R2.
+Эти события содержат идентификаторы исходных request/grant и срока лидера;
+их coverage остаётся partial, физическое восстановление не подтверждается.
 Отдельное событие или poll не объявляется успешно защищённым эпизодом.
 Ошибки sink изолируются от исполнения команд и finally; они означают
 потерянное покрытие наблюдений, а не повод повторить управление.

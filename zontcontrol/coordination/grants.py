@@ -15,7 +15,7 @@ from ..controller.contracts import (
     ControlSession, DeviceControlBusy, InvalidArguments,
 )
 from .clock import BootClock, _duration, clock_factor, clock_rho
-from .models import GrantRecord, RecordError, RequestRecord
+from .models import GrantRecord, R1Record, RecordError, RequestRecord
 from .statistics import error_event, observe
 
 
@@ -97,12 +97,19 @@ class GrantCoordinator:
                                               request.lease_seconds * clock_factor(request.lease_seconds),
                                               clock_rho(request.lease_seconds), request.nonce)
             if desired != current:
+                if (expired and request is not None and current is not None
+                        and (request.owner, request.request_id) ==
+                        (current.owner, current.request_id)):
+                    # Consume this request before clearing R2. An uncertain R1
+                    # write stops the role; no blind retry or R2 compensation.
+                    self._store.write_r1(R1Record(record.leader))
                 self._store.write_r2(desired)
                 self._observation = None
                 self._observe('cleanup' if desired is None else
                               'heartbeat' if current is not None and
                               desired.grant_id == current.grant_id else 'grant',
-                              current if desired is None else desired, outcome='success')
+                              current if desired is None else desired, outcome='success',
+                              **({'phase': 'metadata'} if desired is None else {}))
             return desired
 
         return self._leader.coordinate(coordinate, self.window)
@@ -225,6 +232,14 @@ class ExecutorGate:
         self._arguments(owner, lease_seconds)
         store, lock = self._device(device_id)
         with lock:
+            now = self._clock.now()
+            for key, pending in tuple(self._pending.items()):
+                if key[1] == device_id and now >= pending.sent + pending.request.lease_seconds:
+                    del self._pending[key]
+            for key, held in tuple(self._held.items()):
+                if (key[1] == device_id and held.finished
+                        and now >= held.session.expires_at):
+                    del self._held[key]
             self._observe('attempt', store)
             key = owner, device_id
             held = self._held.get(key)
@@ -266,6 +281,14 @@ class ExecutorGate:
                 or held.finished and not allow_finished):
             raise ControlOwnershipRequired()
         return held
+
+    def observation_context(self, owner, session):
+        _, lock = self._device(session.device_id)
+        with lock:
+            grant = self._match(owner, session, allow_finished=True).grant
+            return dict(episode_id=grant.request_id, request_id=grant.request_id,
+                        run_id=grant.owner, grant_id=grant.grant_id,
+                        revision=grant.revision, leader_term=grant.leader_token)
 
     def validate(self, owner, session):
         if not isinstance(session, ControlSession):

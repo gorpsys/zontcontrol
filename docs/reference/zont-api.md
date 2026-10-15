@@ -26,8 +26,9 @@ measured_at=null; received_at его не подменяет. online=true и sta
 - показания датчиков value и их качество;
 - target_temp выбранного контура — цель, setpoint_temp — расчётная уставка
   теплоносителя из io/z3k-state;
-- actual_temp, current_mode, active, is_off, in_summer_mode и work_mode,
-  когда эти данные присутствуют в API;
+- actual_temp, mode_id (из current_mode), status, worktime и target_sensor_id
+  выбранного контура; active, is_off, in_summer_mode и work_mode контура
+  сейчас не объявлены в describe_values и не возвращаются как ValueReading;
 - смысл состояния переключателя из его подписей.
 
 В конфигурации SMART 2.0 владельца контур «Отопление» 20496 регулируется

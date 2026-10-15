@@ -11,7 +11,7 @@ from functools import wraps
 from ..commands import PreparedCommand, validate_element
 from ..history import history_period, merge_history_points, project_history
 from ..inventory import (
-    control_descriptors, current_value, device_info, device_inventory, value_descriptors,
+    control_descriptors, control_elements, current_value, device_info, value_descriptors,
 )
 from .contracts import (
     CommandResult, ControlKey, ControlOwnershipRequired, DeviceUnavailable, HistoryResult,
@@ -81,7 +81,8 @@ class ControllerService:
         raw = self._device(command.device_id)
         if require_online and raw.get('online') is not True:
             raise DeviceUnavailable()
-        rows = {row.key: row for row in control_descriptors(raw)}
+        elements = control_elements(raw)
+        rows = {row.key: row for row in control_descriptors(raw, elements=elements)}
         descriptor = rows.get(command.control_key)
         if descriptor is None:
             raise InvalidArguments()
@@ -92,10 +93,7 @@ class ControllerService:
             raise UnsupportedAction()
         prepared = PreparedCommand(action, command.device_id, command.control_key.element_id,
                                    command.arguments)
-        info = device_info(raw)
-        inventory = device_inventory(raw, {'id': info.device_id, 'name': info.name,
-                                           'model': info.model, 'online': info.online}, '')
-        element = next(row for row in inventory['elements']
+        element = next(row for row in elements
                        if row['kind'] == command.control_key.kind
                        and row['id'] == command.control_key.element_id)
         validate_element(prepared, element)

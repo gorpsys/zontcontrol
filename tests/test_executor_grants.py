@@ -91,6 +91,31 @@ class GrantTests(unittest.TestCase):
         self.coordinator.step(accepting=False)
         self.assertIsNone(self.store.read_r2())
 
+    def test_expired_request_is_consumed_and_never_regranted(self):
+        self.pending()
+        grant = self.coordinator.step()
+        self.coordinator.step()  # start conservative observation
+        self.clock.advance(grant.lease_s)
+        for _ in range(4):
+            self.assertIsNone(self.coordinator.step())
+        self.assertIsNone(self.store.read_r1().request)
+
+    def test_old_owner_records_are_pruned_without_losing_active_or_uncertain_release(self):
+        session = self.acquire()
+        self.pending(owner=uuid4(), seconds=10)
+        self.assertIn((self.owner, 42), self.gate._held)
+        self.adapter.write_mode = 'lose_response'
+        with self.assertRaises(CommandOutcomeUnknown):
+            self.gate.release(self.owner, session)
+        self.adapter.write_mode = 'apply'
+        abandoned = uuid4()
+        self.pending(owner=abandoned, seconds=10)
+        self.assertIn((self.owner, 42), self.gate._held)
+        self.clock.advance(61)
+        self.pending(owner=uuid4())
+        self.assertNotIn((self.owner, 42), self.gate._held)
+        self.assertNotIn((abandoned, 42), self.gate._pending)
+
     def test_independent_applications_busy_explicit_pending_retry_no_queue(self):
         session = self.acquire()
         other, owner = self.make_gate(), uuid4()

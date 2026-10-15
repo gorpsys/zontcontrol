@@ -11,11 +11,12 @@ from tests.fakes.clock import FakeClock
 from tests.test_inventory import inventory_device
 from zontcontrol.controller.contracts import (
     CommandOutcomeUnknown, ControlKey, ControlOwnershipRequired, ControlSession,
-    Controller, DeviceControlBusy, DeviceUnavailable, InvalidArguments, UnsupportedAction,
+    Controller, DeviceControlBusy, DeviceUnavailable, InvalidArguments, RateLimited, UnsupportedAction,
     ValidatedCommand,
 )
 from zontcontrol.controller.ownership import CommandExecutor
 from zontcontrol.controller.service import ControllerService
+from zontcontrol.coordination.statistics import Statistics
 
 
 class LocalTestGate:
@@ -95,6 +96,61 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(self.gate.acquisitions, 1)
         self.owner.release_control(session)
         self.assertEqual(self.gate.releases, [session])
+        self.acquire(self.other)
+
+    def test_failed_release_blocks_until_expiry_then_allows_new_binding(self):
+        session = self.acquire()
+        self.gate.release = Mock(side_effect=CommandOutcomeUnknown())
+        with self.assertRaises(CommandOutcomeUnknown):
+            self.owner.release_control(session)
+        with self.assertRaises(DeviceControlBusy):
+            self.acquire(self.other)
+        self.clock.advance(60)
+        self.acquire(self.other)
+
+    def test_expired_release_racing_reacquisition_cannot_delete_new_owner(self):
+        session = self.acquire()
+        entered = threading.Event()
+        release = self.executor._release_remote
+        def delayed(held):
+            entered.set()
+            self.assertTrue(self.unblock.wait(2))
+            release(held)
+        self.executor._release_remote = delayed
+        thread = self.start(lambda: self.owner.release_control(session))
+        self.assertTrue(entered.wait(1))
+        self.clock.advance(60)
+        replacement = self.acquire(self.other)
+        self.unblock.set()
+        thread.join(1)
+        self.other.execute_command(self.command(self.other), replacement)
+        with self.assertRaises(DeviceControlBusy):
+            self.acquire(self.owner)
+
+    def test_command_errors_and_cleanup_are_observed_without_changing_outcomes(self):
+        for error in (CommandOutcomeUnknown(), RateLimited()):
+            with self.subTest(error=type(error).__name__):
+                rows = []
+                self.executor._statistics = Statistics(rows.append, protocol_version='1', profile='test')
+                session = self.acquire()
+                self.adapter.send_command.side_effect = error
+                with self.assertRaises(type(error)):
+                    self.owner.execute_command(self.command(state=False), session)
+                self.owner.release_control(session)
+                outcome = 'unknown' if isinstance(error, CommandOutcomeUnknown) else 'failure'
+                self.assertTrue(any(row['event'] == 'command' and row['outcome'] == outcome
+                                    for row in rows))
+                self.assertTrue(any(row['event'] == 'cleanup' and row['phase'] == 'session'
+                                    and row['outcome'] == outcome for row in rows))
+                self.assertTrue(any(row['event'] == ('timeout' if outcome == 'unknown'
+                                                     else 'rate_limited') for row in rows))
+        broken = Mock()
+        broken.emit.side_effect = RuntimeError('private sink error')
+        self.executor._statistics = broken
+        session = self.acquire()
+        self.adapter.send_command.side_effect = None
+        self.owner.execute_command(self.command(state=False), session)
+        self.owner.release_control(session)
         self.acquire(self.other)
 
     def test_whole_device_immediate_busy_from_another_thread(self):
@@ -179,6 +235,7 @@ class OwnershipTests(unittest.TestCase):
         self.assertTrue(accepted.wait(1))
         self.owner.release_control(session)
         self.assertEqual(self.gate.releases, [])
+        self.clock.advance(61)
         with self.assertRaises(DeviceControlBusy):
             self.acquire(self.other)
         with self.assertRaises(ControlOwnershipRequired):

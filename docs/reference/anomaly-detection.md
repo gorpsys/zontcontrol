@@ -135,9 +135,30 @@ reports/recalibration-validation-83days-minutes.csv.gz (каждая минут�
 
 ## 10. Запуск
 
-python3 -m zontcontrol --detect-anomalies --device-id 700877 --circuit-id 20496
+Для решения без управляющих воздействий используйте read-only фасад и
+проверяемую проекцию истории из модуля. Пример запускается из корня проекта
+с настроенными config/controller.json, config/boiler_reset.json и ZONT_TOKEN
+в окружении; он читает последние 45 минут, включая историю сброса:
 
-По умолчанию читаются последние 45 минут с историей сброса. Команда
-принимает разовое решение и только читает данные. Для следующего решения
-повторить запрос. Автоматический сброс требует отдельной реализации и
-согласованной политики воздействия; сейчас проверяется только обнаружение.
+```python
+from datetime import datetime, timedelta, timezone
+from zontcontrol.application import create_read_controller
+from zontcontrol.algorithms.boiler_reset import history_packet, load_config
+from zontcontrol.monitor import assess_history
+
+config = load_config()
+controller = create_read_controller()
+end = datetime.now(timezone.utc)
+history = controller.read_history(config.device_id, config.history_keys,
+                                  end - timedelta(minutes=45), end)
+print(assess_history(history_packet(history, config), circuit_id=config.circuit_id,
+                     air_id=config.air_sensor_id, coolant_id=config.coolant_sensor_id,
+                     reset_id=config.reset_control_id, config=config.detector_config))
+```
+
+Повторное чтение даёт следующее разовое решение. Модуль boiler_reset уже
+реализован: `python3 -m zontcontrol once boiler_reset` при подтверждённой
+аномалии получает монополию и выполняет настоящий импульс сброса с off в
+finally. Это управляющий запуск; его API-успех не доказывает восстановление
+нагрева. Режим continuous также управляет котлом; политика, сроки и ошибки
+описаны в [контракте сброса](boiler-reset.md).

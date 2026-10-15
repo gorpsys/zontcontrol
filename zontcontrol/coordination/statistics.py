@@ -25,7 +25,7 @@ _EVENTS = frozenset({
 })
 _IDS = frozenset({'episode_id', 'run_id', 'request_id', 'grant_id', 'leader_term'})
 _NUMBERS = frozenset({'wait_s', 'rtt_s', 'delta_s', 'elapsed_s'})
-_FIELDS = _IDS | _NUMBERS | {'device_id', 'revision', 'outcome', 'coverage'}
+_FIELDS = _IDS | _NUMBERS | {'device_id', 'revision', 'outcome', 'coverage', 'phase'}
 _BASE = frozenset({'schema', 'event', 'protocol_version', 'profile', 'source'})
 _OUTCOMES = frozenset({'success', 'unknown', 'conflict', 'failure', 'busy'})
 _COVERAGE = frozenset({'complete', 'partial', 'none'})
@@ -64,6 +64,9 @@ def _validate(row):
         if key == 'outcome' and (type(value) is not str or value not in _OUTCOMES):
             raise ObservationError()
         if key == 'coverage' and (type(value) is not str or value not in _COVERAGE):
+            raise ObservationError()
+        if key == 'phase' and (type(value) is not str
+                               or value not in {'command', 'session', 'metadata'}):
             raise ObservationError()
     if row['event'] in {'episode_started', 'episode_finished'}:
         if not {'episode_id', 'device_id'} <= row.keys():

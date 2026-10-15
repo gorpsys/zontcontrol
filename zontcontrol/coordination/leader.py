@@ -94,7 +94,7 @@ class LeaderElection:
             self._lose()
         return record, sent, received
 
-    def try_acquire(self):
+    def try_acquire(self, *, cancelled=None):
         """Poll once; return False while another projection is unexpired.
 
         FREE or a conservatively observed expiry permits a single write, then
@@ -102,6 +102,8 @@ class LeaderElection:
         write abandons this attempt; it never writes FREE as compensation.
         """
         with self._lock:
+            if cancelled is not None and cancelled.is_set():
+                return False
             self._observe('leader_attempt')
             if self._active:
                 self._require(0)
@@ -132,7 +134,8 @@ class LeaderElection:
             if ack - read_send > self.timing.delta:
                 self._observe('delta_breach', elapsed_s=ack - read_send, delta_s=self.timing.delta)
                 self._lose()
-            if self._clock.wait(self.role_cancelled, self.timing.barrier):
+            if self._clock.wait(cancelled if cancelled is not None else self.role_cancelled,
+                                self.timing.barrier):
                 self._lose()
             # CLOCK_BOOTTIME includes suspend. Recheck elapsed, never trust wait
             # returning as evidence of either a sufficient barrier or live lease.
@@ -140,6 +143,7 @@ class LeaderElection:
                 self._lose()
             confirmed, _, _ = self._read()
             if (confirmed.leader != own or self.role_cancelled.is_set()
+                    or cancelled is not None and cancelled.is_set()
                     or self._clock.now() >= self.expires_at):
                 self._lose()
             self._active = True

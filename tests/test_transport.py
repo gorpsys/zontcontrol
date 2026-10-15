@@ -67,6 +67,7 @@ class TransportTests(unittest.TestCase):
     def test_invalid_and_oversized_response_are_distinct_from_explicit_rejection(self):
         for raw, kind in ((b"secret", FailureKind.INVALID_RESPONSE),
                           (b"[]", FailureKind.INVALID_RESPONSE),
+                          (b'[' * 2000 + b']' * 2000, FailureKind.INVALID_RESPONSE),
                           (b'{"ok":1}', FailureKind.INVALID_RESPONSE),
                           (b'{"ok":false,"error":"secret"}', FailureKind.REJECTED),
                           (b"x" * (MAX_RESPONSE_BYTES + 1), FailureKind.INVALID_RESPONSE)):

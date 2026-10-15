@@ -295,14 +295,6 @@ class BoilerCLI:
                  and not descriptor.unavailable_reasons)
         arguments = json.loads(arguments)
         _require(isinstance(arguments, dict))
-        for name, value in arguments.items():
-            _require(value is None or type(value) in (int, float, str, bool))
-            if type(value) in (int, float):
-                _require(math.isfinite(value))
-            if name in ('target_temp', 'target_value'):
-                _require(type(value) in (int, float)
-                         and (descriptor.minimum is None or value >= descriptor.minimum)
-                         and (descriptor.maximum is None or value <= descriptor.maximum))
         command = self._controller.prepare_command(key.device_id, key, action, arguments)
         self._write(f'preview: {device.name} [{key.device_id}] {kind}/{key.element_id} '
                     f'{command.action} {dict(command.arguments)}')

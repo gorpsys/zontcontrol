@@ -176,6 +176,12 @@ class ApplicationTests(unittest.TestCase):
                     events.append('finally')
         spec = AlgorithmSpec('sample', 'Sample', frozenset({Mode.CONTINUOUS}), Module)
         app = self.build(catalog=(spec,))
+        def cleanup():
+            finish.set()
+            self.assertTrue(app.close(wait_timeout=2))
+            runtime = app._registry._slots['sample'].runtime
+            self.assertTrue(runtime.wait(1))
+        self.addCleanup(cleanup)
         self.assertTrue(entered.wait(1))
         with patch.object(app._coordination, 'close', side_effect=lambda: events.append('resources')):
             self.assertFalse(app.close(wait_timeout=0))

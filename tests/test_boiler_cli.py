@@ -18,6 +18,8 @@ from zontcontrol.autonomy.catalog import BUILTIN_SPECS
 from zontcontrol.autonomy.contracts import AlgorithmBusy, AlgorithmState, Mode, RunContext
 from zontcontrol.autonomy.registry import AlgorithmRegistry
 from zontcontrol.config import ConfigurationError, RegistryConfig
+from zontcontrol.controller.service import ControllerService
+from tests.test_inventory import inventory_device
 from zontcontrol.controller.contracts import (
     CommandOutcomeUnknown, ControlDescriptor, ControlKey, ControlSession, DeviceControlBusy,
     DeviceInfo, DeviceUnavailable, HistoryPoint, HistoryResult, HistorySeries, Quality,
@@ -236,6 +238,11 @@ class BoilerCLITests(unittest.TestCase):
         self.controller.try_acquire_control.assert_not_called()
 
     def test_temperature_bounds_and_invalid_json_never_acquire(self):
+        raw = inventory_device()
+        raw['circuits'][0].update(id=8, min=5, max=30)
+        adapter = Mock()
+        adapter.devices.return_value = [raw]
+        self.controller.prepare_command.side_effect = ControllerService(adapter).prepare_command
         for args in ('{"target_temp":4}', '{"target_temp":31}', '{"target_temp":NaN}',
                      '{"target_temp":true}', 'oops'):
             self.command('--execute', args=args)

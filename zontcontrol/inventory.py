@@ -29,14 +29,7 @@ def _element(item: dict, kind: str, source: str) -> dict:
         raise ValueError("invalid control element name in API response")
     return {
         "id": item["id"], "name": name, "kind": kind, "source": source,
-        **labels, "actions": [],
-    }
-
-
-def _action(base: str, resource: str, entity_id: int, action: str, parameters: dict) -> dict:
-    return {
-        "method": "POST", "url": f"{base}/{resource}/{entity_id}/actions/{action}",
-        "parameters": parameters,
+        **labels, "hidden": item.get('hidden', False), "actions": [],
     }
 
 
@@ -44,9 +37,8 @@ def _metadata(item: dict, keys: tuple[str, ...]) -> dict:
     return {key: item[key] for key in keys if key in item}
 
 
-def device_inventory(raw: dict, snapshot: dict, api_url: str) -> dict:
-    """Expose only element identities, state and supported API action descriptions."""
-    base = f"{api_url}/devices/{snapshot['id']}"
+def control_elements(raw: dict) -> tuple[dict, ...]:
+    """Normalize control identities, availability and limits once per response."""
     elements = []
     for circuit in _items(raw, "circuits"):
         item = _element(circuit, "circuit", "circuits")
@@ -58,25 +50,14 @@ def device_inventory(raw: dict, snapshot: dict, api_url: str) -> dict:
         if type(dependent) is not bool:
             raise ValueError("invalid dependent circuit flag in API response")
         if not dependent:
-            action = _action(base, "circuits", item["id"], "target-temp", {
-                "target_temp": {"type": "number", "required": True},
-            })
-            action["effect"] = "Переводит контур в ручной режим и сбрасывает текущий режим."
-            item["actions"].append(action)
+            item["actions"].append('target-temp')
         else:
             item["reason"] = "Зависимый контур: уставка берётся из главного контура."
         elements.append(item)
     for mode in _items(raw, "modes"):
         item = _element(mode, "mode", "modes")
         item["state"] = _metadata(mode, ("applied", "can_be_applied"))
-        action = _action(base, "modes", item["id"], "activate", {
-            "duration": {"type": "integer", "required": False, "unit": "minutes"},
-            "schedule": {"type": "object", "required": False,
-                         "properties": {"hour": "integer", "minute": "integer"}, "timezone": "UTC"},
-        })
-        action["scope"] = "device"
-        action["note"] = "Опциональный circuit_id документирован только для линеек + и PRO."
-        item["actions"].append(action)
+        item["actions"].append('activate')
         elements.append(item)
     controls = raw.get("controls", {})
     if not isinstance(controls, dict):
@@ -85,27 +66,18 @@ def device_inventory(raw: dict, snapshot: dict, api_url: str) -> dict:
         for control in _items(controls, category):
             item = _element(control, category, f"controls.{category}")
             item["state"] = _metadata(control, ("active", "value", "min", "max", "step", "unit", "view"))
-            if category == "buttons":
-                item["actions"].append(_action(base, "controls", item["id"], "trigger", {}))
-            if category == "toggle_buttons":
-                item["actions"].append(_action(base, "controls", item["id"], "trigger", {
-                    "target_state": {"type": "boolean", "required": True},
-                }))
+            if category in ("buttons", "toggle_buttons"):
+                item["actions"].append('trigger')
             if category == "regulators":
-                item["actions"].append(_action(base, "controls", item["id"], "set-voltage", {
-                    "target_value": {"type": "number", "required": True},
-                }))
+                item["actions"].append('set-voltage')
             if not item["actions"]:
                 item["reason"] = "В API v3 нет документированной команды для этого типа элемента."
             elements.append(item)
-    for category, resource, parameters in [
-        ("scenarios", "scenarios", {}),
-        ("guard_zones", "guard-zones", {"enable": {"type": "boolean", "required": True}}),
-    ]:
+    for category in ("scenarios", "guard_zones"):
         for control in _items(raw, category):
             item = _element(control, category, category)
             item["state"] = _metadata(control, ("state", "alarm"))
-            item["actions"].append(_action(base, resource, item["id"], "activate", parameters))
+            item["actions"].append('activate')
             elements.append(item)
     actuators = raw.get("actuators", {})
     if not isinstance(actuators, dict):
@@ -116,10 +88,7 @@ def device_inventory(raw: dict, snapshot: dict, api_url: str) -> dict:
             item["state"] = _metadata(actuator, ("on", "failed", "testing", "unknown", "no_connection"))
             item["reason"] = "Прямой команды управления исполнительным устройством в API v3 нет."
             elements.append(item)
-    return {
-        **{key: snapshot[key] for key in ("id", "name", "model", "online")},
-        "elements": elements,
-    }
+    return tuple(elements)
 
 
 def device_info(raw: dict) -> DeviceInfo:
@@ -130,32 +99,19 @@ def device_info(raw: dict) -> DeviceInfo:
                       raw.get('online'))
 
 
-def control_descriptors(raw: dict) -> tuple[ControlDescriptor, ...]:
+def control_descriptors(raw: dict, *, elements=None) -> tuple[ControlDescriptor, ...]:
     info = device_info(raw)
-    inventory = device_inventory(raw, {'id': info.device_id, 'name': info.name,
-                                       'model': info.model, 'online': info.online}, '')
-    # Match by category as well as ID: IDs need not be globally unique.
-    hidden = {}
-    for category, items in [('circuit', raw.get('circuits', [])),
-                            ('mode', raw.get('modes', [])),
-                            ('scenarios', raw.get('scenarios', [])),
-                            ('guard_zones', raw.get('guard_zones', []))]:
-        for item in items:
-            hidden[category, item['id']] = item.get('hidden', False)
-    for group in ('controls', 'actuators'):
-        for category, items in raw.get(group, {}).items():
-            for item in items:
-                hidden[category, item['id']] = item.get('hidden', False)
+    elements = control_elements(raw) if elements is None else elements
     result = []
-    for item in inventory['elements']:
+    for item in elements:
         labels = tuple((state, item[field]) for state, field in (
             (True, 'active_label'), (False, 'inactive_label')) if item.get(field))
         state = item['state']
         result.append(ControlDescriptor(
             ControlKey(info.device_id, item['kind'], item['id']), item['name'],
-            tuple(action['url'].rsplit('/', 1)[-1] for action in item['actions']), labels,
+            tuple(item['actions']), labels,
             state.get('min'), state.get('max'), state.get('step'),
-            hidden.get((item['kind'], item['id']), False),
+            item['hidden'],
             (item['reason'],) if 'reason' in item else ()))
     if len({row.key for row in result}) != len(result):
         raise InvalidArguments()

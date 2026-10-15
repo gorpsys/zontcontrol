@@ -65,6 +65,19 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(row.actions, ())
         self.assertTrue(row.unavailable_reasons)
 
+    def test_mode_unavailability_and_limits_survive_shared_normalization(self):
+        from zontcontrol.controller.contracts import ControlKey
+        raw = inventory_device()
+        raw['modes'][0]['can_be_applied'] = []
+        service, adapter = self.service(raw)
+        for kind, element_id, action, arguments in (
+                ('mode', 20, 'activate', {}),
+                ('circuit', 10, 'target-temp', {'target_temp': 31}),
+                ('regulators', 32, 'set-voltage', {'target_value': -1})):
+            with self.subTest(kind=kind), self.assertRaises(InvalidArguments):
+                service.prepare_command(42, ControlKey(42, kind, element_id), action, arguments)
+        adapter.send_command.assert_not_called()
+
     def test_missing_optional_categories_are_empty(self):
         raw = inventory_device()
         for key in ('controls', 'actuators', 'scenarios', 'guard_zones'):
