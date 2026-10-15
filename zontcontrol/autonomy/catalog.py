@@ -4,7 +4,16 @@ Builtins join this catalog when their modules exist. Importing the catalog
 neither loads module configuration nor constructs any controller or algorithm.
 """
 
-from .contracts import AlgorithmSpec
+from .contracts import AlgorithmSpec, Mode
+from ..algorithms.boiler_reset import BoilerReset, MINIMUM_SECONDS
+
+
+BUILTIN_SPECS = (AlgorithmSpec(
+    'boiler_reset', 'Calibrated heating assessment and owned 40-second reset pulse',
+    frozenset({Mode.ONCE, Mode.CONTINUOUS}), BoilerReset,
+    frozenset({'describe_values', 'read_history', 'list_devices', 'read_current',
+               'prepare_command', 'try_acquire_control', 'execute_command', 'release_control'}),
+    MINIMUM_SECONDS),)
 
 
 class AlgorithmCatalog:

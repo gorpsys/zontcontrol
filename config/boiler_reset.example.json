@@ -1,0 +1,11 @@
+{
+  "device_id": 42,
+  "circuit_id": 10,
+  "air_sensor_id": 7,
+  "coolant_sensor_id": 8,
+  "reset_control_id": 31,
+  "check_interval_seconds": 60,
+  "detection_profile": "smart_2_heating",
+  "grant_wait_seconds": 30,
+  "grant_poll_seconds": 1
+}
