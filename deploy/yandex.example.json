@@ -1,0 +1,28 @@
+{
+  "status": "planned",
+  "repository": null,
+  "branch": "master",
+  "cloud_id": null,
+  "folder_id": null,
+  "deployment_service_account_id": null,
+  "runtime_service_account_id": null,
+  "federation_id": null,
+  "github_oidc_audience": null,
+  "archive_bucket": null,
+  "function_name": null,
+  "runtime": "python312",
+  "entrypoint": "handler.handler",
+  "memory": "256MB",
+  "timeout": "60s",
+  "lockbox_secret_id": null,
+  "lockbox_secret_version_id": null,
+  "lockbox_secret_key": "zont_token",
+  "environment": {
+    "ZONT_CONTACT": null,
+    "ZONT_DEVICE_ID": null,
+    "ZONT_CIRCUIT_ID": null,
+    "ZONT_AIR_SENSOR_ID": null,
+    "ZONT_COOLANT_SENSOR_ID": null,
+    "ZONT_RESET_ELEMENT_ID": null
+  }
+}
