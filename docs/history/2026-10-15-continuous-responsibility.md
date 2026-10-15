@@ -22,6 +22,6 @@ continuous было ошибкой в архитектурном докумен�
 
 Исправлены [архитектура](../agents/architecture.md),
 [требования boiler_reset](../reference/boiler-reset.md) и
-[план](../plans/20261015005915-architecture-alignment-implementation-plan.md).
+[план](../plans/completed/20261015005915-architecture-alignment-implementation-plan.md).
 Другие замечания автоматически не закрываются. Код не менялся, команд ZONT
 и деплоя не было.

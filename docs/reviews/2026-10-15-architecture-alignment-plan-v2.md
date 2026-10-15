@@ -1,7 +1,7 @@
 # Холодное ревью плана приведения к архитектуре, v2
 
 Дата: 15.10.2026. Проверяется план
-`docs/plans/20261015005915-architecture-alignment-implementation-plan.md`.
+`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md`.
 Проверка независимая: предыдущие ревью, история обсуждений, отчёты и память
 сессий не использовались. Ссылки из разрешённых документов на такие материалы
 не открывались.
@@ -36,55 +36,55 @@ anomaly-detection. Другие документы проекта не чита�
   соответствует `docs/agents/architecture.md:30` и
   `docs/agents/architecture.md:645`. План не строит новый API поверх старого
   монолита: извлечение предусмотрено на этапе 2, окончательное удаление —
-  на этапе 15 (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:330`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:518`).
+  на этапе 15 (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:330`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:518`).
 - Проверенное поведение данных и команд сохраняется через новые интерфейсы,
   а старые сигнатуры и CLI не превращаются в обязательство совместимости.
   Это согласуется с `docs/agents/architecture.md:40`; затронуты также утилита
   токена, исследовательские скрипты, тесты и wheel
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:517`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:519`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:535`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:517`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:519`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:535`).
 - История для детектора не заменяется current, не сглаживается и сохраняет
   реальные события сброса между минутами. Это существенно: текущий
   `zontcontrol/monitor.py:95` проверяет состояние на конец периода,
   `zontcontrol/monitor.py:105` сохраняет unknown для усечённого диапазона,
   `zontcontrol/monitor.py:113` проверяет пригодность последних измерений.
   Перенос этих свойств задан этапами 3 и 12
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:344`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:468`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:344`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:468`).
 
 ### Монополия, команды и жизненный цикл
 
 - Этапы 4 и 7 различают локальное владение и межклиентский grant, связывают
   потребителя через DI и сохраняют in-flight до освобождения
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:356`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:357`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:400`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:356`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:357`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:400`).
   Чтение и предпросмотр остаются доступны при занятом приборе.
 - Обычная команда синхронна; известная ошибка, успешный ответ и неизвестный
   исход после отправки различаются. Автоматического повтора управления нет
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:153`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:333`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:153`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:333`).
   Это переносит требуемое поведение нынешнего запрета повторов
   из `zontcontrol/client.py:215`, устраняя смешение исходов старым ZontError.
 - Once включает bootstrap и возвращает Timeout независимо от зависшего
   HTTP/потока. Stopping сохраняет экземпляр и монополию до завершения;
   поздний результат не переписывает уже возвращённый Timeout
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:438`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:439`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:438`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:439`).
 - Continuous не получает ни общего, ни внутреннего deadline регистратора.
   Stop кооперативен; закрытие фасада отложено до cleanup. Это прямо проверяется
   этапом 10 и отдельно для boiler_reset
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:440`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:441`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:473`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:440`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:441`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:473`).
 - Finally использует обычный API и удерживает локальное владение. При истечении
   R2 новый off может быть отклонён; это явно принятое ограничение
   `docs/reference/leader-election.md:226`, а не новый дефект плана. План
   проверяет эту границу и не вводит обход
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:401`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:471`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:401`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:471`).
 
 ### R1/R2, время и наблюдения
 
@@ -95,21 +95,21 @@ anomaly-detection. Другие документы проекта не чита�
 `docs/reference/leader-election.md:198`. План фиксирует rho по исходному
 периоду, независимый запас короткого Delta и начало deadline от отправки
 подтверждённого nonce
-(`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:179`,
-`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:196`).
+(`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:179`,
+`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:196`).
 
 Наблюдение неизменного R2 начинается с первого ответа, а заканчивается
 отправкой последнего совпавшего чтения; повторный ack не продлевает право.
 Границы, поздний ack и противоположные погрешности предусмотрены тестами
-(`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:398`,
-`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:401`).
+(`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:398`,
+`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:401`).
 
 Известное восстановление старого header R1 и возможные межклиентские конфликты
 не объявлены устранёнными. Статистика предусматривает полные эпизоды, oracle
 виртуального ресурса, неопределённость и покрытие, раздельный анализ версий
-и профилей (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:95`,
-`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:412`,
-`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:415`).
+и профилей (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:95`,
+`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:412`,
+`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:415`).
 Это соответствует `docs/reference/orchestration-risk.md:11` и
 `docs/reference/orchestration-risk.md:68`; требовать предварительного
 доказательства 99.9% или возвращать recovery-журнал оснований нет.
@@ -121,27 +121,27 @@ anomaly-detection. Другие документы проекта не чита�
 - Этап 4 может проверить timeout/stop как подставное изменение контекста,
   не импортируя ещё не написанный регистратор. Временный gate разрешён только
   в тестах; будущие публичные эффекты не обходят R2
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:359`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:359`).
 - Этапы 9–11 используют подставные specs/factories; отсутствующие builtins
   импортировать не требуется. Реальные модули добавляются по готовности
   в этапах 12 и 14
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:452`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:474`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:502`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:452`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:474`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:502`).
 - Ещё не перенесённый код прототипа временно допускается; тесты и сигнатуры
   можно менять вместе с переносом. Поэтому извлечение транспорта на этапе 2
   не вынуждает сохранять совместимый второй клиент ради промежуточной зелени
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:77`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:332`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:77`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:332`).
 - Установленный wheel проверяется вне checkout с отдельным корнем config/;
   пользовательские конфиги и reports не включаются в пакет
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:532`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:534`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:532`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:534`).
   Runtime-зависимости не добавляются, деплой и реальный сброс не являются
   результатом офлайн-сборки
-  (`docs/plans/20261015005915-architecture-alignment-implementation-plan.md:69`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:300`,
-  `docs/plans/20261015005915-architecture-alignment-implementation-plan.md:563`).
+  (`docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:69`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:300`,
+  `docs/plans/completed/20261015005915-architecture-alignment-implementation-plan.md:563`).
 
 ## Что конкретизировать внутри предусмотренных этапов
 

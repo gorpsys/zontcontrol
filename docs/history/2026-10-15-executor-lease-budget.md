@@ -27,7 +27,7 @@
 
 Формулы и переходы закреплены в
 [контракте](../reference/leader-election.md#срок-исполнителя-и-допуск-команд)
-и этапе 7 [плана](../plans/20261015005915-architecture-alignment-implementation-plan.md).
+и этапе 7 [плана](../plans/completed/20261015005915-architecture-alignment-implementation-plan.md).
 Для API lease_seconds означает локальный бюджет от отправки подтверждаемого
 nonce; R2.lease_s=K*lease_seconds, deadline=nonce_send+R2.lease_s/K.
 

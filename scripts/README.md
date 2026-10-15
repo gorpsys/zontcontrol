@@ -10,6 +10,7 @@ Runtime Python >=3.11, только stdlib; сборка использует se
 make setup
 make check
 make package
+make package-check
 ```
 
 make setup создаёт .venv и устанавливает пакет в editable-режиме.
@@ -27,19 +28,22 @@ python3 -m unittest discover -s tests -v
 | test | Офлайн unittest; реальные ZONT-команды не отправляются |
 | check | lint + test |
 | package | Wheel в dist/ |
+| package-check | Smoke установленного wheel вне checkout, без ZONT |
 | clean | Удаление только build/, dist/, zontcontrol.egg-info/ |
 
 Полноценный сторонний линтер и coverage gate пока не подключены.
-make package использует изолированную сборку: pip может загрузить уже
-заданный build backend setuptools>=68. Для подготовленного офлайн-окружения
-с setuptools и wheel:
+make package использует --no-deps --no-build-isolation. В выбранном Python
+заранее должны быть setuptools>=68 и wheel; цель не скачивает build tools.
+Для подготовленного офлайн-окружения прямая эквивалентная команда:
 
 ```sh
 python3 -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
 ```
 
 В wheel включается только zontcontrol и package metadata; scripts, tests,
-docs, локальные архивы и cloud-шаблоны не входят в исполняемый пакет.
+docs, config-примеры, рабочие конфиги, локальные архивы и cloud-шаблоны
+не входят в исполняемый пакет. Для запуска wheel подготовьте cwd/config
+отдельно — [инструкция](../README.md#установка-и-конфигурация).
 Технические зависимости сборки не являются зависимостями runtime.
 make package сначала удаляет генерируемые build/dist/egg-info, чтобы ранее
 удалённые модули не попадали в новый wheel из старого build/lib. Для прямой
@@ -55,8 +59,10 @@ Python 3.11 и 3.12, сборку/установку wheel и CLI вне checkou
 аннотированный тег после push master, не обращаясь к ZONT и не выполняя деплой.
 Токены ZONT для CI не нужны, тесты не обращаются к реальному устройству.
 Защита master должна требовать checks текущего SHA и PR, включая администраторов.
-Workflow подготовлен; реальный запуск Actions требует удалённого репозитория.
-Здесь не создавались GitHub-репозиторий, branch protection или опубликованный release.
+Удалённый репозиторий — [gorpsys/zontcontrol](https://github.com/gorpsys/zontcontrol).
+Фактический run Python 3.11/3.12 и ограничения записаны в
+[истории реализации](../docs/history/2026-10-16-architecture-implementation.md).
+Пройденный CI относится к указанному SHA; новый коммит требует своих checks.
 
 ## Исследования и калибровка
 
@@ -93,9 +99,11 @@ python3 scripts/collect_history.py --from '2026-07-22T08:38:56+00:00' --to '2026
 python3 scripts/analyze_history.py --device-id 700877 --circuit-id 20496 --hours 24
 ```
 
-Для PNG/SVG добавить --plot reports/heating-24h.png. Только построение
-графиков требует matplotlib в отдельном исследовательском окружении;
-он не добавлен в runtime. Конфигурация matplotlib направляется в /tmp.
+Добавьте --plot reports/heating-24h.svg: analyze_history создаёт три SVG
+heating-24h-air.svg, heating-24h-coolant.svg и heating-24h-worktime.svg
+через renderer приложения на stdlib. Никакого matplotlib для этого пути нет.
+Отдельный исторический plot_anomalies.py остаётся исследовательским
+matplotlib-скриптом и не является runtime приложения.
 
 Разбор локального трёхнедельного архива:
 
@@ -138,8 +146,8 @@ workflow деплоя пока планируются. [План](../docs/plans/
 Ресурсные ID, function name, secret и доверенный repository задаются отдельно;
 значения autorepeater не копируются. Прежде чем включать автоматический
 деплой, потребуется первая ручная публикация и проверка ACTIVE/конфигурации,
-затем import-only и read-only приёмка. Автоматическое восстановление котла
-остаётся отдельной функциональностью и не включается подготовкой CI.
+затем import-only и read-only приёмка. Локальный boiler_reset уже реализован;
+облачное включение сброса требует отдельной приёмки и не следует из CI.
 
 ## Версии и выпуск
 
@@ -202,14 +210,15 @@ python3 -m scripts.release_version check --base "$(git rev-parse origin/master)"
 make release-check PYTHON=python3
 ```
 
-Git-проверки требуют настоящего checkout с коммитом и полными тегами. Текущая
-локальная папка пока не является Git-репозиторием: make check работает,
-make release-check до настройки checkout завершится ошибкой. В офлайн-тестах
-создаются только временные локальные репозитории и локальные bare remotes.
+Git-проверки требуют настоящего checkout с коммитом и полными тегами.
+Весь текущий PR — первый продуктовый выпуск 0.1.0 от пустого master;
+подробности исправления прежней публикации — [история версий](../docs/history/versioning.md).
+В офлайн-тестах создаются временные репозитории и bare remotes; реальные
+теги из них не публикуются.
 
 Проверка PR имеет contents:read. Release tag работает только для master с
 contents:write у одного job и очередью release-tags, cancel-in-progress=false,
 queue=max. Поздний повтор исходного запуска не теряет свой тег из-за более
 нового выпуска на потомке. Force push, перенос и удаление тегов запрещены.
 Push тега не запускает деплой; workflows выпуска не обращаются к ZONT.
-GitHub-репозиторий, branch protection и реальный запуск Actions ещё не настроены.
+Слияние PR, выпуск тега и деплой не выполняются завершением локального плана.

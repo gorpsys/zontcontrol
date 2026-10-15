@@ -35,7 +35,7 @@ CLI-флаги, JSON и совместимый control --execute. Фиксиро
 
 Замечание №4 закрыто обновлением
 [архитектуры](../agents/architecture.md) и
-[плана](../plans/20261015005915-architecture-alignment-implementation-plan.md).
+[плана](../plans/completed/20261015005915-architecture-alignment-implementation-plan.md).
 Все четыре замечания плана разобраны: №1 и №3 уточнены решениями, №2 снято
 исправлением неверного требования к continuous, №4 заменено полным удалением
 прототипа. Реализация пока не начата; код и устройство не изменялись.

@@ -32,7 +32,7 @@ HTTP-таймаута: --contact, затем ZONT_CONTACT, затем controller
 Замечание №3 закрыто обновлением
 [архитектуры](../agents/architecture.md#6-конфигурация-регистратора-и-модулей)
 и этапов 9, 11–16
-[плана](../plans/20261015005915-architecture-alignment-implementation-plan.md).
+[плана](../plans/completed/20261015005915-architecture-alignment-implementation-plan.md).
 Код не изменялся, обращения к ZONT и деплоя не было.
 
 Последующее [решение о замене прототипа](2026-10-15-prototype-replacement.md)

@@ -40,7 +40,10 @@ Runtime — Python >=3.11 и только stdlib. Make использует .ven
 если он есть, иначе python3. make lint проверяет синтаксис, пробелы,
 локальные Markdown-ссылки и метаданные проекта; полноценный сторонний
 линтер пока не подключён. make test — unittest. make check — обе проверки.
-make package — wheel существующим setuptools, без runtime-зависимостей.
+make package — wheel через setuptools>=68, без runtime-зависимостей.
+make package-check проверяет smoke установленного wheel вне checkout.
+Для офлайн-сборки заранее нужны setuptools>=68 и wheel; это build tools,
+не зависимости приложения. Состав и запуск — scripts/README.md.
 
 GitHub Actions проверяет PR и master: Lint и Offline checks на Python 3.11/3.12.
 Offline checks до сборки/установки пакета запускает scripts.release_version:
@@ -65,7 +68,8 @@ autorepeater не переносится. Тесты транспорта исп
 показывают один X.Y.Z и без Git. Автоматического .dev/dirty-суффикса нет:
 номер сам по себе не доказывает чистоту checkout или опубликованный выпуск.
 Первый подготовленный номер 0.1.0, подтверждённого тега ещё нет.
---version у трёх текущих CLI не требует токена и сети.
+--version у zontcontrol и zontcontrol-get-token (также через python -m)
+не требует токена и сети. Старый zontcontrol-control удалён.
 
 Новые PR обновляют версию и первый раздел CHANGELOG с датой/изменениями.
 Проверка Git выполняется после коммита с полными тегами и SHA базы;
