@@ -2,7 +2,7 @@
 
 Factories own their fixed config/<algorithm_id>.json and its validation. Extra
 dependencies (clock, input, renderer) can be bound in the factory; a registry is
-never passed to an algorithm. Continuous has no registrar deadline. The future
+never passed to an algorithm. Continuous has no registrar deadline. The
 runtime owns the once result timeout, independently of run_once returning.
 """
 
@@ -12,6 +12,7 @@ import math
 import re
 from threading import Event
 from typing import Protocol, TypeAlias
+from uuid import UUID
 
 from ..controller.contracts import Controller
 
@@ -59,16 +60,65 @@ class AlgorithmResult:
             raise ValueError('Expected ResultStatus')
 
 
+class AlgorithmError(Exception):
+    """Safe lifecycle error; arbitrary module exception text is never exposed."""
+
+    def __init__(self, algorithm_id, reason, message):
+        self.algorithm_id = algorithm_id
+        self.reason = reason
+        super().__init__(message)
+
+
+class AlgorithmBusy(AlgorithmError):
+    def __init__(self, algorithm_id, reason):
+        message = ('Разовый запуск недоступен: алгоритм уже работает в постоянном режиме'
+                   if reason == 'already_running_continuous' else f'Algorithm busy: {reason}')
+        super().__init__(algorithm_id, reason, message)
+
+
+class AlgorithmTimeout(AlgorithmError, TimeoutError):
+    def __init__(self, algorithm_id):
+        super().__init__(algorithm_id, 'timeout', 'Algorithm once result timed out')
+
+
+class AlgorithmCancelled(AlgorithmError):
+    def __init__(self, algorithm_id):
+        super().__init__(algorithm_id, 'cancelled', 'Algorithm once result cancelled')
+
+
+class AlgorithmFailed(AlgorithmError):
+    def __init__(self, algorithm_id):
+        super().__init__(algorithm_id, 'failed', 'Algorithm bootstrap, execution or cleanup failed')
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Lifecycle information only, never authorization for controller commands.
+
+    deadline is one immutable monotonic deadline for once, None for continuous.
+    Modules use wait instead of sleep so stop/timeout can interrupt their waits.
+    """
+
+    algorithm_id: str
+    instance_id: UUID
+    run_id: UUID
+    cancelled: Event
+    deadline: float | None
+
+    def wait(self, seconds: float | None = None) -> bool:
+        return self.cancelled.wait(seconds)
+
+
 class OnceAlgorithm(Protocol):
     """Cancellation asks for finally, never revokes accepted work/ownership."""
 
-    def run_once(self, cancelled: Event) -> AlgorithmResult: ...
+    def run_once(self, context: RunContext) -> AlgorithmResult: ...
 
 
 class ContinuousAlgorithm(Protocol):
     """The module owns its loop and intervals; there is no registrar deadline."""
 
-    def run_continuous(self, cancelled: Event) -> None: ...
+    def run_continuous(self, context: RunContext) -> None: ...
 
 
 Algorithm: TypeAlias = OnceAlgorithm | ContinuousAlgorithm
