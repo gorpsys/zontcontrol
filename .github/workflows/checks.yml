@@ -26,9 +26,13 @@ jobs:
       - run: make lint
 
   offline:
-    name: Offline checks
+    name: Offline checks (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,36 +41,32 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.11
-            3.12
+          python-version: ${{ matrix.python }}
       - name: Check release version
         env:
           VERSION_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           VERSION_EVENT: ${{ github.event_name }}
         run: |
           if [ "$VERSION_EVENT" = "pull_request" ]; then
-            python3.11 -m scripts.release_version check --base "$VERSION_BASE_SHA"
+            python -m scripts.release_version check --base "$VERSION_BASE_SHA"
           else
-            python3.11 -m scripts.release_version check --allow-existing
+            python -m scripts.release_version check --allow-existing
           fi
-      - name: Test supported Python versions without ZONT credentials
-        run: |
-          make test PYTHON=python3.11
-          make test PYTHON=python3.12
-      - name: Build and install the runtime package
-        run: |
-          make package PYTHON=python3.12
-          python3.12 -m venv /tmp/zontcontrol-package
-          /tmp/zontcontrol-package/bin/python -m pip install --no-deps dist/*.whl
-      - name: Smoke-check installed CLI outside the checkout
-        working-directory: /tmp
-        run: |
-          /tmp/zontcontrol-package/bin/zontcontrol --version
-          /tmp/zontcontrol-package/bin/zontcontrol --help
-          /tmp/zontcontrol-package/bin/zontcontrol-get-token --version
-          /tmp/zontcontrol-package/bin/zontcontrol-control set-switch --device-id 1 --element-id 2 --state off
-      - name: Verify installed version matches the declared release
-        working-directory: /tmp
-        run: |
-          /tmp/zontcontrol-package/bin/python -c 'from importlib.metadata import version; from zontcontrol import __version__; assert version("zontcontrol") == __version__'
+      - name: Check product offline without ZONT credentials
+        run: make check PYTHON=python
+      - name: Install build tools after the release check
+        run: python -m pip install 'setuptools>=68' wheel
+      - name: Build, install and check wheel outside the checkout
+        run: make package-check PYTHON=python
+
+  offline-summary:
+    name: Offline checks
+    needs: offline
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require both supported Python versions
+        env:
+          MATRIX_RESULT: ${{ needs.offline.result }}
+        run: test "$MATRIX_RESULT" = success

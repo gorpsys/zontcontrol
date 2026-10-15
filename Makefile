@@ -1,4 +1,4 @@
-.PHONY: setup lint test check release-check package clean
+.PHONY: setup lint test check release-check package package-check clean
 
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 VENV_PYTHON ?= python3
@@ -19,7 +19,10 @@ release-check:
 	"$(PYTHON)" -m scripts.release_version check
 
 package: clean
-	"$(PYTHON)" -m pip wheel --no-deps --wheel-dir dist .
+	"$(PYTHON)" -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+
+package-check: package
+	"$(PYTHON)" -m tests.test_installed_package --wheel dist/*.whl
 
 clean:
 	"$(PYTHON)" -m scripts.clean_build
