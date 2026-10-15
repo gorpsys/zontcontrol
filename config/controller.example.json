@@ -1,0 +1,12 @@
+{
+  "contact": "owner@example.invalid",
+  "http_timeout_seconds": 15,
+  "coordination": {
+    "delta_seconds": 1,
+    "leader_period_seconds": 60
+  },
+  "statistics": {
+    "path": "reports/orchestration.jsonl",
+    "profile": "unmeasured-example"
+  }
+}

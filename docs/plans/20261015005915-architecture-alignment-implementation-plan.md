@@ -1,6 +1,6 @@
 # Приведение zontcontrol к согласованной архитектуре
 
-Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–8.
+Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–9.
 Подход: **TDD**, по явному выбору владельца. Облако и деплой исключены.
 План создаётся по skill plan-writer и всем решениям последовательного ревью.
 Техническое обновление после сверки autorepeater/master от 15.10.2026:
@@ -462,11 +462,11 @@ try_acquire не продлевает сессию. Повтор release пос�
 - Create: `zontcontrol/config.py`, `zontcontrol/autonomy/__init__.py`, `zontcontrol/autonomy/contracts.py`.
 - Create: `tests/test_configuration.py`, `config/README.md`, `config/controller.example.json`, `config/registry.example.json`, `config/registry.headless.example.json`.
 
-- [ ] RED: AlgorithmSpec/modes, отдельные фиксированные registry.json/controller.json, disabled_modules, minimum/recommended, autostart_dual_mode=false, отказ до сети при неверных собственных настройках.
-- [ ] GREEN: общий JSON-reader, валидация инфраструктурных настроек и контракт фабрики/результатов/состояний; регистратор не содержит схемы и module_configs алгоритмов. Секрет отсутствует в config, token читает только composition root из env.
-- [ ] Описать запуск checkout/wheel из корня проекта с config/, фиксированные имена и копирование примеров; headless-пример registry исключает boiler_cli. Delta и числовые timeout примеров — профиль для настройки, не измеренные гарантии.
-- [ ] RED/GREEN для неизвестного модуля, повторного ID, отсутствующей пары timeout, recommended<minimum, недостающих возможностей и отсутствия чтения собственного конфига запрещённого алгоритма. Проверки графиков/привязок принадлежат тестам алгоритмов в этапах 12/14.
-- [ ] REFACTOR и `make check PYTHON=python3`.
+- [x] RED: AlgorithmSpec/modes, отдельные фиксированные registry.json/controller.json, disabled_modules, minimum/recommended, autostart_dual_mode=false, отказ до сети при неверных собственных настройках.
+- [x] GREEN: общий JSON-reader, валидация инфраструктурных настроек и контракт фабрики/результатов/состояний; регистратор не содержит схемы и module_configs алгоритмов. Секрет отсутствует в config, token читает только composition root из env.
+- [x] Описать запуск checkout/wheel из корня проекта с config/, фиксированные имена и копирование примеров; headless-пример registry исключает boiler_cli. Delta и числовые timeout примеров — профиль для настройки, не измеренные гарантии.
+- [x] RED/GREEN для неизвестного модуля, повторного ID, отсутствующей пары timeout, recommended<minimum, недостающих возможностей и отсутствия чтения собственного конфига запрещённого алгоритма. Проверки графиков/привязок принадлежат тестам алгоритмов в этапах 12/14.
+- [x] REFACTOR и `make check PYTHON=python3`.
 
 ### 10. Реализовать поточный runtime и внешний timeout результата once
 
