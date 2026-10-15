@@ -17,13 +17,13 @@ def _prompt(label: str) -> str:
     return input().strip()
 
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Получить API-токен ZONT")
     parser.add_argument("--version", action="version", version=f"zontcontrol {__version__}")
     parser.add_argument("--contact", help="Контактный email для X-ZONT-Client")
     parser.add_argument("--client-name", default="zontcontrol", help="Название приложения")
     parser.add_argument("--timeout", type=float, default=15, help="Таймаут в секундах (15)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         contact = args.contact or os.environ.get("ZONT_CONTACT")
         if not contact:

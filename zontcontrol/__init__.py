@@ -1,3 +1,3 @@
-"""Access to ZONT heating sensor snapshots."""
+"""ZONT controller and in-process autonomous algorithms."""
 
 __version__ = "0.1.0"

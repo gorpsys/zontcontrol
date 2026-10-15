@@ -1,10 +1,7 @@
 import unittest
-import io
-from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
 from zontcontrol.monitor import assess_history, history_samples
-from zontcontrol.cli import main
 
 
 START = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -136,20 +133,3 @@ class MonitorTests(unittest.TestCase):
                                        circuit_id=20496, air_id=8207, coolant_id=8429))
         self.assertEqual(samples[28].air_target, 23.5)
         self.assertEqual(samples[29].air_target, 25)
-
-    @patch("zontcontrol.cli.ZontClient")
-    def test_detection_cli_reads_only_history_including_control_events(self, client):
-        client.return_value.read_history.return_value = packet()
-        with patch.dict("os.environ", {"ZONT_TOKEN": "test-token", "ZONT_CONTACT": "owner@example.com"}), \
-                patch("sys.argv", ["zontcontrol", "--detect-anomalies", "--device-id", "42", "--circuit-id", "20496",
-                                   "--from", START.isoformat(), "--to", (START + timedelta(minutes=45)).isoformat()]), \
-                patch("sys.stdout", new_callable=io.StringIO):
-            self.assertEqual(main(), 0)
-        client.return_value.read_history.assert_called_once_with(
-            START, START + timedelta(minutes=45), device_id=42, circuit_id=20496, include_controls=True)
-        client.return_value.apply_command.assert_not_called()
-        client.return_value.read_sensors.assert_not_called()
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -11,9 +11,8 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-zontcontrol = "zontcontrol.cli:main"
+zontcontrol = "zontcontrol.application:main"
 zontcontrol-get-token = "zontcontrol.get_token:main"
-zontcontrol-control = "zontcontrol.control:main"
 
 [tool.setuptools.packages.find]
 include = ["zontcontrol*"]

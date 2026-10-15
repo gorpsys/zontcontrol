@@ -194,6 +194,17 @@ def decode_r1(raw: str | None) -> R1Record:
 _SUFFIX = " [zc:v1 управление занято "
 
 
+def original_name(raw: str) -> str:
+    """Recover a prefix only after validating its complete grant suffix."""
+    if not isinstance(raw, str):
+        raise RecordError()
+    prefix, marker, _ = raw.rpartition(_SUFFIX)
+    if marker:
+        decode_r2(raw, prefix)
+        return prefix
+    return raw
+
+
 def encode_r2(original_name: str, grant: GrantRecord | None) -> str:
     if not isinstance(original_name, str) or grant is not None and type(grant) is not GrantRecord:
         raise RecordError()

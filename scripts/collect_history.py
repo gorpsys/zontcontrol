@@ -3,15 +3,16 @@
 import argparse
 import gzip
 import json
-import os
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from zontcontrol.client import ZontClient, ZontError
+from zontcontrol.application import create_read_controller
+from zontcontrol.controller.contracts import RateLimited
 from zontcontrol.history import cli_period
+from scripts.history_archive import read_archive
 
 
 def collect(client, start, end, output, device_id, circuit_id, *, request_delay=2):
@@ -23,20 +24,15 @@ def collect(client, start, end, output, device_id, circuit_id, *, request_delay=
         for attempt in range(6):
             time.sleep(request_delay)
             try:
-                data = client.read_history(start, end, device_id=device_id, circuit_id=circuit_id,
-                                           include_controls=True)
+                data = read_archive(client, device_id, circuit_id, start, end)
                 break
-            except ZontError as error:
-                if "rate limit" in str(error) and attempt < 5:
+            except RateLimited:
+                if attempt < 5:
                     delay = min(15 * 2 ** attempt, 60)
                     print(f"API rate limit: retrying read in {delay} seconds", flush=True)
                     time.sleep(delay)
                     continue
-                if "size limit" not in str(error) or end - start <= timedelta(hours=1):
-                    raise
-                midpoint = start + (end - start) / 2
-                return collect(client, start, midpoint, output, device_id, circuit_id, request_delay=request_delay) + collect(
-                    client, midpoint, end, output, device_id, circuit_id, request_delay=request_delay)
+                raise
         if any(device["time_truncated"] for device in data["devices"]) and end - start > timedelta(hours=1):
             midpoint = start + (end - start) / 2
             return collect(client, start, midpoint, output, device_id, circuit_id, request_delay=request_delay) + collect(
@@ -79,7 +75,7 @@ def main():
         if args.days is not None and args.days <= 0:
             parser.error("--days must be positive")
         start, end = cli_period(args.start, args.end, None if args.start else 24 * (args.days or 21))
-    client = ZontClient(os.environ["ZONT_CONTACT"], token=os.environ["ZONT_TOKEN"])
+    client = create_read_controller()
     chunks = []
     cursor = start
     count = 0

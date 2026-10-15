@@ -1,6 +1,6 @@
 # Приведение zontcontrol к согласованной архитектуре
 
-Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–14.
+Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–15.
 Подход: **TDD**, по явному выбору владельца. Облако и деплой исключены.
 План создаётся по skill plan-writer и всем решениям последовательного ревью.
 Техническое обновление после сверки autorepeater/master от 15.10.2026:
@@ -557,15 +557,15 @@ run-методов. Этот экземпляр отбрасывается. Ка
 - Modify remaining prototype-dependent tests: `tests/test_commands.py`, `tests/test_history.py`, `tests/test_inventory.py`, `tests/test_monitor.py`.
 - Delete after transferring behavior checks: `zontcontrol/client.py`, `zontcontrol/cli.py`, `zontcontrol/control.py`, `tests/test_client.py`.
 
-- [ ] RED: создание приложения из config/env, новый entrypoint list/once/all/длительный host, явный старт dual-mode и закрытие без утечки токена.
-- [ ] GREEN: composition root создаёт transport/auth/controller/coordinator/registry, подставляет зависимости; отсутствие ZONT_TOKEN даёт инструкцию отдельной утилиты получения токена и имя переменной.
-- [ ] Новый entrypoint и Python API предоставляют согласованные методы регистратора в одном процессе. Не добавлять внешний daemon/socket ради команд stop из другого процесса.
-- [ ] zontcontrol и python -m zontcontrol запускают новый application; убрать zontcontrol-control и старые обработчики/флаги, JSON и приоритеты overrides без совместимых alias. Интерактивное управление выполняет только boiler_cli через фасад с монополией.
-- [ ] Утилита zontcontrol-get-token использует выделенный auth без ZontClient; сохраняется назначение (закрытый ввод пароля и выдача токена), а не прежние сигнатуры. Скрипты сбора/анализа используют новый read API без запуска регистратора; DTO преобразуются только для собственного формата исследовательского архива.
-- [ ] Удалить client.py/ZontClient, apply_command, cli.py/control.py и старые экспорты. Проверить все runtime/script/test импорты; не оставлять wrapper, deprecated subclass, re-export или fallback на старый клиент.
-- [ ] Перенести проверки авторизации, транспорта, данных и команд из test_client и остальных тестов в новые слои; удалить только проверки отменённых контрактов. Калиброванные сценарии и значимые отрицательные проверки сохранить через новые интерфейсы; тесты совместимости не создавать.
-- [ ] RED/GREEN для отсутствия токена, новых --version/--help без файлов/сети, ошибок конфигурации до I/O, headless отключения CLI, новой token utility и офлайн-скриптов. Проверить недоступность удалённых путей/entrypoints и отсутствие управляющего запроса без ControlSession через новый публичный API.
-- [ ] REFACTOR и `make check PYTHON=python3`.
+- [x] RED: создание приложения из config/env, новый entrypoint list/once/all/длительный host, явный старт dual-mode и закрытие без утечки токена.
+- [x] GREEN: composition root создаёт transport/auth/controller/coordinator/registry, подставляет зависимости; отсутствие ZONT_TOKEN даёт инструкцию отдельной утилиты получения токена и имя переменной.
+- [x] Новый entrypoint и Python API предоставляют согласованные методы регистратора в одном процессе. Не добавлять внешний daemon/socket ради команд stop из другого процесса.
+- [x] zontcontrol и python -m zontcontrol запускают новый application; убрать zontcontrol-control и старые обработчики/флаги, JSON и приоритеты overrides без совместимых alias. Интерактивное управление выполняет только boiler_cli через фасад с монополией.
+- [x] Утилита zontcontrol-get-token использует выделенный auth без ZontClient; сохраняется назначение (закрытый ввод пароля и выдача токена), а не прежние сигнатуры. Скрипты сбора/анализа используют новый read API без запуска регистратора; DTO преобразуются только для собственного формата исследовательского архива.
+- [x] Удалить client.py/ZontClient, apply_command, cli.py/control.py и старые экспорты. Проверить все runtime/script/test импорты; не оставлять wrapper, deprecated subclass, re-export или fallback на старый клиент.
+- [x] Перенести проверки авторизации, транспорта, данных и команд из test_client и остальных тестов в новые слои; удалить только проверки отменённых контрактов. Калиброванные сценарии и значимые отрицательные проверки сохранить через новые интерфейсы; тесты совместимости не создавать.
+- [x] RED/GREEN для отсутствия токена, новых --version/--help без файлов/сети, ошибок конфигурации до I/O, headless отключения CLI, новой token utility и офлайн-скриптов. Проверить недоступность удалённых путей/entrypoints и отсутствие управляющего запроса без ControlSession через новый публичный API.
+- [x] REFACTOR и `make check PYTHON=python3`.
 
 ### 16. Проверить полный продукт, упаковку и офлайн-CI
 

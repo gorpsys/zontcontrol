@@ -9,8 +9,7 @@ from unittest.mock import patch
 
 from scripts.release_version import application_version, parse_version, read_release
 from zontcontrol import __version__
-from zontcontrol.cli import main as read_main
-from zontcontrol.control import main as control_main
+from zontcontrol.application import main as read_main
 from zontcontrol.get_token import main as token_main
 
 
@@ -25,9 +24,9 @@ class VersionTests(unittest.TestCase):
                          "zontcontrol.__version__")
 
     def test_version_commands_do_not_prompt_or_create_api_client(self):
-        for name, main in (("zontcontrol.cli", read_main), ("zontcontrol.control", control_main),
+        for name, main in (("zontcontrol.application", read_main),
                            ("zontcontrol.get_token", token_main)):
-            factory = f"{name}.create_token" if name.endswith("get_token") else f"{name}.ZontClient"
+            factory = f"{name}.create_token" if name.endswith("get_token") else f"{name}.create_application"
             with self.subTest(name=name), patch("sys.argv", [name, "--version"]), \
                     patch(factory) as client, patch("builtins.input") as prompt, \
                     contextlib.redirect_stdout(io.StringIO()) as output:

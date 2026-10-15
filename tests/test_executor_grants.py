@@ -76,6 +76,21 @@ class GrantTests(unittest.TestCase):
         self.assertIsNone(self.store.read_r2())
         self.assertEqual(self.server.read_device(42)['name'], PREFIX)
 
+    def test_shutdown_settles_completion_without_new_grant_or_renewal(self):
+        self.pending()
+        self.coordinator.step(accepting=False)
+        self.assertIsNone(self.store.read_r2())
+        self.coordinator.step()
+        session = self.gate.try_acquire(self.owner, 42, lease_seconds=60)
+        granted = self.store.read_r2()
+        with self.assertRaises(DeviceControlBusy):
+            self.gate.renew(self.owner, session, lease_seconds=60)
+        self.coordinator.step(accepting=False)
+        self.assertEqual(self.store.read_r2(), granted)
+        self.gate.release(self.owner, session)
+        self.coordinator.step(accepting=False)
+        self.assertIsNone(self.store.read_r2())
+
     def test_independent_applications_busy_explicit_pending_retry_no_queue(self):
         session = self.acquire()
         other, owner = self.make_gate(), uuid4()

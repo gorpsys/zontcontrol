@@ -1,4 +1,4 @@
-"""Credential headers and explicit token issuance, independent of ZontClient."""
+"""Credential headers and explicit token issuance, independent of algorithms."""
 
 import base64
 import json

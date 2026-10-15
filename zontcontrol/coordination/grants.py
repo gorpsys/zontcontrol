@@ -45,8 +45,11 @@ class GrantCoordinator:
                 and request.grant_id == grant.grant_id
                 and request.grant_revision == grant.revision)
 
-    def step(self):
+    def step(self, *, accepting=True):
         """Confirm R1 before R2 work; never replace an unexpired foreign grant.
+
+        accepting=False only settles completion/expiry during host shutdown;
+        it cannot grant a pending request or renew a heartbeat.
 
         The full window includes R1 confirmation, R2 reads and any write/readback.
         Expiry observation begins at the first R2 response and ends at the send
@@ -75,7 +78,7 @@ class GrantCoordinator:
                     and request.state == "finished" and self._matches(request, current)
                     and request.nonce == current.nonce):
                 desired = None
-            elif (current is not None and request is not None
+            elif (accepting and current is not None and request is not None
                     and request.state == "heartbeat" and self._matches(request, current)
                     and current.leader_token == record.leader.token
                     and request.nonce != current.nonce and not expired):
@@ -85,7 +88,7 @@ class GrantCoordinator:
                                       clock_rho(request.lease_seconds), request.nonce)
             elif current is None or expired:
                 desired = None
-                if request is not None and request.state == "request":
+                if accepting and request is not None and request.state == "request":
                     # An expired request/nonce must not resurrect its old grant.
                     if current is None or (request.owner, request.request_id) != (
                             current.owner, current.request_id):

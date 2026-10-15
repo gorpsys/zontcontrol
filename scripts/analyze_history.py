@@ -3,8 +3,6 @@
 import argparse
 import bisect
 import json
-import math
-import os
 import statistics
 import sys
 from datetime import datetime, timedelta, timezone
@@ -12,8 +10,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from zontcontrol.client import ZontClient
+from zontcontrol.application import create_read_controller
 from zontcontrol.history import cli_period
+from scripts.history_archive import read_archive
 
 
 MOSCOW = ZoneInfo("Europe/Moscow")
@@ -95,70 +94,35 @@ def summarize(device, circuit, air, coolant):
     }
 
 
-def plot(device, circuit, air, coolant, start, end, output):
-    # Keep matplotlib configuration entirely in /tmp.
-    os.environ["MPLCONFIGDIR"] = "/tmp/zont-history-matplotlib"
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.dates as dates
-    import matplotlib.pyplot as plt
+def plot(controller, device_id, circuit_id, air_id, coolant_id, start, end, output):
+    """Produce standalone SVGs with the application's stdlib renderer."""
+    from zontcontrol.algorithms.charts import GraphSpec, SeriesSpec, render_charts
+    from zontcontrol.controller.contracts import ValueKey
 
-    series = circuit["series"]
-    fig, axes = plt.subplots(3, 2, figsize=(16, 11), sharex="col", constrained_layout=True)
-    colors = {"actual": "#147b89", "target": "#d75a35"}
-
-    def draw(axis, points, label, *, step=False, color=None):
-        if not points:
-            return
-        times, values = [], []
-        previous = None
-        for point in points:
-            time = moment(point)
-            if not step and previous is not None and (time - previous).total_seconds() > 120:
-                times.append(time)
-                values.append(math.nan)
-            times.append(time)
-            values.append(math.nan if point["value"] is None else point["value"])
-            previous = time
-        if step:
-            axis.step(times + [end], values + [values[-1]], where="post", label=label, color=color, linewidth=1.6)
-        else:
-            axis.plot(times, values, label=label, color=color, linewidth=1.4)
-
-    for column in (0, 1):
-        draw(axes[0, column], air["points"], "Фактическая температура воздуха", color=colors["actual"])
-        draw(axes[0, column], series["target_temp"], "target_temp контура", step=True, color=colors["target"])
-        draw(axes[1, column], coolant["points"], "Фактическая температура теплоносителя", color=colors["actual"])
-        draw(axes[1, column], series["setpoint_temp"], "Расчётная уставка теплоносителя", step=True, color=colors["target"])
-        axes[0, column].set_ylabel("°C")
-        axes[1, column].set_ylabel("°C")
-    axes[0, 0].set_title("Воздух — последние сутки")
-    axes[1, 0].set_title("Теплоноситель — последние сутки")
-    axes[0, 1].set_title("Воздух — последние два часа")
-    axes[1, 1].set_title("Теплоноситель — последние два часа")
-    draw(axes[2, 0], series["worktime"], "worktime контура", color="#69519d")
-    axes[2, 0].set_ylabel("Секунды")
-    axes[2, 0].set_title("Работа контура по ZONT — последние сутки")
-    draw(axes[2, 1], series["worktime"], "worktime", color="#69519d")
-    axes[2, 1].set_ylabel("Секунды")
-    axes[2, 1].set_title("Время работы контура — последние два часа")
-    for row in range(3):
-        for column in (0, 1):
-            axis = axes[row, column]
-            axis.set_xlim(start if column == 0 else max(start, end - timedelta(hours=2)), end)
-            axis.grid(alpha=0.2)
-            axis.legend(loc="upper left", fontsize=8)
-            axis.xaxis.set_major_locator(dates.AutoDateLocator(minticks=5, maxticks=8))
-            axis.xaxis.set_major_formatter(dates.DateFormatter("%d.%m\n%H:%M", tz=MOSCOW))
-    fig.suptitle(
-        f"ZONT SMART 2.0 — {circuit['name']}\n"
-        f"{start.astimezone(MOSCOW):%d.%m.%Y %H:%M} — {end.astimezone(MOSCOW):%d.%m.%Y %H:%M}, Москва",
-        fontsize=14,
+    graphs = (
+        GraphSpec('air', 'Воздух и цель', (
+            SeriesSpec(ValueKey(device_id, 'sensor', air_id, 'value')),
+            SeriesSpec(ValueKey(device_id, 'circuit', circuit_id, 'target_temp')))),
+        GraphSpec('coolant', 'Теплоноситель и уставка', (
+            SeriesSpec(ValueKey(device_id, 'sensor', coolant_id, 'value')),
+            SeriesSpec(ValueKey(device_id, 'circuit', circuit_id, 'setpoint_temp')))),
+        GraphSpec('worktime', 'Запрос нагрева', (
+            SeriesSpec(ValueKey(device_id, 'circuit', circuit_id, 'worktime')),)),
     )
+    devices = tuple(row for row in controller.list_devices() if row.device_id == device_id)
+    descriptors = controller.describe_values(device_id)
+    keys = tuple(item.key for graph in graphs for item in graph.series)
+    result = controller.read_history(device_id, keys, start, end)
+    charts = render_charts(graphs, devices=devices, descriptors=descriptors,
+                           histories=(result,), start=start, end=end,
+                           display_timezone='Europe/Moscow')
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=160)
-    fig.savefig(output.with_suffix(".svg"))
-    plt.close(fig)
+    paths = []
+    for chart in charts:
+        path = output.with_name(f'{output.stem}-{chart.graph_id}.svg')
+        path.write_text(chart.svg, encoding='utf-8')
+        paths.append(str(path.resolve()))
+    return paths
 
 
 def main():
@@ -174,16 +138,16 @@ def main():
     parser.add_argument("--quiet", action="store_true", help="Печатать только период и пути графиков")
     args = parser.parse_args()
     start, end = cli_period(args.start, args.end, None if args.start else args.hours)
-    client = ZontClient(os.environ["ZONT_CONTACT"], token=os.environ["ZONT_TOKEN"])
-    data = client.read_history(start, end, device_id=args.device_id, circuit_id=args.circuit_id)
+    client = create_read_controller()
+    data = read_archive(client, args.device_id, args.circuit_id, start, end)
     device = data["devices"][0]
     circuit = next(c for c in device["circuits"] if c["id"] == args.circuit_id)
     air = next(s for s in device["temperature_sensors"] if s["id"] == args.air_sensor_id)
     coolant = next(s for s in device["temperature_sensors"] if s["id"] == args.coolant_sensor_id)
     summary = {"period": data["requested_period"], **summarize(device, circuit, air, coolant)}
     if args.plot:
-        plot(device, circuit, air, coolant, start, end, args.plot)
-        summary["plot"] = str(args.plot.resolve())
+        summary["plot"] = plot(client, args.device_id, args.circuit_id, args.air_sensor_id,
+                               args.coolant_sensor_id, start, end, args.plot)
     if args.quiet:
         print(json.dumps({key: summary[key] for key in ("period", "plot") if key in summary},
                          ensure_ascii=False))
