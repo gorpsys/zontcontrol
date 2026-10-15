@@ -95,9 +95,12 @@ class FakeMetadataAdapter:
         self.normalize = {}
         self.write_mode = "apply"
         self.fail_confirmation = False
+        self.read_delay = 0
+        self.write_delay = 0
         self._confirmation_pending = False
 
     def read_metadata_field(self, device_id, field):
+        self.server.clock.advance(self.read_delay)
         if self._confirmation_pending:
             self._confirmation_pending = False
             if self.fail_confirmation:
@@ -108,6 +111,7 @@ class FakeMetadataAdapter:
         self.writes.append((device_id, field, value))
         normalized = self.normalize.get(field, lambda raw: raw)(value)
         request = self.server.send_update(device_id, {field: normalized})
+        self.server.clock.advance(self.write_delay)
         if self.write_mode == "defer":
             self.server.respond(request, lose_response=True)
         self.server.apply(request)

@@ -24,6 +24,13 @@ class FakeClock:
         with self._lock:
             return self._wall
 
+    def wait(self, cancelled, seconds):
+        """Advance a local-duration wait without sleeping in offline tests."""
+        if cancelled.is_set():
+            return True
+        self.advance(seconds / self._rate)
+        return cancelled.is_set()
+
     def advance(self, real_seconds):
         """Advance elapsed time, also usable to model a suspended participant."""
         if not math.isfinite(real_seconds) or real_seconds < 0:
