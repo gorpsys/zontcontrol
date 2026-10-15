@@ -104,6 +104,12 @@ class ZontAdapter:
         self._request(f"{FULL_API_URL}/update_device", body={"device_id": device_id, field: value},
                       write=True)
 
+    def read_metadata_field(self, device_id, field):
+        """Project a single coordination register without interpreting its content."""
+        if field not in ("notes", "name"):
+            raise InvalidArguments()
+        return self.read_metadata(device_id)[field]
+
     def send_command(self, command: PreparedCommand):
         """Internal send primitive; the executor must enforce ownership first."""
         if not isinstance(command, PreparedCommand):

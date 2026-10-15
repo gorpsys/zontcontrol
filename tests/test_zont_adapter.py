@@ -55,6 +55,16 @@ class ZontAdapterTests(unittest.TestCase):
             self.assertEqual(json.loads(request.data), {"device_id": 42, field: "Дом [zc:тест]"})
             self.opener.open.assert_called_once()
 
+    def test_metadata_field_read_preserves_exact_value_and_rejects_other_fields(self):
+        self.answer(devices=[{"id": 42, "name": " Дом  ", "notes": None}])
+        self.assertEqual(self.adapter.read_metadata_field(42, "name"), " Дом  ")
+        self.answer(devices=[{"id": 42, "name": " Дом  ", "notes": None}])
+        self.assertIsNone(self.adapter.read_metadata_field(42, "notes"))
+        self.opener.open.reset_mock()
+        with self.assertRaises(InvalidArguments):
+            self.adapter.read_metadata_field(42, "heating")
+        self.opener.open.assert_not_called()
+
     def test_invalid_metadata_never_reaches_network(self):
         for args in ((0, "notes", ""), (True, "notes", ""), (42, "other", ""),
                      (42, "notes", None), (42, "name", {})):

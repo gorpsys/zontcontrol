@@ -84,3 +84,32 @@ class FakeZontServer:
             if entry["error"] is not None:
                 raise entry["error"]
             return True
+
+
+class FakeMetadataAdapter:
+    """Metadata client with explicit delayed application and failed readback."""
+
+    def __init__(self, server):
+        self.server = server
+        self.writes = []
+        self.normalize = {}
+        self.write_mode = "apply"
+        self.fail_confirmation = False
+        self._confirmation_pending = False
+
+    def read_metadata_field(self, device_id, field):
+        if self._confirmation_pending:
+            self._confirmation_pending = False
+            if self.fail_confirmation:
+                raise DeviceUnavailable()
+        return self.server.read_device(device_id)[field]
+
+    def update_metadata(self, device_id, field, value):
+        self.writes.append((device_id, field, value))
+        normalized = self.normalize.get(field, lambda raw: raw)(value)
+        request = self.server.send_update(device_id, {field: normalized})
+        if self.write_mode == "defer":
+            self.server.respond(request, lose_response=True)
+        self.server.apply(request)
+        self.server.respond(request, lose_response=self.write_mode == "lose_response")
+        self._confirmation_pending = True
