@@ -1,6 +1,6 @@
 # Приведение zontcontrol к согласованной архитектуре
 
-Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–2.
+Дата: 15.10.2026, Europe/Moscow. Статус: выполняется; завершены этапы 1–3.
 Подход: **TDD**, по явному выбору владельца. Облако и деплой исключены.
 План создаётся по skill plan-writer и всем решениям последовательного ревью.
 Техническое обновление после сверки autorepeater/master от 15.10.2026:
@@ -341,14 +341,23 @@ handler, ZIP функции, deploy scripts, OIDC и изменений ресу
 
 **Files:**
 - Create: `zontcontrol/controller/service.py`, `tests/test_controller_reads.py`.
-- Modify: `zontcontrol/controller/zont.py`, `zontcontrol/history.py`, `zontcontrol/inventory.py`, `tests/test_history.py`, `tests/test_inventory.py`.
+- Modify: `zontcontrol/controller/zont.py`, `zontcontrol/history.py`, `zontcontrol/inventory.py`, `tests/test_history.py`, `tests/test_inventory.py`, `tests/test_zont_adapter.py`.
 
-- [ ] RED: список приборов, current/describe_values, calculated targets и все controls, два устройства с совпадающими ID и скрытый контур.
-- [ ] GREEN: реализовать read API поверх существующей нормализации; фактические датчики, цели, worktime, выбранный датчик и reset доступны по объявленным ключам.
-- [ ] RED/GREEN для исторической проекции, событий reset между минутами, unsupported history, null, measured_at=null и честного качества/покрытия.
-- [ ] Для длинных интервалов реализовать ограниченное разбиение запросов и объединение реальных точек; time_truncated/неполнота не исчезают при агрегации. Не достраивать измерения и не подставлять скрытый контур.
-- [ ] Дополнить тесты границ частей, повторных меток, частично отсутствующей истории и защиты от смешения current с historical.
-- [ ] REFACTOR и `make check PYTHON=python3`.
+- [x] RED: список приборов, current/describe_values, calculated targets и все controls, два устройства с совпадающими ID и скрытый контур.
+- [x] GREEN: реализовать read API поверх существующей нормализации; фактические датчики, цели, worktime, выбранный датчик и reset доступны по объявленным ключам.
+- [x] RED/GREEN для исторической проекции, событий reset между минутами, unsupported history, null, measured_at=null и честного качества/покрытия.
+- [x] Для длинных интервалов реализовать ограниченное разбиение запросов и объединение реальных точек; time_truncated/неполнота не исчезают при агрегации. Не достраивать измерения и не подставлять скрытый контур.
+- [x] Дополнить тесты границ частей, повторных меток, частично отсутствующей истории и защиты от смешения current с historical.
+- [x] REFACTOR и `make check PYTHON=python3`.
+
+Факт этапа 3: `ControllerService(adapter, clock=...)` не импортирует прототип;
+публичны только чтения/каталоги. Значения без времени измерения имеют
+`measured_at=None` и качество unknown (null — missing). История по умолчанию
+ограничена 31 частью по суткам; границы, null, отсутствующие части и конфликты
+повторных меток сохраняют причины неполноты. Цели и reset — ступенчатые ряды.
+Дробные UTC-границы запроса сохраняются, HTTP-интервал округляется наружу,
+точки фильтруются по точному интервалу без интерполяции. Полный офлайн
+`make check PYTHON=python3`: 169 тестов, синтаксис/ссылки/метаданные OK.
 
 ### 4. Ввести локальную монополию и исполнитель команд
 

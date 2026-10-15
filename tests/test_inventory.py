@@ -5,6 +5,8 @@ from unittest.mock import Mock, patch
 
 from zontcontrol.cli import main
 from zontcontrol.client import ZontClient, ZontError
+from zontcontrol.inventory import control_descriptors, value_descriptors
+from zontcontrol.controller.contracts import InvalidArguments
 
 
 def inventory_device():
@@ -34,6 +36,18 @@ def inventory_device():
 
 
 class InventoryTests(unittest.TestCase):
+    def test_value_and_control_identities_are_unique_per_kind(self):
+        raw = inventory_device()
+        raw['circuits'].append(dict(raw['circuits'][0]))
+        with self.assertRaises(InvalidArguments):
+            value_descriptors(raw)
+        with self.assertRaises(InvalidArguments):
+            control_descriptors(raw)
+        raw['circuits'].pop()
+        raw['controls']['buttons'][0]['id'] = 31
+        rows = control_descriptors(raw)
+        self.assertEqual(len([row for row in rows if row.key.element_id == 31]), 2)
+
     def setUp(self):
         self.client = ZontClient("owner@example.com", token="test-token")
         self.opener = Mock()

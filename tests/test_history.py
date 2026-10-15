@@ -6,7 +6,8 @@ from unittest.mock import Mock, patch
 
 from zontcontrol.client import ZontClient, ZontError
 from zontcontrol.cli import main
-from zontcontrol.history import cli_period, decode_delta_array
+from zontcontrol.history import cli_period, decode_delta_array, merge_history_points
+from zontcontrol.controller.contracts import HistoryPoint, Quality
 
 
 START = datetime.fromtimestamp(1000, timezone.utc)
@@ -41,6 +42,14 @@ def encoded(data):
 
 
 class DeltaArrayTests(unittest.TestCase):
+    def test_merge_conflict_remains_unknown_after_more_duplicate_points(self):
+        one = HistoryPoint(START, 1)
+        two = HistoryPoint(START, 2)
+        points, reasons = merge_history_points([
+            ((one,), ('missing_end',)), ((two,), ('missing_start',)), ((one,), ())])
+        self.assertEqual(points, (HistoryPoint(START, None, Quality.UNKNOWN),))
+        self.assertEqual(reasons, ('missing_end', 'missing_start', 'conflicting_timestamps'))
+
     def test_negative_delta_is_forward_time_and_absolute_reset_is_supported(self):
         points = decode_delta_array([[1000, 21], [-60, 22], [1150, 20]], START, END)
         times = [datetime.fromisoformat(point["time"]).timestamp() for point in points]

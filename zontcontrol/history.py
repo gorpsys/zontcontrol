@@ -3,16 +3,22 @@
 import math
 from datetime import datetime, timedelta, timezone
 
+from .controller.contracts import HistoryPoint, InvalidArguments, Quality, ValueType
+
 
 CIRCUIT_FIELDS = ("target_temp", "setpoint_temp", "mode_id", "status", "worktime", "target_sensor_id")
 
 
-def history_period(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+def history_period(start: datetime, end: datetime, *, preserve_precision: bool = False
+                   ) -> tuple[datetime, datetime]:
     for value in (start, end):
         if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("history timestamps must include a timezone")
-    start = start.astimezone(timezone.utc).replace(microsecond=0)
-    end = end.astimezone(timezone.utc).replace(microsecond=0)
+    start = start.astimezone(timezone.utc)
+    end = end.astimezone(timezone.utc)
+    if not preserve_precision:
+        start = start.replace(microsecond=0)
+        end = end.replace(microsecond=0)
     if start.timestamp() <= 0 or start >= end:
         raise ValueError("history start must be after 1970 and earlier than end")
     return start, end
@@ -117,3 +123,72 @@ def normalize_device_history(device: dict, response: dict, start: datetime, end:
         "time_truncated": truncated, "temperature_sensors": sensors,
         "circuits": circuits, "modes": device["modes"], "web_elements": web_elements,
     }
+
+
+def project_history(response, descriptor, start, end, *, received_at):
+    """Project one declared value, preserving native timestamps and missing data.
+
+    A missing archive channel/field is an empty part, never today's value. A
+    sparse state series is not interpolated, including reset pulses between
+    minute measurements. Boundary omissions are reported conservatively.
+    """
+    key = descriptor.key
+    channel, field = {
+        'sensor': ('z3k_temperature', None),
+        'circuit': ('z3k_heating_circuit', key.field),
+        'toggle_buttons': ('z3k_web_element', 'state'),
+    }[key.kind]
+    data = response.get(channel, {})
+    if not isinstance(data, dict):
+        raise InvalidArguments()
+    # Validate IDs even when no selected object has a row. Do not accept aliases
+    # such as "007" or two keys that would collapse onto the same numeric ID.
+    ids = [_object_id(item) for item in data]
+    if len(set(ids)) != len(ids) or any(str(value) != name for value, name in zip(ids, data)):
+        raise InvalidArguments()
+    rows = data.get(str(key.element_id), [] if field is None else {})
+    if field is not None:
+        if not isinstance(rows, dict):
+            raise InvalidArguments()
+        rows = rows.get(field, [])
+    decoded = decode_delta_array(rows, start, end, integer=descriptor.value_type in (
+        ValueType.INTEGER, ValueType.BOOLEAN))
+    reasons = []
+    points = []
+    for point in decoded:
+        value = point['value']
+        if descriptor.value_type is ValueType.BOOLEAN and value is not None:
+            if value not in (0, 1):
+                raise InvalidArguments()
+            value = bool(value)
+        moment = datetime.fromisoformat(point['time'])
+        if moment > received_at:
+            reasons.append('future_points')
+            continue
+        points.append(HistoryPoint(moment, value, Quality.MISSING if value is None else Quality.GOOD))
+    if not points:
+        reasons.append('missing_part')
+    else:
+        if points[0].measured_at != start:
+            reasons.append('missing_start')
+        if points[-1].measured_at != end:
+            reasons.append('missing_end')
+        if any(point.value is None for point in points):
+            reasons.append('null_values')
+    return tuple(points), tuple(dict.fromkeys(reasons))
+
+
+def merge_history_points(parts):
+    """Deduplicate equal boundary points and expose conflicting observations."""
+    points = {}
+    reasons = []
+    for rows, incomplete in parts:
+        reasons.extend(incomplete)
+        for point in rows:
+            old = points.get(point.measured_at)
+            if old is not None and old != point:
+                points[point.measured_at] = HistoryPoint(point.measured_at, None, Quality.UNKNOWN)
+                reasons.append('conflicting_timestamps')
+            else:
+                points[point.measured_at] = point
+    return tuple(points[moment] for moment in sorted(points)), tuple(dict.fromkeys(reasons))

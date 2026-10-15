@@ -121,7 +121,7 @@ class ZontAdapter:
         if type(include_controls) is not bool:
             raise InvalidArguments()
         try:
-            start, end = history_period(start, end)
+            start, end = history_period(start, end, preserve_precision=True)
         except (ValueError, TypeError, AttributeError):
             raise InvalidArguments() from None
         data_types = ["z3k_temperature", "z3k_heating_circuit"]
@@ -129,7 +129,10 @@ class ZontAdapter:
             data_types.append("z3k_web_element")
         data = self._request(f"{FULL_API_URL}/load_data", body={"requests": [{
             "device_id": device_id, "data_types": data_types,
-            "mintime": int(start.timestamp()), "maxtime": int(end.timestamp()),
+            # Queries use whole seconds and enclose the requested interval;
+            # the facade filters actual points to its exact original bounds.
+            "mintime": int(start.timestamp()),
+            "maxtime": int(end.timestamp()) + bool(end.microsecond),
         }]})
         responses = data.get("responses")
         if (not isinstance(responses, list) or len(responses) != 1

@@ -131,6 +131,15 @@ class ZontAdapterTests(unittest.TestCase):
         with self.assertRaises(DeviceUnavailable):
             self.adapter.load_history(42, start, end)
 
+    def test_history_query_encloses_fractional_interval_without_changing_measurements(self):
+        start = datetime(2026, 10, 1, microsecond=100000, tzinfo=timezone.utc)
+        end = start + timedelta(microseconds=800000)
+        self.answer(responses=[{'device_id': 42, 'ok': True}])
+        self.adapter.load_history(42, start, end)
+        body = json.loads(self.opener.open.call_args.args[0].data)['requests'][0]
+        self.assertEqual(body['mintime'], int(start.timestamp()))
+        self.assertEqual(body['maxtime'], int(start.timestamp()) + 1)
+
     def test_control_send_success_is_api_acknowledgement_only(self):
         command = prepare_command("set-switch", 42, 10, target_state=False)
         self.answer()
