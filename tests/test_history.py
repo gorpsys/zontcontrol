@@ -77,7 +77,7 @@ class HistoryClientTests(unittest.TestCase):
     def setUp(self):
         self.client = ZontClient("owner@example.com", token="test-token")
         self.opener = Mock()
-        self.client._opener = self.opener
+        self.client._transport._opener = self.opener
 
     def load(self, packet=None, **kwargs):
         packet = response() if packet is None else packet

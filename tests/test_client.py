@@ -1,5 +1,3 @@
-import base64
-import getpass
 import io
 import json
 import unittest
@@ -8,8 +6,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 
 from zontcontrol.cli import main
-from zontcontrol.client import ZontClient, ZontError, _NoRedirect
-from zontcontrol.get_token import main as get_token_main
+from zontcontrol.client import ZontClient, ZontError
 
 
 def response(devices):
@@ -42,7 +39,7 @@ class ClientTests(unittest.TestCase):
     def setUp(self):
         self.client = ZontClient("owner@example.com", token="test-token")
         self.opener = Mock()
-        self.client._opener = self.opener
+        self.client._transport._opener = self.opener
 
     def test_token_request_filters_and_preserves_zero(self):
         self.opener.open.return_value = response([device()])
@@ -61,47 +58,6 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(snapshot["devices"][0]["sensors"][0]["value"], 0)
         self.assertNotIn("PRIVATE", json.dumps(snapshot))
         self.assertTrue(snapshot["fetched_at"].endswith("+00:00"))
-
-    def test_basic_auth(self):
-        client = ZontClient("owner@example.com", login="user", password="password")
-        client._opener = self.opener
-        self.opener.open.return_value = response([])
-        client.read_sensors()
-        request = self.opener.open.call_args.args[0]
-        encoded = base64.b64encode(b"user:password").decode()
-        self.assertEqual(request.get_header("Authorization"), f"Basic {encoded}")
-        self.assertIsNone(request.get_header("X-zont-token"))
-
-    def test_create_token_uses_basic_auth_and_json_post(self):
-        client = ZontClient("owner@example.com", login="user", password="password")
-        client._opener = self.opener
-        self.opener.open.return_value = io.BytesIO(
-            b'{"ok": true, "token": "issued-token", "token_id": "123"}')
-        self.assertEqual(client.create_token("test app"), "issued-token")
-        request = self.opener.open.call_args.args[0]
-        self.assertEqual(request.get_method(), "POST")
-        self.assertEqual(request.full_url, "https://my.zont.online/api/widget/v3/authtokens")
-        self.assertEqual(json.loads(request.data), {"client_name": "test app"})
-        self.assertEqual(request.get_header("Content-type"), "application/json")
-        self.assertEqual(request.get_header("Authorization"),
-                         "Basic " + base64.b64encode(b"user:password").decode())
-        self.assertIsNone(request.get_header("X-zont-token"))
-        self.assertEqual(self.opener.open.call_args.kwargs["timeout"], 15)
-
-    def test_create_token_requires_credentials(self):
-        with self.assertRaises(ValueError):
-            self.client.create_token()
-        self.opener.open.assert_not_called()
-
-    def test_create_token_rejects_missing_or_invalid_token(self):
-        client = ZontClient("owner@example.com", login="user", password="password")
-        client._opener = self.opener
-        for token in [None, "", "  ", 123, "bad\r\nheader"]:
-            with self.subTest(token=token):
-                self.opener.open.return_value = io.BytesIO(
-                    json.dumps({"ok": True, "token": token}).encode())
-                with self.assertRaises(ZontError):
-                    client.create_token()
 
     def test_offline_missing_value_and_triggered(self):
         data = device(online=False, value=None)
@@ -277,13 +233,7 @@ class ClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ZontClient("owner@example.com\r\nInjected: value", token="test-token")
         with self.assertRaises(ValueError):
-            ZontClient("owner@example.com", token="test-token", login="user", password="pw")
-        with self.assertRaises(ValueError):
             self.client.read_sensors(-1)
-
-    def test_redirects_are_refused(self):
-        self.assertIsNone(_NoRedirect().redirect_request(
-            None, None, 302, "", {}, "https://other.example.com"))
 
 
 class CliTests(unittest.TestCase):
@@ -319,82 +269,6 @@ class CliTests(unittest.TestCase):
         self.assertEqual(client.call_args.kwargs["token"], "injected-token")
 
 
-class TokenCliTests(unittest.TestCase):
-    @patch("zontcontrol.get_token.ZontClient")
-    @patch("zontcontrol.get_token.getpass.getpass", return_value="password-secret")
-    @patch("builtins.input", return_value="user")
-    def test_prompts_for_credentials_and_prints_only_token(self, login, password, client):
-        client.return_value.create_token.return_value = "issued-token"
-        with patch("sys.argv", ["zontcontrol.get_token", "--contact", "owner@example.com"]), \
-                patch("sys.stdout", new_callable=io.StringIO) as stdout, \
-                patch("sys.stderr", new_callable=io.StringIO) as stderr:
-            self.assertEqual(get_token_main(), 0)
-        self.assertEqual(stdout.getvalue(), "issued-token\n")
-        self.assertIn("Логин ZONT:", stderr.getvalue())
-        self.assertNotIn("issued-token", stderr.getvalue())
-        self.assertNotIn("password-secret", stdout.getvalue() + stderr.getvalue())
-        password.assert_called_once_with("Пароль ZONT: ")
-        login.assert_called_once_with()
-        client.assert_called_once_with("owner@example.com", login="user",
-                                       password="password-secret", timeout=15)
-        client.return_value.create_token.assert_called_once_with("zontcontrol")
-
-    @patch("zontcontrol.get_token.ZontClient")
-    @patch("zontcontrol.get_token.getpass.getpass", return_value="password-secret")
-    @patch("builtins.input", side_effect=["owner@example.com", "user"])
-    def test_contact_prompt_and_custom_name(self, login, password, client):
-        client.return_value.create_token.return_value = "issued-token"
-        with patch.dict("os.environ", {}, clear=True), \
-                patch("sys.argv", ["zontcontrol.get_token", "--client-name", "my app"]), \
-                patch("sys.stdout", new_callable=io.StringIO), \
-                patch("sys.stderr", new_callable=io.StringIO):
-            self.assertEqual(get_token_main(), 0)
-        self.assertEqual(login.call_count, 2)
-        self.assertEqual(client.call_args.args, ("owner@example.com",))
-        client.return_value.create_token.assert_called_once_with("my app")
-
-    @patch("zontcontrol.get_token.ZontClient")
-    @patch("builtins.input", return_value="user")
-    def test_cancellation_does_not_print_token(self, login, client):
-        for error in [EOFError(), KeyboardInterrupt()]:
-            with self.subTest(error=type(error).__name__), \
-                    patch("sys.argv", ["zontcontrol.get_token", "--contact", "owner@example.com"]), \
-                    patch("zontcontrol.get_token.getpass.getpass", side_effect=error), \
-                    patch("sys.stdout", new_callable=io.StringIO) as stdout, \
-                    patch("sys.stderr", new_callable=io.StringIO):
-                self.assertEqual(get_token_main(), 1)
-                self.assertEqual(stdout.getvalue(), "")
-        client.assert_not_called()
-
-    @patch("zontcontrol.get_token.ZontClient")
-    @patch("builtins.input", return_value="user")
-    @patch("zontcontrol.get_token.getpass.getpass", return_value="password-secret")
-    def test_api_failure_returns_nonzero_and_empty_stdout(self, password, login, client):
-        client.return_value.create_token.side_effect = ZontError("access denied")
-        with patch("sys.argv", ["zontcontrol.get_token", "--contact", "owner@example.com"]), \
-                patch("sys.stdout", new_callable=io.StringIO) as stdout, \
-                patch("sys.stderr", new_callable=io.StringIO) as stderr:
-            self.assertEqual(get_token_main(), 1)
-            self.assertEqual(stdout.getvalue(), "")
-            self.assertIn("access denied", stderr.getvalue())
-            self.assertNotIn("password-secret", stderr.getvalue())
-
-    @patch("zontcontrol.get_token.ZontClient")
-    @patch("builtins.input", return_value="user")
-    def test_password_plaintext_fallback_is_refused(self, login, client):
-        import warnings
-
-        def plaintext_fallback(*args, **kwargs):
-            warnings.warn("no terminal", getpass.GetPassWarning)
-            self.fail("plaintext fallback was reached")
-
-        with patch("sys.argv", ["zontcontrol.get_token", "--contact", "owner@example.com"]), \
-                patch("zontcontrol.get_token.getpass.getpass", side_effect=plaintext_fallback), \
-                patch("sys.stdout", new_callable=io.StringIO) as stdout, \
-                patch("sys.stderr", new_callable=io.StringIO):
-            self.assertEqual(get_token_main(), 1)
-            self.assertEqual(stdout.getvalue(), "")
-        client.assert_not_called()
 
 
 if __name__ == "__main__":

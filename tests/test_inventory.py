@@ -37,7 +37,7 @@ class InventoryTests(unittest.TestCase):
     def setUp(self):
         self.client = ZontClient("owner@example.com", token="test-token")
         self.opener = Mock()
-        self.client._opener = self.opener
+        self.client._transport._opener = self.opener
 
     def catalog(self, device):
         self.opener.open.return_value = io.BytesIO(json.dumps({"ok": True, "devices": [device]}).encode())

@@ -6,7 +6,8 @@ import os
 import sys
 import warnings
 
-from .client import ZontClient, ZontError
+from .controller.auth import create_token
+from .controller.contracts import ControllerError
 from . import __version__
 
 
@@ -32,13 +33,13 @@ def main() -> int:
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
             password = getpass.getpass("Пароль ZONT: ")
-        client = ZontClient(contact, login=login, password=password, timeout=args.timeout)
-        token = client.create_token(args.client_name)
+        token = create_token(contact, login, password, client_name=args.client_name,
+                             timeout=args.timeout)
         print(token)
         return 0
     except getpass.GetPassWarning:
         print("Нужен терминал со скрытым вводом пароля.", file=sys.stderr)
-    except (ZontError, ValueError) as error:
+    except (ControllerError, ValueError) as error:
         print(f"Ошибка: {error}", file=sys.stderr)
     except (EOFError, KeyboardInterrupt):
         print("Ввод отменён.", file=sys.stderr)

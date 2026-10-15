@@ -27,8 +27,9 @@ class VersionTests(unittest.TestCase):
     def test_version_commands_do_not_prompt_or_create_api_client(self):
         for name, main in (("zontcontrol.cli", read_main), ("zontcontrol.control", control_main),
                            ("zontcontrol.get_token", token_main)):
+            factory = f"{name}.create_token" if name.endswith("get_token") else f"{name}.ZontClient"
             with self.subTest(name=name), patch("sys.argv", [name, "--version"]), \
-                    patch(f"{name}.ZontClient") as client, patch("builtins.input") as prompt, \
+                    patch(factory) as client, patch("builtins.input") as prompt, \
                     contextlib.redirect_stdout(io.StringIO()) as output:
                 with self.assertRaises(SystemExit) as caught:
                     main()

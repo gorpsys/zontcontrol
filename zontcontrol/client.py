@@ -1,37 +1,20 @@
-"""Sensor reading and token issuance through the official ZONT Widget API v3."""
+"""Prototype readers/commands awaiting migration to the controller facade."""
 
-import base64
 import json
 import math
-import socket
 from datetime import datetime, timezone
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import Request
 
 from .inventory import device_inventory
 from .commands import PreparedCommand, validate_element
 from .history import history_period, normalize_device_history
-
-
-API_URL = "https://my.zont.online/api/widget/v3"
-MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+from .controller.auth import token_headers
+from .controller.transport import API_URL, HttpTransport, TransportError
 
 
 class ZontError(Exception):
     """An error safe to display without credentials or response bodies."""
-
-
-class _NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        # Never forward credentials to a redirected host.
-        return None
-
-
-def _header_value(value: str, name: str) -> str:
-    if not value.strip() or any(ord(char) < 32 or ord(char) > 126 for char in value):
-        raise ValueError(f"{name} must contain nonempty printable ASCII text")
-    return value
 
 
 class ZontClient:
@@ -39,49 +22,11 @@ class ZontClient:
         self,
         contact: str,
         *,
-        token: str | None = None,
-        login: str | None = None,
-        password: str | None = None,
+        token: str,
         timeout: float = 15,
     ):
-        if not math.isfinite(timeout) or not 0 < timeout <= 120:
-            raise ValueError("timeout must be between 0 and 120 seconds")
-        self._timeout = timeout
-        self._headers = {
-            "X-ZONT-Client": _header_value(contact, "contact"),
-            "Accept": "application/json",
-        }
-        if token is not None:
-            if login is not None or password is not None:
-                raise ValueError("choose token or login authentication")
-            self._headers["X-ZONT-Token"] = _header_value(token, "token")
-        else:
-            if not login or not password or ":" in login:
-                raise ValueError("login and password are required; login cannot contain ':'")
-            credentials = base64.b64encode(f"{login}:{password}".encode()).decode("ascii")
-            self._headers["Authorization"] = f"Basic {credentials}"
-        self._opener = build_opener(_NoRedirect())
-
-    def create_token(self, client_name: str = "zontcontrol") -> str:
-        """Issue a token using Basic Auth without persisting the secret."""
-        if "Authorization" not in self._headers:
-            raise ValueError("token creation requires login and password")
-        if not isinstance(client_name, str) or not client_name.strip():
-            raise ValueError("client_name must be nonempty text")
-        request = Request(
-            f"{API_URL}/authtokens",
-            data=json.dumps({"client_name": client_name}).encode("utf-8"),
-            headers={**self._headers, "Content-Type": "application/json"},
-            method="POST",
-        )
-        data = self._request(request)
-        token = data.get("token")
-        if not isinstance(token, str):
-            raise ZontError("API response does not contain a valid token")
-        try:
-            return _header_value(token, "token")
-        except ValueError:
-            raise ZontError("API response does not contain a valid token") from None
+        self._headers = token_headers(contact, token)
+        self._transport = HttpTransport(timeout=timeout)
 
     def read_sensors(self, device_id: int | None = None) -> dict:
         """Return sensors and heating targets; fetched_at is NOT measurement time."""
@@ -264,28 +209,11 @@ class ZontClient:
 
     def _request(self, request: Request) -> dict:
         try:
-            with self._opener.open(request, timeout=self._timeout) as response:
-                raw = response.read(MAX_RESPONSE_BYTES + 1)
-        except HTTPError as error:
-            status = error.code
-            error.close()
-            if status in (401, 403):
-                raise ZontError("access denied: check credentials and API access") from None
-            if status == 429:
-                raise ZontError("API rate limit exceeded; try again later") from None
-            raise ZontError(f"ZONT returned HTTP {status}") from None
-        except (URLError, TimeoutError, socket.timeout, OSError):
-            raise ZontError("could not reach ZONT within the request timeout") from None
-        if len(raw) > MAX_RESPONSE_BYTES:
-            raise ZontError("API response exceeds the size limit")
-        try:
-            data = json.loads(raw)
-        except (ValueError, UnicodeError):
-            raise ZontError("ZONT returned invalid JSON") from None
-        if not isinstance(data, dict) or data.get("ok") is not True:
-            # Server error strings may contain secrets. Do not print the raw body.
-            raise ZontError("ZONT API rejected the request (ok is not true)")
-        return data
+            return self._transport.request(request)
+        except TransportError as error:
+            # Temporary prototype consumer, removed after its remaining readers
+            # migrate. New adapters never call this client or parse ZontError.
+            raise ZontError(str(error)) from None
 
 
 def _device_snapshot(device: dict) -> dict:
