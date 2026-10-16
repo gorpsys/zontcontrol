@@ -271,6 +271,7 @@ def create_application(*, environ=None, reader=read_json, catalog=BUILTIN_SPECS,
     controller = ControllerService(adapter, executor=executor)
 
     def close_resources():
+        executor.wait_idle()
         try:
             coordination.close()
         finally:
@@ -281,6 +282,7 @@ def create_application(*, environ=None, reader=read_json, catalog=BUILTIN_SPECS,
                     sink.close()
 
     registry = AlgorithmRegistry(registry_config, controller.for_consumer,
+                                 begin_close_controller=executor.begin_close,
                                  close_controller=close_resources)
     app = Application(controller, coordination, registry)
     try:

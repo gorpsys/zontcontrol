@@ -179,25 +179,26 @@ class ComposedCoordinationTests(unittest.TestCase):
         def cleanup():
             resume.set()
             thread.join(2)
-            for _, worker in tuple(self.app._coordination._devices.values()):
-                worker.cancelled.set()
-                worker.leader.stop()
-            self.app._coordination.close()
+            self.app.close(wait_timeout=2)
             self.assertFalse(thread.is_alive())
         self.addCleanup(cleanup)
         with patch.object(adapter, 'read_metadata', side_effect=blocked):
             thread.start()
             self.assertTrue(entered.wait(1))
-            self.assertTrue(self.app.close())
+            self.assertFalse(self.app.close(wait_timeout=.05))
+            self.assertFalse(self.transport.closed)
             resume.set()
             thread.join(1)
+            self.assertTrue(self.app.close(wait_timeout=1))
         self.assertFalse(thread.is_alive())
         self.assertEqual(len(errors), 1)
-        self.assertIsInstance(errors[0], ControlOwnershipRequired)
-        self.assertEqual(self.app._coordination._devices, {})
+        self.assertIsInstance(errors[0], (ControlOwnershipRequired, DeviceControlBusy))
+        self.assertTrue(self.transport.closed)
+        self.assertTrue(all(not worker.thread.is_alive()
+                            for _, worker in self.app._coordination._devices.values()))
 
     def test_deep_metadata_response_does_not_kill_coordinator_worker(self):
-        self.acquire()
+        session = self.acquire()
         opener = Mock()
         def response(request, **kwargs):
             return io.BytesIO(json.dumps(self.transport.request(request)).encode())
@@ -219,6 +220,7 @@ class ComposedCoordinationTests(unittest.TestCase):
         scheduled = self.clock.waits.get(timeout=1)
         self.clock.waits.put(scheduled)
         self.assertTrue(worker.thread.is_alive())
+        self.owner.release_control(session)
 
     def test_changed_leader_rejects_new_send_but_does_not_release_local_owner(self):
         session = self.acquire()
@@ -241,11 +243,12 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.owner.release_control(session)
 
     def test_device_name_recovery_validates_exact_suffix_before_preserving_prefix(self):
-        self.acquire()
+        session = self.acquire()
         self.assertEqual(original_name(self.transport.raw['name']), 'Дом')
         self.assertEqual(original_name('Дом'), 'Дом')
         with self.assertRaises(RecordError):
             original_name('Дом [zc:v1 управление занято malformed]')
+        self.owner.release_control(session)
 
     def test_host_services_leader_renewals_without_extending_executor_session(self):
         session = self.acquire()

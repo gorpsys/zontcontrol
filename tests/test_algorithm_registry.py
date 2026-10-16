@@ -44,11 +44,12 @@ def spec(name='reset', modes=DUAL, factory=Module, minimum=0, requirements=froze
 
 class RegistryTests(unittest.TestCase):
     def registry(self, specs, *, disabled=(), autostart=False, pairs=None,
-                 bind=None, capabilities=None, close=None):
+                 bind=None, capabilities=None, close=None, begin_close=None):
         if pairs is None:
             pairs = {s.algorithm_id: OnceTimeout(.01, 1) for s in specs if Mode.ONCE in s.modes}
         config = RegistryConfig(frozenset(disabled), autostart, pairs)
         registry = AlgorithmRegistry(config, bind or (lambda: object()),
+                                     begin_close_controller=begin_close,
                                      close_controller=close,
                                      **({} if capabilities is None else
                                         {'available_capabilities': capabilities}))
@@ -423,6 +424,169 @@ class RegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '^Shared controller shutdown failed$'):
                 registry.close()
         close.assert_called_once_with()
+
+    def test_early_close_hook_precedes_cancellation_and_all_finally(self):
+        effects, handles = [], []
+        entered = Barrier(3)
+        finish = Event()
+
+        class Worker(Module):
+            def run_continuous(self, context):
+                try:
+                    entered.wait(1)
+                    context.wait()
+                finally:
+                    finish.wait()
+                    effects.append('finally')
+
+        def begin_close():
+            self.assertTrue(all(not h.context.cancelled.is_set() for h in handles))
+            effects.append('admission')
+
+        registry, _ = self.registry([spec('one', factory=Worker), spec('two', factory=Worker)],
+                                    begin_close=begin_close,
+                                    close=lambda: effects.append('resources'))
+        self.addCleanup(finish.set)
+        handles.extend(registry.start(name) for name in ('one', 'two'))
+        entered.wait(1)
+        self.assertFalse(registry.close(wait_timeout=0))
+        self.assertTrue(all(h.context.cancelled.is_set() for h in handles))
+        self.assertEqual(effects, ['admission'])
+        with self.assertRaises(AlgorithmBusy):
+            registry.start('one')
+        finish.set()
+        self.assertTrue(registry.close(wait_timeout=1))
+        self.assertTrue(registry.close(wait_timeout=0))
+        self.assertEqual(effects, ['admission', 'finally', 'finally', 'resources'])
+
+    def test_invalid_close_timeout_does_not_begin_shutdown(self):
+        begin, close = Mock(), Mock()
+        registry, _ = self.registry([spec()], begin_close=begin, close=close)
+        for timeout in (-1, True, '1', float('inf'), float('nan')):
+            with self.subTest(timeout=timeout), self.assertRaises(ValueError):
+                registry.close(wait_timeout=timeout)
+        begin.assert_not_called()
+        close.assert_not_called()
+        self.assertFalse(registry._closed)
+        self.assertFalse(registry._close_started)
+        self.assertIs(registry.run_once('reset'), SUCCESS)
+        self.assertTrue(registry.close())
+        begin.assert_called_once_with()
+        close.assert_called_once_with()
+
+    def test_concurrent_close_uses_one_hook_and_one_shutdown_worker(self):
+        entered, finish = Event(), Event()
+        begin = Mock()
+        def close():
+            entered.set()
+            finish.wait()
+        final = Mock(side_effect=close)
+        registry, _ = self.registry([], begin_close=begin, close=final)
+        self.addCleanup(finish.set)
+        results = []
+        thread = Thread(target=lambda: results.append(registry.close()))
+        thread.start()
+        self.addCleanup(lambda: thread.join(1))
+        self.assertTrue(entered.wait(1))
+        shutdown = registry._shutdown
+        self.assertFalse(registry.close(wait_timeout=0))
+        self.assertIs(registry._shutdown, shutdown)
+        finish.set()
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results, [True])
+        self.assertTrue(registry.close(wait_timeout=0))
+        begin.assert_called_once_with()
+        final.assert_called_once_with()
+
+    def test_early_hook_failure_is_terminal_for_concurrent_and_repeated_close(self):
+        hook_entered, hook_finish = Event(), Event()
+        worker_entered, worker_finish = Event(), Event()
+        errors = []
+
+        class Worker(Module):
+            def run_continuous(self, context):
+                worker_entered.set()
+                try:
+                    context.wait()
+                finally:
+                    worker_finish.wait()
+
+        def fail():
+            hook_entered.set()
+            hook_finish.wait()
+            raise RuntimeError('private-value')
+
+        begin, final = Mock(side_effect=fail), Mock()
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False,
+            {'reset': OnceTimeout(.01, 1)}), object,
+            begin_close_controller=begin, close_controller=final)
+        registry.register_all([spec(factory=Worker)])
+        handle = registry.start('reset')
+        self.addCleanup(worker_finish.set)
+        self.addCleanup(hook_finish.set)
+        self.assertTrue(worker_entered.wait(1))
+
+        def close(wait_timeout=0):
+            try:
+                registry.close(wait_timeout=wait_timeout)
+                errors.append('unexpected return')
+            except RuntimeError as error:
+                errors.append((str(error), error.__suppress_context__,
+                               handle.context.cancelled.is_set()))
+
+        threads = [Thread(target=close) for _ in range(2)]
+        threads[0].start()
+        self.assertTrue(hook_entered.wait(1))
+        threads[1].start()
+        hook_finish.set()
+        for thread in threads:
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
+        close()
+        close(None)
+        self.assertEqual(errors, [('Shared controller shutdown failed', True, True)] * 4)
+        self.assertTrue(registry._resources_closed.is_set())
+        self.assertTrue(registry._close_started)
+        self.assertIsNone(registry._shutdown)
+        begin.assert_called_once_with()
+        final.assert_not_called()
+        with self.assertRaises(AlgorithmBusy):
+            registry.start('reset')
+        worker_finish.set()
+        self.assertTrue(registry.stop('reset', wait_timeout=1))
+
+    def test_hook_failure_during_registration_never_autostarts_late_runtime(self):
+        entered, resume = Event(), Event()
+        ran, close = Mock(), Mock()
+        def factory(controller):
+            entered.set()
+            resume.wait()
+            return Mock(run_continuous=ran)
+        begin = Mock(side_effect=RuntimeError('private-value'))
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), True, {}), object,
+            begin_close_controller=begin, close_controller=close)
+        self.addCleanup(resume.set)
+        thread = Thread(target=lambda: registry.register_all([
+            spec(modes=frozenset({Mode.CONTINUOUS}), factory=factory),
+            spec('late', modes=frozenset({Mode.CONTINUOUS}),
+                 factory=lambda controller: Mock(run_continuous=ran))]))
+        thread.start()
+        self.assertTrue(entered.wait(1))
+        with self.assertRaisesRegex(RuntimeError, '^Shared controller shutdown failed$'):
+            registry.close(wait_timeout=0)
+        self.assertTrue(registry._resources_closed.is_set())
+        resume.set()
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        ran.assert_not_called()
+        close.assert_not_called()
+        begin.assert_called_once_with()
+
+    def test_early_close_hook_dependency_must_be_callable(self):
+        with self.assertRaises(ValueError):
+            AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), object,
+                              begin_close_controller=object())
 
 
 if __name__ == '__main__':
