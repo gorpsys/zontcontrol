@@ -109,7 +109,7 @@ class OwnershipTests(unittest.TestCase):
         self.clock.advance(60)
         self.acquire(self.other)
 
-    def test_expired_release_racing_reacquisition_cannot_delete_new_owner(self):
+    def test_expired_release_blocks_reacquisition_until_first_attempt_finishes(self):
         session = self.acquire()
         entered = threading.Event()
         release = self.executor._release_remote
@@ -121,9 +121,12 @@ class OwnershipTests(unittest.TestCase):
         thread = self.start(lambda: self.owner.release_control(session))
         self.assertTrue(entered.wait(1))
         self.clock.advance(60)
-        replacement = self.acquire(self.other)
+        with self.assertRaises(DeviceControlBusy):
+            self.acquire(self.other)
         self.unblock.set()
         thread.join(1)
+        self.assertEqual(self.gate.releases, [session])
+        replacement = self.acquire(self.other)
         self.other.execute_command(self.command(self.other), replacement)
         with self.assertRaises(DeviceControlBusy):
             self.acquire(self.owner)
@@ -649,6 +652,52 @@ class ExecutorShutdownTests(unittest.TestCase):
 
     def test_idle_waits_through_remote_release_even_after_expiry(self):
         self.assert_phase_drained('release')
+
+    def assert_pending_release_drained(self, *, deferred):
+        session = self.acquire(seconds=1)
+        release_pending = threading.Event()
+        original_release = self.executor._release_remote
+        self.gate.release = Mock(wraps=self.gate.release)
+        rows = []
+        self.executor._statistics = Statistics(rows.append, protocol_version='1', profile='test')
+        def release(held):
+            release_pending.set()
+            self.assertTrue(self.unblock.wait(2))
+            original_release(held)
+        self.executor._release_remote = release
+        if deferred:
+            command_entered = threading.Event()
+            command_can_finish = threading.Event()
+            self.extra_unblocks = [command_can_finish]
+            def send(prepared):
+                command_entered.set()
+                self.assertTrue(command_can_finish.wait(2))
+            self.adapter.send_command.side_effect = send
+            thread = self.start(lambda: self.owner.execute_command(self.command(), session))
+            self.assertTrue(command_entered.wait(1))
+            self.owner.release_control(session)
+            self.clock.advance(1)
+            command_can_finish.set()
+        else:
+            self.clock.advance(1)
+            thread = self.start(lambda: self.owner.release_control(session))
+        self.assertTrue(release_pending.wait(1))
+        self.executor.begin_close()
+        self.gate.release.assert_not_called()
+        done, _ = self.wait_for_idle()
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.gate.release.assert_called_once()
+        self.assertEqual(self.gate.releases, [session])
+        self.assertEqual(len([row for row in rows if row['event'] == 'cleanup'
+                              and row['phase'] == 'session']), 1)
+
+    def test_idle_waits_before_first_release_attempt_for_expired_session(self):
+        self.assert_pending_release_drained(deferred=False)
+
+    def test_idle_waits_before_deferred_release_attempt_after_expired_command(self):
+        self.assert_pending_release_drained(deferred=True)
 
     def test_idle_waits_for_both_commands_and_every_device(self):
         session = self.acquire()

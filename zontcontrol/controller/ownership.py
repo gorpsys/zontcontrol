@@ -44,6 +44,7 @@ class _Ownership:
     in_flight: int = 0
     closing: bool = False
     releasing: bool = False
+    release_failed: bool = False
     context: dict = field(default_factory=dict)
     outcome: str = 'success'
     cleanup_observed: bool = False
@@ -103,7 +104,7 @@ class CommandExecutor:
             while self._devices:
                 recheck = None
                 for device_id, held in list(self._devices.items()):
-                    if (held.closing and not held.releasing and held.in_flight == 0
+                    if (held.release_failed and not held.releasing and held.in_flight == 0
                             and held.session is not None):
                         remaining = held.session.expires_at - self._clock()
                         if remaining <= 0:
@@ -144,7 +145,7 @@ class CommandExecutor:
             if self._closed:
                 raise ControlOwnershipRequired()
             held = self._devices.get(device_id)
-            if (held is not None and held.closing and not held.releasing
+            if (held is not None and held.release_failed and not held.releasing
                     and held.in_flight == 0 and held.session is not None
                     and self._clock() >= held.session.expires_at):
                 del self._devices[device_id]
@@ -193,13 +194,14 @@ class CommandExecutor:
         # An unconfirmed release leaves it held, rather than risking an overtake.
         with self._lock:
             if self._devices.get(held.session.device_id) is not held:
-                # Another acquisition already discarded this expired, idle
-                # closing reservation. Never publish/delete for its successor.
+                # A previous failed attempt expired and was discarded.
+                # Never publish/delete for its successor.
                 return
             if held.releasing:
                 return
             held.closing = True
             held.releasing = True
+            held.release_failed = False
             self._idle.notify_all()
             report_cleanup = not held.cleanup_observed
             held.cleanup_observed = True
@@ -211,6 +213,10 @@ class CommandExecutor:
         except BaseException:
             with self._lock:
                 held.releasing = False
+                # Only a completed failed attempt permits expiry cleanup.
+                # closing alone also covers release not yet started, including
+                # the handoff from the last in-flight command.
+                held.release_failed = True
                 self._idle.notify_all()
             raise
         with self._lock:
