@@ -113,10 +113,43 @@ class ComposedCoordinationTests(unittest.TestCase):
             scheduled = self.clock.waits.get(timeout=1)
             self.clock.waits.put(scheduled)
             try:
-                return self.owner.try_acquire_control(42, lease_seconds=10)
+                session = self.owner.try_acquire_control(42, lease_seconds=10)
+                def release():
+                    try:
+                        self.owner.release_control(session)
+                    except ControlOwnershipRequired:
+                        pass
+                self.addCleanup(release)
+                return session
             except DeviceControlBusy:
                 self.clock.advance_wait()
         self.fail('Offline grant was not acknowledged after explicit reconciliation')
+
+    def test_shutdown_does_not_extend_expired_r2_or_authorize_cleanup(self):
+        session = self.acquire()
+        key = ControlKey(42, 'toggle_buttons', 31)
+        on = self.owner.prepare_command(42, key, 'trigger', {'target_state': True})
+        off = self.owner.prepare_command(42, key, 'trigger', {'target_state': False})
+        self.assertTrue(self.owner.execute_command(on, session).api_accepted)
+        with self.transport.lock:
+            grant = decode_r2(self.transport.raw['name'], 'Дом')
+        self.assertFalse(self.app.close(wait_timeout=.01))
+        self.assertFalse(self.transport.closed)
+        # Expire the same injected clock used by the real R1/R2 gate and executor.
+        with self.clock.lock:
+            self.clock.time = session.expires_at
+        with self.assertRaises(ControlOwnershipRequired):
+            self.owner.execute_command(off, session)
+        self.assertEqual(len(self.transport.commands), 1)
+        with self.transport.lock:
+            self.assertEqual(decode_r2(self.transport.raw['name'], 'Дом'), grant)
+        # Expiry alone does not finish the caller's explicit critical section.
+        self.assertFalse(self.app.close(wait_timeout=.01))
+        self.assertFalse(self.transport.closed)
+        self.owner.release_control(session)
+        self.assertTrue(self.app.close(wait_timeout=1))
+        self.assertTrue(self.transport.closed)
+        self.assertEqual(len(self.transport.commands), 1)
 
     def test_real_gate_requires_confirmed_r1_r2_before_synchronous_command(self):
         session = self.acquire()

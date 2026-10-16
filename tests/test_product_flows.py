@@ -39,12 +39,17 @@ class VirtualHTTP:
         self.server = server
         self.commands = []
         self.unknown_on = False
+        self.on_entered = Event()
+        self.on_resume = Event()
+        self.on_resume.set()
         self.off_entered = Event()
         self.off_resume = Event()
         self.off_resume.set()
         self.closed = False
 
     def request(self, request):
+        if self.closed:
+            raise AssertionError('request after transport close')
         url = urlsplit(request.full_url)
         body = json.loads(request.data) if request.data else None
         if url.path.endswith('/update_device'):
@@ -56,6 +61,10 @@ class VirtualHTTP:
         if '/actions/' in url.path:
             device_id = int(url.path.split('/devices/')[1].split('/')[0])
             self.commands.append((device_id, body))
+            if body.get('target_state') is True:
+                self.on_entered.set()
+                if not self.on_resume.wait(2):
+                    raise AssertionError('command barrier timed out')
             if body.get('target_state') is False:
                 self.off_entered.set()
                 if not self.off_resume.wait(2):
@@ -82,6 +91,9 @@ class ProductFlowTests(unittest.TestCase):
         self.apps = []
         self.transports = []
         self.rows = []
+        self.sessions = []
+        self.external_threads = []
+        self.external_resumes = []
         self.addCleanup(self.cleanup)
         self.network = patch('socket.socket.connect', side_effect=AssertionError('network forbidden'))
         self.network.start()
@@ -89,7 +101,19 @@ class ProductFlowTests(unittest.TestCase):
 
     def cleanup(self):
         for transport in self.transports:
+            transport.on_resume.set()
             transport.off_resume.set()
+        for resume in self.external_resumes:
+            resume.set()
+        for thread in self.external_threads:
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+        # Failed assertions must not leave external owners blocking app.close().
+        for controller, session in reversed(self.sessions):
+            try:
+                controller.release_control(session)
+            except ControlOwnershipRequired:
+                pass  # The scenario already released this exact session.
         for app in reversed(self.apps):
             self.assertTrue(app.close(wait_timeout=2))
 
@@ -111,15 +135,30 @@ class ProductFlowTests(unittest.TestCase):
         self.apps.append(app)
         return app, transport
 
-    def acquire(self, controller, device_id=42):
+    def acquire(self, controller, device_id=42, *, track=True):
         deadline = monotonic() + 2
         while True:
             try:
-                return controller.try_acquire_control(device_id, lease_seconds=60)
+                session = controller.try_acquire_control(device_id, lease_seconds=60)
+                if track:
+                    self.sessions.append((controller, session))
+                return session
             except DeviceControlBusy:
                 if monotonic() >= deadline:
                     self.fail('virtual coordinator did not grant within test guard')
                 Event().wait(.005)
+
+    def external(self, action):
+        results, errors = [], []
+        def run():
+            try:
+                results.append(action())
+            except BaseException as error:
+                errors.append(error)
+        thread = Thread(target=run)
+        self.external_threads.append(thread)
+        thread.start()
+        return thread, results, errors
 
     def command(self, controller, device_id=42, state=True):
         return controller.prepare_command(device_id,
@@ -154,6 +193,154 @@ class ProductFlowTests(unittest.TestCase):
         rival.release_control(other)
         self.assertTrue(any(row['event'] == 'grant' for row in self.rows))
         self.assertIn('groups', analyze(self.rows))
+
+    def test_close_waits_for_external_off_accepted_by_http_and_session_release(self):
+        app, transport = self.build()
+        owner = app.controller()
+        session = self.acquire(owner)
+        off = self.command(owner, state=False)
+        transport.off_resume.clear()
+        thread, results, errors = self.external(lambda: owner.execute_command(off, session))
+        self.assertTrue(transport.off_entered.wait(2))
+        self.assertFalse(app.close(wait_timeout=.01))
+        self.assertFalse(transport.closed)
+        self.assertIsNotNone(decode_r2(self.server.read_device(42)['name'], PREFIX))
+        with self.assertRaises(ControlOwnershipRequired):
+            app.controller()
+        with self.assertRaises(ControlOwnershipRequired):
+            owner.try_acquire_control(43, lease_seconds=60)
+        transport.off_resume.set()
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(results[0].api_accepted)
+        # A completed command does not end the caller's critical section.
+        self.assertFalse(app.close(wait_timeout=.01))
+        self.assertFalse(transport.closed)
+        owner.release_control(session)
+        self.assertTrue(app.close(wait_timeout=2))
+        self.assertTrue(transport.closed)
+        self.assertEqual(transport.commands, [(42, {'target_state': False})])
+        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+
+    def test_close_between_external_on_and_finally_keeps_cleanup_available(self):
+        app, transport = self.build()
+        owner = app.controller()
+        on_done, finish = Event(), Event()
+        self.external_resumes.append(finish)
+        def pulse():
+            session = self.acquire(owner)
+            try:
+                owner.execute_command(self.command(owner), session)
+                on_done.set()
+                if not finish.wait(2):
+                    raise AssertionError('external pulse barrier timed out')
+            finally:
+                try:
+                    owner.execute_command(self.command(owner, state=False), session)
+                finally:
+                    owner.release_control(session)
+        thread, _, errors = self.external(pulse)
+        self.assertTrue(on_done.wait(2))
+        self.assertEqual(transport.commands, [(42, {'target_state': True})])
+        self.assertFalse(app.close(wait_timeout=.01))
+        self.assertFalse(transport.closed)
+        finish.set()
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(app.close(wait_timeout=2))
+        self.assertTrue(transport.closed)
+        self.assertEqual(transport.commands,
+                         [(42, {'target_state': True}), (42, {'target_state': False})])
+        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+
+    def test_close_waits_for_external_device_after_registered_finally(self):
+        self.assert_shared_shutdown('registered')
+
+    def test_close_waits_for_registered_finally_after_external_device(self):
+        self.assert_shared_shutdown('external')
+
+    def assert_shared_shutdown(self, first):
+        pulse, cleaned = Event(), Event()
+        test = self
+        class RegisteredPulse:
+            def __init__(self, controller):
+                self.controller = controller
+            def run_continuous(self, context):
+                session = test.acquire(self.controller, track=False)
+                try:
+                    self.controller.execute_command(test.command(self.controller), session)
+                    pulse.set()
+                    context.cancelled.wait(2)
+                finally:
+                    try:
+                        self.controller.execute_command(
+                            test.command(self.controller, state=False), session)
+                    finally:
+                        self.controller.release_control(session)
+                        cleaned.set()
+        spec = AlgorithmSpec('registered_pulse', 'Offline lifecycle pulse',
+                             frozenset({Mode.CONTINUOUS}), RegisteredPulse)
+        app, transport = self.build((spec,))
+        self.assertTrue(pulse.wait(2))
+        owner = app.controller()
+        session = self.acquire(owner, 43)
+        transport.off_resume.clear()
+        self.assertFalse(app.close(wait_timeout=.01))
+        self.assertTrue(transport.off_entered.wait(2))
+        if first == 'registered':
+            transport.off_resume.set()
+            self.assertTrue(cleaned.wait(2))
+        else:
+            owner.release_control(session)
+        self.assertFalse(app.close(wait_timeout=.01))
+        self.assertFalse(transport.closed)
+        if first == 'registered':
+            owner.release_control(session)
+        else:
+            transport.off_resume.set()
+        self.assertTrue(app.close(wait_timeout=2))
+        self.assertTrue(cleaned.is_set())
+        self.assertTrue(transport.closed)
+        self.assertEqual(transport.commands,
+                         [(42, {'target_state': True}), (42, {'target_state': False})])
+        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        self.assertEqual(self.server.read_device(43)['name'], PREFIX)
+
+    def test_close_during_external_unknown_on_preserves_outcome_and_finally_without_retry(self):
+        app, transport = self.build()
+        owner = app.controller()
+        session = self.acquire(owner)
+        transport.unknown_on = True
+        transport.on_resume.clear()
+        cleanup_results = []
+        def pulse():
+            try:
+                return owner.execute_command(self.command(owner), session)
+            finally:
+                try:
+                    cleanup_results.append(owner.execute_command(
+                        self.command(owner, state=False), session))
+                finally:
+                    owner.release_control(session)
+        thread, results, errors = self.external(pulse)
+        self.assertTrue(transport.on_entered.wait(2))
+        self.assertFalse(app.close(wait_timeout=.01))
+        self.assertFalse(transport.closed)
+        transport.on_resume.set()
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(results, [])
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], CommandOutcomeUnknown)
+        self.assertTrue(cleanup_results[0].api_accepted)
+        self.assertTrue(app.close(wait_timeout=2))
+        self.assertTrue(transport.closed)
+        self.assertEqual(transport.commands,
+                         [(42, {'target_state': True}), (42, {'target_state': False})])
+        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        self.assertTrue(any(row.get('outcome') == 'unknown' for row in self.rows))
 
     def reset_catalog(self, wait):
         return (AlgorithmSpec('boiler_reset', 'Offline reset', frozenset({Mode.ONCE}),
