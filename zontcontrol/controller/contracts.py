@@ -431,6 +431,15 @@ class Controller(Protocol):
     section, finally and its own margin. Expiry rejects new commands including
     finally; an accepted command is synchronous and is never cancelled by a
     later timeout/stop. Release retains ownership until accepted work finishes.
+    Application shutdown rejects new bindings and acquisitions, but does not
+    revoke an issued, unexpired session that is not being released. Its owner
+    must finish cleanup and explicitly release it, including between commands.
+    External consumers arrange their own cancellation; the registry does not
+    stop their threads. Do not wait for full app.close() in the same thread
+    while holding a session: release first, or use bounded close, cleanup and
+    then full close. A bounded close may return False with resources still open.
+    Shutdown waits for session work, not arbitrary external reads without one;
+    it neither extends the lease nor guarantees cleanup after process death.
     Session identity and device must be checked by the bound implementation.
     """
 

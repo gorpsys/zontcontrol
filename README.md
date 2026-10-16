@@ -7,7 +7,7 @@ boiler_reset выполняет настоящий 40-секундный сбр�
 [будущая работа](docs/plans/yandex-cloud.md).
 
 Это полная замена прототипа без совместимости прежних Python/CLI/JSON.
-Подготовлен первый продуктовый выпуск 0.1.0; завершение реализации не означает
+Текущий подготовленный выпуск — 0.1.2; завершение реализации не означает
 слияния PR, публикации тега или деплоя.
 
 ## Установка и конфигурация
@@ -40,7 +40,7 @@ registry.json — disabled_modules, autostart_dual_mode и once_timeouts.
 
 ```sh
 python3 -m venv /tmp/zontcontrol-venv
-/tmp/zontcontrol-venv/bin/python -m pip install /absolute/path/zontcontrol-0.1.0-py3-none-any.whl
+/tmp/zontcontrol-venv/bin/python -m pip install /absolute/path/zontcontrol-0.1.2-py3-none-any.whl
 cd /absolute/path/zontcontrol-work
 /tmp/zontcontrol-venv/bin/zontcontrol list
 ```
@@ -111,6 +111,54 @@ close() вызывается контекстным менеджером. Огр
 и finally; повторный запуск запрещён. Поток принудительно не убивается.
 Timeout once выставляет отмену; continuous сам задаёт свои интервалы
 и таймауты, общего deadline регистратора у него нет.
+
+Внешний Python-потребитель получает собственный фасад через app.controller().
+Он сам завершает составное действие и освобождает сессию, например:
+
+```python
+def run_external_section(controller, on, off):
+    # on/off — заранее подготовленные ValidatedCommand одного прибора.
+    session = controller.try_acquire_control(on.device_id, lease_seconds=120)
+    try:
+        controller.execute_command(on, session)
+        # Здесь работа потребителя между on и off.
+    finally:
+        try:
+            controller.execute_command(off, session)
+        finally:
+            controller.release_control(session)
+
+
+with create_application() as app:
+    controller = app.controller()
+    # Подготовьте команды через controller.prepare_command(...).
+    # run_external_section(controller, on, off) отправляет реальные команды.
+    # Сессия освобождается до выхода из with и вызова app.close().
+```
+
+lease_seconds выбирает потребитель на получение grant, всю секцию, finally
+и запас; 120 секунд в примере не являются общим бюджетом приложения.
+close сначала запрещает новые app.controller() и захваты, затем отменяет
+зарегистрированные алгоритмы, ждёт их finally и освобождения всех сессий
+исполнителя, включая внешние, и закрывает координацию и транспорт.
+Владелец действующей сессии может закончить команды и finally до release.
+Сессия между командами тоже задерживает закрытие; пустой фасад — нет.
+
+Регистратор не отменяет внешние потоки: сигнал завершения и release в finally
+организует их владелец. app.close(wait_timeout=0) начинает shutdown и может
+вернуть False с открытыми ресурсами; после cleanup повторный app.close()
+дожидается той же операции и возвращает True. Нельзя вызвать полный close()
+в том же потоке до собственного release: он будет ждать эту сессию бесконечно.
+Сначала завершите секцию и release либо используйте ограниченный close,
+затем cleanup и полный close. Произвольные внешние чтения без сессии в это
+ожидание не входят; завершите их до закрытия приложения самостоятельно.
+
+Если ранний hook закрытия входа завершился ошибкой, close выдаёт безопасный
+RuntimeError, запрещает новые старты алгоритмов и публикует им отмену.
+Это терминальный сбой: повторный close снова выдаст ошибку, hook не повторяется,
+координация и транспорт остаются открытыми. Событие результата shutdown в этом
+случае не означает закрытия ресурсов. Владелец всё ещё отвечает за cleanup
+действующей сессии; shutdown не продлевает R2 и не гарантирует finally после kill.
 
 ## Чтение и ручное управление
 
