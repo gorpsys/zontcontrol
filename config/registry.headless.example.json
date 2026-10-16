@@ -1,0 +1,10 @@
+{
+  "disabled_modules": ["boiler_cli"],
+  "autostart_dual_mode": false,
+  "once_timeouts": {
+    "boiler_reset": {
+      "minimum_seconds": 120,
+      "recommended_seconds": 180
+    }
+  }
+}

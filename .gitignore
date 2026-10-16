@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+reports/*
+!reports/README.md
+!reports/early-detection-algorithm.txt
+.coverage
+htmlcov/
+.pytest_cache/
+.env
+.env.*
+.idea/

@@ -1,0 +1,187 @@
+# zontcontrol
+
+Локальное приложение управления отоплением ZONT: Python API v1, разовые и
+постоянные алгоритмы, интерактивный CLI, история и SVG-графики. Python 3.11+,
+runtime использует только stdlib. При подтверждённом температурном паттерне
+boiler_reset выполняет настоящий 40-секундный сброс. Облачный запуск —
+[будущая работа](docs/plans/yandex-cloud.md).
+
+Это полная замена прототипа без совместимости прежних Python/CLI/JSON.
+Подготовлен первый продуктовый выпуск 0.1.0; завершение реализации не означает
+слияния PR, публикации тега или деплоя.
+
+## Установка и конфигурация
+
+Из checkout команды выполняются из корня проекта:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/python -m zontcontrol --help
+.venv/bin/python -m zontcontrol --version
+cp config/controller.example.json config/controller.json
+cp config/registry.example.json config/registry.json
+cp config/boiler_reset.example.json config/boiler_reset.json
+cp config/boiler_cli.example.json config/boiler_cli.json
+```
+
+Проверьте контакт, ID приборов, контуров, датчиков и управления в своих файлах.
+Примеры содержат условные привязки. Для headless используйте
+config/registry.headless.example.json вместо registry.example.json: он отключает
+интерактивный boiler_cli. Настройки координации в примере не обмерены для ZONT.
+
+controller.json задаёт контакт, HTTP-таймаут, координацию и путь статистики;
+registry.json — disabled_modules, autostart_dual_mode и once_timeouts.
+Каждый модуль сам читает config/\<algorithm_id\>.json и проверяет свою схему.
+Общих --config/ZONT_CONFIG нет. Поля и примеры — [config/README](config/README.md).
+
+Для wheel подготовьте отдельный рабочий каталог с таким же config/ и
+запускайте установленный CLI из него:
+
+```sh
+python3 -m venv /tmp/zontcontrol-venv
+/tmp/zontcontrol-venv/bin/python -m pip install /absolute/path/zontcontrol-0.1.0-py3-none-any.whl
+cd /absolute/path/zontcontrol-work
+/tmp/zontcontrol-venv/bin/zontcontrol list
+```
+
+Каталог zontcontrol-work с заполненными config/*.json создаётся заранее.
+Wheel содержит пакет без конфигов, docs и scripts. Поиска конфигов вверх
+по дереву или относительно site-packages нет. --help и --version
+не требуют файлов, токена и сети.
+
+## Токен
+
+Получить новый токен отдельной интерактивной утилитой:
+
+```sh
+python3 -m zontcontrol.get_token --contact YOUR_EMAIL
+```
+
+Пароль вводится скрыто; каждый запуск создаёт токен и выводит его на экран.
+Основное приложение получает токен только из ZONT_TOKEN. Например, для уже
+сохранённого локального токена:
+
+```sh
+export ZONT_TOKEN="$(cat "$HOME/.tokens/zont")"
+```
+
+Токены и пароли не передаются в аргументах и не записываются в JSON, Git или
+журналы. Контакт X-ZONT-Client в controller.json не обязан совпадать с логином.
+Утилита токена использует свой --contact; сборщик архива — ZONT_CONTACT.
+
+## Запуск алгоритмов
+
+```sh
+python3 -m zontcontrol list
+python3 -m zontcontrol once boiler_reset --timeout 180
+python3 -m zontcontrol all
+python3 -m zontcontrol start boiler_reset
+python3 -m zontcontrol host --start boiler_reset
+```
+
+list показывает регистрацию и состояние; once запускает один разовый модуль,
+all — все доступные once. once, all, start и host с boiler_reset могут
+выполнять настоящий сброс при текущем confirmed_pattern. Общего
+preview/execute-флага у автономных алгоритмов нет. boiler_reset поддерживает
+оба режима и по умолчанию не стартует сам; autostart_dual_mode=true включает
+его при регистрации. boiler_cli поддерживает continuous и запускается при
+регистрации, если разрешён и доступен терминал. Для once без UI отключите
+его в registry.json.
+
+start и host удерживают один процесс. host допускает несколько --start ID;
+SIGINT/SIGTERM инициируют кооперативное завершение. Отдельной команды stop
+в другом процессе нет: Python API stop действует на тот же экземпляр.
+
+```python
+from zontcontrol.application import create_application
+
+with create_application() as app:
+    print(app.list_algorithms())
+    print(app.list_continuous())
+    # app.run_once("boiler_reset", timeout=180) выполняет реальное действие
+    # app.run_all_once() запускает все разрешённые once
+    # app.start("boiler_reset") запускает постоянный модуль
+    # app.stop("boiler_reset", wait_timeout=5) запрашивает остановку
+    # app.host() удерживает процесс до сигнала
+```
+
+close() вызывается контекстным менеджером. Ограниченное ожидание stop/close
+может завершиться раньше потока: stopping и монополия сохраняются до выхода
+и finally; повторный запуск запрещён. Поток принудительно не убивается.
+Timeout once выставляет отмену; continuous сам задаёт свои интервалы
+и таймауты, общего deadline регистратора у него нет.
+
+## Чтение и ручное управление
+
+Чтение без регистратора, фоновых алгоритмов и координатора:
+
+```python
+from zontcontrol.application import create_read_controller
+
+controller = create_read_controller()
+for device in controller.list_devices():
+    print(device)
+    print(controller.describe_values(device.device_id))
+    print(controller.read_current(device.device_id))
+```
+
+Для истории используйте read_history(device_id, value_keys, start, end) с
+timezone-aware датами; ключи берите из describe_values. null означает
+неизвестное значение, measured_at=null — неизвестное время измерения;
+received_at не подменяет его. Контур «Котел» не подставляется вместо
+«Отопление». [Контракты и методы](docs/reference/zont-api.md).
+
+Интерактивный boiler_cli обновляет таблицу раз в минуту. help показывает
+доступные действия; адресаты ограничены config/boiler_cli.json и возможностями
+прибора. Пример строки внутри UI с условными ID:
+
+```text
+command 42 circuit 20496 target-temp '{"target_temp":22}'
+command 42 circuit 20496 target-temp '{"target_temp":22}' --execute
+graph 42 air 2026-10-15T10:00:00+03:00 2026-10-15T12:00:00+03:00
+```
+
+Ручная команда показывает предпросмотр; --execute явно получает монополию
+на весь прибор и отправляет команду. Чтения и предпросмотр не блокируются
+занятым прибором. SVG сохраняется на диск; --view явно открывает его браузером.
+Графики строятся stdlib с настоящим временем, quality и разрывами истории.
+
+## Сброс и ограничения
+
+Детектор оценивает последние 45 минут независимо от прежних запусков.
+Только текущий confirmed_pattern разрешает сброс; warning не запускает его,
+unknown сохраняется при недостатке данных, suppressed означает намеренное
+отключение/паузу. normal не доказывает исправность котла. Пороговый профиль
+SMART 2.0 и калибровка сохранены: [детектор](docs/reference/anomaly-detection.md).
+
+boiler_reset включает переключатель сброса на 40 секунд, в finally сразу
+пытается выключить его при остановке или исключении. Изначально включённый
+сброс не трогает; ручной on во время импульса не отменяет off. Continuous
+после off ждёт пять минут до новой проверки. Успех API не доказывает
+восстановления нагрева. [Поведение модуля](docs/reference/boiler-reset.md).
+
+Все воздействия проходят через монополию на прибор и grant R2. Принятая до
+истечения аренды команда завершается даже после stop/timeout; новые команды
+после истечения, включая finally, отклоняются. Потеря роли лидера не отменяет
+сессию алгоритма. Kill/смерть host не гарантируют выключение сброса.
+
+В name/R2 видна занятость с сохранением исходного имени. Прямой ЛК остаётся
+доступен: человек контролирует редкие вмешательства и принимает риск.
+Локальный mutex не блокирует ЛК и другие исполнители. Схема R1/R2 принята
+с известными гонками и сбором статистики; строгая распределённая безопасность,
+линеаризуемость ZONT и достигнутые 99.9% не доказаны.
+[Лидерство](docs/reference/leader-election.md),
+[учёт риска](docs/reference/orchestration-risk.md).
+
+При CommandOutcomeUnknown после отправки команда могла выполниться.
+Автоматического повтора нет: прочитайте состояние и проверьте прибор.
+При 401/403 проверьте доступ, при 429 дайте API паузу. При unknown проверьте
+историю, привязки датчиков и состояние сброса.
+
+## Разработка
+
+- [Команды, офлайн-проверки, wheel и выпуск](scripts/README.md).
+- [CHANGELOG](CHANGELOG.md), [история реализации](docs/history/2026-10-16-architecture-implementation.md).
+- [Индекс инструкций](docs/agents/README.md), [конфиги](config/README.md).
+- [Облачный план](docs/plans/yandex-cloud.md), [контракт деплоя](docs/agents/deployment.md).
