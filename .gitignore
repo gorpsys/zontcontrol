@@ -13,3 +13,7 @@ htmlcov/
 .env
 .env.*
 .idea/
+
+# Local controller and algorithm settings; keep shareable examples.
+/config/*.json
+!/config/*.example.json

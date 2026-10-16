@@ -144,8 +144,12 @@ def value_descriptors(raw: dict) -> tuple[ValueDescriptor, ...]:
 
     for item in _items(raw, 'sensors'):
         item = {**item, **_element(item, 'sensor', 'sensors')}
+        # Widget adds a virtual supply display with no addressable sensor ID.
+        if item['id'] == 0:
+            continue
         temperature = item.get('type') == 'temperature'
-        add('sensor', item, 'value', ValueType.NUMBER, item.get('unit'), 'sensors', temperature)
+        unit = '°C' if temperature and item.get('unit') == '°' else item.get('unit')
+        add('sensor', item, 'value', ValueType.NUMBER, unit, 'sensors', temperature)
         if 'triggered' in item:
             add('sensor', item, 'triggered', ValueType.BOOLEAN, None, 'sensors')
     for item in _items(raw, 'circuits'):
