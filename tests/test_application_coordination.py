@@ -143,13 +143,29 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertEqual(len(self.transport.commands), 1)
         with self.transport.lock:
             self.assertEqual(decode_r2(self.transport.raw['name'], 'Дом'), grant)
-        # Expiry alone does not finish the caller's explicit critical section.
-        self.assertFalse(self.app.close(wait_timeout=.01))
-        self.assertFalse(self.transport.closed)
-        self.owner.release_control(session)
+        # The algorithm's lease also bounds idle local ownership during shutdown.
         self.assertTrue(self.app.close(wait_timeout=1))
         self.assertTrue(self.transport.closed)
         self.assertEqual(len(self.transport.commands), 1)
+
+    def test_interrupted_public_acquisition_closes_after_its_local_lease(self):
+        # Prepare the real grant, then interrupt instrumentation before the
+        # public facade can return its session to the caller.
+        session = self.acquire()
+        self.owner.release_control(session)
+        self.clock.advance_wait()
+        self.assertTrue(self.transport.cleared.wait(1))
+        gate = self.app._coordination._devices[42][0]
+        with patch.object(gate, 'observation_context', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.acquire()
+        self.assertFalse(self.app.close(wait_timeout=.01))
+        self.assertFalse(self.transport.closed)
+        with self.clock.lock:
+            self.clock.time += 10
+        self.assertTrue(self.app.close(wait_timeout=1))
+        self.assertTrue(self.transport.closed)
+        self.assertEqual(self.transport.commands, [])
 
     def test_real_gate_requires_confirmed_r1_r2_before_synchronous_command(self):
         session = self.acquire()

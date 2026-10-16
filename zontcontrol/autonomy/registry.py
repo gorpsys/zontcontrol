@@ -59,7 +59,7 @@ class AlgorithmRegistry:
         self._closed = False
         self._close_started = False
         self._shutdown = None
-        self._resources_closed = Event()
+        self._shutdown_done = Event()
         self._close_failed = False
 
     @staticmethod
@@ -201,7 +201,7 @@ class AlgorithmRegistry:
         except BaseException:
             self._close_failed = True
         finally:
-            self._resources_closed.set()
+            self._shutdown_done.set()
 
     def close(self, *, wait_timeout=None):
         if wait_timeout is not None:
@@ -230,9 +230,9 @@ class AlgorithmRegistry:
         if hook_failed:
             # A failed early hook has no shutdown worker to publish the result.
             # Resources remain open for cleanup; the hook is never retried.
-            self._resources_closed.set()
+            self._shutdown_done.set()
             raise RuntimeError('Shared controller shutdown failed') from None
-        if not self._resources_closed.wait(wait_timeout):
+        if not self._shutdown_done.wait(wait_timeout):
             return False
         if self._close_failed:
             raise RuntimeError('Shared controller shutdown failed') from None

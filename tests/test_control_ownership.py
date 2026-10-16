@@ -45,7 +45,7 @@ class LocalTestGate:
         del self.sessions[owner, session.session_id]
 
 
-class OwnershipTests(unittest.TestCase):
+class OwnershipFixture:
     def setUp(self):
         self.clock = FakeClock(start=100)
         self.gate = LocalTestGate(self.clock)
@@ -89,6 +89,8 @@ class OwnershipTests(unittest.TestCase):
     def acquire(self, owner=None, device_id=42, seconds=60):
         return (owner or self.owner).try_acquire_control(device_id, lease_seconds=seconds)
 
+
+class OwnershipTests(OwnershipFixture, unittest.TestCase):
     def test_bound_facade_and_reacquire_without_nesting_or_extension(self):
         self.assertIsInstance(self.owner, Controller)
         session = self.acquire()
@@ -332,7 +334,7 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaises(ControlOwnershipRequired):
             self.owner.execute_command(self.command(state=False), session)
         self.assertEqual(self.adapter.send_command.call_count, 1)
-        self.assertIs(self.acquire(), session)
+        self.assertIsNot(self.acquire(), session)
 
     def test_fresh_technical_checks_gate_and_expiry_precede_acceptance(self):
         session = self.acquire()
@@ -511,14 +513,10 @@ class OwnershipTests(unittest.TestCase):
                 self.assertEqual(result.received_at, self.clock.wall_now())
 
 
-class ExecutorShutdownTests(unittest.TestCase):
+class ExecutorShutdownTests(OwnershipFixture, unittest.TestCase):
     def setUp(self):
-        OwnershipTests.setUp(self)
+        super().setUp()
         self.stop_waiting = threading.Event()
-
-    start = OwnershipTests.start
-    command = OwnershipTests.command
-    acquire = OwnershipTests.acquire
 
     def tearDown(self):
         self.unblock.set()
@@ -839,22 +837,101 @@ class ExecutorShutdownTests(unittest.TestCase):
     def test_failed_release_is_retained_until_expiry_without_retry(self):
         self.assert_failed_release_expires(DeviceUnavailable())
 
-    def test_expiry_does_not_discard_session_before_owner_release(self):
+    def test_interrupted_release_observation_does_not_pin_releasing_forever(self):
+        session = self.acquire(seconds=1)
+        sink = Mock()
+        sink.emit.side_effect = KeyboardInterrupt()
+        self.executor._statistics = sink
+        self.gate.release = Mock(wraps=self.gate.release)
+        with self.assertRaises(KeyboardInterrupt):
+            self.owner.release_control(session)
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.clock.advance(1)
+        self.assertTrue(done.wait(1))
+        self.gate.release.assert_not_called()
+
+    def test_expired_idle_session_finishes_shutdown_without_owner_release(self):
         session = self.acquire()
         self.executor.begin_close()
-        done, waits = self.wait_for_idle()
+        done, _ = self.wait_for_idle()
         self.clock.advance(60)
-        # Explicit notification models a spurious wakeup, not a release.
+        self.assertTrue(done.wait(1))
+        with self.assertRaises(ControlOwnershipRequired):
+            self.owner.execute_command(self.command(state=False), session)
+        self.assertEqual(self.gate.releases, [])
+        self.adapter.send_command.assert_not_called()
+
+    def test_expired_idle_session_allows_same_and_different_consumers_to_reacquire(self):
+        for consumer in (self.owner, self.other):
+            with self.subTest(consumer=consumer):
+                previous = self.acquire(seconds=1)
+                self.clock.advance(1)
+                replacement = self.acquire(consumer)
+                self.assertIsNot(replacement, previous)
+                with self.assertRaises(ControlOwnershipRequired):
+                    self.owner.execute_command(self.command(), previous)
+                consumer.release_control(replacement)
+        self.adapter.send_command.assert_not_called()
+
+    def test_interrupted_acquisition_drains_at_lease_expiry(self):
+        for interruption in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interruption=interruption):
+                self.gate.observation_context = Mock(side_effect=interruption())
+                with self.assertRaises(interruption):
+                    self.acquire(seconds=1)
+                done, _ = self.wait_for_idle()
+                self.assertFalse(done.is_set())
+                self.clock.advance(1)
+                self.assertTrue(done.wait(1))
+        self.executor.begin_close()
+        self.executor.wait_idle()
+        self.adapter.send_command.assert_not_called()
+        self.assertEqual(self.gate.releases, [])
+
+    def test_expiry_waits_for_acquisition_observation_before_draining(self):
+        observing = threading.Event()
+        sessions = []
+        def observation_context(*args):
+            observing.set()
+            self.assertTrue(self.unblock.wait(2))
+            return {}
+        self.gate.observation_context = observation_context
+        thread = self.start(lambda: sessions.append(self.acquire(seconds=1)))
+        self.assertTrue(observing.wait(1))
+        self.executor.begin_close()
+        done, waits = self.wait_for_idle()
+        self.clock.advance(1)
         with self.executor._idle:
             self.executor._idle.notify_all()
         waits.get(timeout=1)
         self.assertFalse(done.is_set())
-        with self.assertRaises(ControlOwnershipRequired):
-            self.owner.execute_command(self.command(state=False), session)
-        self.assertEqual(self.gate.releases, [])
-        self.owner.release_control(session)
+        self.unblock.set()
+        thread.join(1)
         self.assertTrue(done.wait(1))
-        self.assertEqual(self.gate.releases, [session])
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(self.gate.releases, [])
+
+    def test_expiry_waits_for_accepted_command_without_explicit_release(self):
+        session = self.acquire(seconds=1)
+        sending = threading.Event()
+        def send(prepared):
+            sending.set()
+            self.assertTrue(self.unblock.wait(2))
+        self.adapter.send_command.side_effect = send
+        thread = self.start(lambda: self.owner.execute_command(self.command(), session))
+        self.assertTrue(sending.wait(1))
+        self.executor.begin_close()
+        done, waits = self.wait_for_idle()
+        self.clock.advance(1)
+        with self.executor._idle:
+            self.executor._idle.notify_all()
+        waits.get(timeout=1)
+        self.assertFalse(done.is_set())
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.assertEqual(self.gate.releases, [])
 
     def test_late_acquisition_unknown_release_drains_only_at_local_expiry(self):
         entered = threading.Event()

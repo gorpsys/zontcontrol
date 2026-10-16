@@ -142,6 +142,16 @@ class GrantTests(unittest.TestCase):
         self.gate.validate(self.owner, session)
         self.assertEqual(session.expires_at, sent + 60)
 
+    def test_same_owner_can_request_again_after_unreleased_session_expires(self):
+        previous = self.acquire(seconds=10)
+        self.coordinator.step()  # Start the conservative remote expiry interval.
+        self.clock.advance(20)
+        replacement = self.acquire()
+        self.assertIsNot(replacement, previous)
+        self.gate.validate(self.owner, replacement)
+        with self.assertRaises(ControlOwnershipRequired):
+            self.gate.validate(self.owner, previous)
+
     def test_unknown_nonce_or_wrong_owner_request_grant_token_revision_never_authorizes(self):
         for changes in ({'owner': str(uuid4())}, {'request_id': str(uuid4())},
                         {'grant_id': str(uuid4())}, {'leader_token': 'd' * 32},

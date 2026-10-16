@@ -546,7 +546,7 @@ class RegistryTests(unittest.TestCase):
         close()
         close(None)
         self.assertEqual(errors, [('Shared controller shutdown failed', True, True)] * 4)
-        self.assertTrue(registry._resources_closed.is_set())
+        self.assertTrue(registry._shutdown_done.is_set())
         self.assertTrue(registry._close_started)
         self.assertIsNone(registry._shutdown)
         begin.assert_called_once_with()
@@ -575,7 +575,7 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(entered.wait(1))
         with self.assertRaisesRegex(RuntimeError, '^Shared controller shutdown failed$'):
             registry.close(wait_timeout=0)
-        self.assertTrue(registry._resources_closed.is_set())
+        self.assertTrue(registry._shutdown_done.is_set())
         resume.set()
         thread.join(1)
         self.assertFalse(thread.is_alive())
