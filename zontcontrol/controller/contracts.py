@@ -426,11 +426,24 @@ class Controller(Protocol):
 
     Reads and preparation never acquire control. Acquisition is immediate:
     return a session or raise DeviceControlBusy, without a hidden wait queue.
-    Reacquiring the same owned device returns the same session and deadline.
+    Reacquiring an unexpired owned device returns the same session and deadline.
     The caller chooses lease_seconds for grant acquisition, its whole critical
     section, finally and its own margin. Expiry rejects new commands including
     finally; an accepted command is synchronous and is never cancelled by a
     later timeout/stop. Release retains ownership until accepted work finishes.
+    The same lease bounds idle local ownership: expiry permits local eviction
+    on acquisition or shutdown, without a remote release or automatic renewal.
+    Acquisition, accepted work and a pending/running release finish first.
+    Application shutdown rejects new bindings and acquisitions, but does not
+    revoke an issued, unexpired session that is not being released. Its owner
+    must finish cleanup and explicitly release it, including between commands.
+    External consumers arrange their own cancellation; the registry does not
+    stop their threads. Do not wait for full app.close() in the same thread
+    while holding a session: it delays cleanup until lease expiry. Release
+    first, or use bounded close, cleanup and
+    then full close. A bounded close may return False with resources still open.
+    Shutdown waits for session work, not arbitrary external reads without one;
+    it neither extends the lease nor guarantees cleanup after process death.
     Session identity and device must be checked by the bound implementation.
     """
 

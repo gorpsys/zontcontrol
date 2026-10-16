@@ -1,13 +1,14 @@
 """Offline composition and lifecycle; never uses an actual ZONT connection."""
 
 import unittest
-from threading import Event
+from threading import Event, Thread
 from unittest.mock import Mock, patch
 
 from zontcontrol.application import create_application, create_read_controller
 from zontcontrol.autonomy.contracts import AlgorithmResult, AlgorithmSpec, Mode, ResultStatus
 from zontcontrol.config import ConfigurationError
 from zontcontrol.controller.contracts import ControlOwnershipRequired, ControlKey
+from zontcontrol.controller.ownership import CommandExecutor
 from tests.test_inventory import inventory_device
 from zontcontrol.autonomy.contracts import AlgorithmState
 
@@ -196,3 +197,103 @@ class ApplicationTests(unittest.TestCase):
         with self.build() as app:
             app.host(cancelled)
             self.assertEqual(app.list_continuous(), ())
+
+    def test_close_drains_executor_after_finally_before_shared_resources(self):
+        entered, finish, drain_entered, drain_finish = Event(), Event(), Event(), Event()
+        effects = []
+        class Module:
+            def __init__(self, controller):
+                pass
+            def run_continuous(self, context):
+                entered.set()
+                try:
+                    context.wait()
+                finally:
+                    finish.wait()
+                    effects.append('finally')
+        def drain(executor):
+            effects.append('idle')
+            drain_entered.set()
+            drain_finish.wait()
+        transport = Mock()
+        transport.close.side_effect = lambda: effects.append('transport')
+        spec = AlgorithmSpec('sample', 'Sample', frozenset({Mode.CONTINUOUS}), Module)
+        app = self.build(catalog=(spec,), transport_factory=lambda **kw: transport)
+        consumer = app.controller()
+        def cleanup():
+            finish.set()
+            drain_finish.set()
+            app.close(wait_timeout=2)
+        self.addCleanup(cleanup)
+        self.assertTrue(entered.wait(1))
+        with patch.object(CommandExecutor, 'wait_idle', autospec=True, side_effect=drain), \
+                patch.object(app._coordination, 'close',
+                             side_effect=lambda: effects.append('coordination')):
+            self.assertFalse(app.close(wait_timeout=0))
+            with self.assertRaises(ControlOwnershipRequired):
+                app.controller()
+            with patch.object(app._coordination, 'try_acquire') as acquire:
+                with self.assertRaises(ControlOwnershipRequired):
+                    consumer.try_acquire_control(42, lease_seconds=10)
+                acquire.assert_not_called()
+            self.assertEqual(effects, [])
+            finish.set()
+            self.assertTrue(drain_entered.wait(1))
+            self.assertFalse(app.close(wait_timeout=0))
+            transport.close.assert_not_called()
+            drain_finish.set()
+            self.assertTrue(app.close(wait_timeout=1))
+        self.assertEqual(effects, ['finally', 'idle', 'coordination', 'transport'])
+        transport.close.assert_called_once_with()
+
+    def test_close_without_sessions_and_invalid_timeout(self):
+        transport = Mock()
+        app = self.build(transport_factory=lambda **kw: transport)
+        self.addCleanup(app.close)
+        app.controller()  # An unused binding does not delay shutdown.
+        with self.assertRaises(ValueError):
+            app.close(wait_timeout=-1)
+        app.controller()
+        transport.close.assert_not_called()
+        results = []
+        threads = [Thread(target=lambda: results.append(app.close())) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(results, [True, True])
+        self.assertTrue(app.close(wait_timeout=0))
+        transport.close.assert_called_once_with()
+
+    def test_early_hook_failure_cancels_worker_and_keeps_shared_resources_open(self):
+        entered, finish = Event(), Event()
+        class Module:
+            def __init__(self, controller):
+                pass
+            def run_continuous(self, context):
+                entered.set()
+                try:
+                    context.wait()
+                finally:
+                    finish.wait()
+        spec = AlgorithmSpec('sample', 'Sample', frozenset({Mode.CONTINUOUS}), Module)
+        transport = Mock()
+        with patch.object(CommandExecutor, 'begin_close',
+                          side_effect=RuntimeError('private-value')) as begin:
+            app = self.build(catalog=(spec,), transport_factory=lambda **kw: transport)
+            handle = app.start('sample')
+            def cleanup():
+                finish.set()
+                self.assertTrue(app.stop('sample', wait_timeout=1))
+            self.addCleanup(cleanup)
+            self.assertTrue(entered.wait(1))
+            with patch.object(app._coordination, 'close') as coordination_close:
+                for wait in (0, None):
+                    with self.assertRaisesRegex(RuntimeError,
+                                                '^Shared controller shutdown failed$'):
+                        app.close(wait_timeout=wait)
+                self.assertTrue(handle.context.cancelled.is_set())
+                coordination_close.assert_not_called()
+            begin.assert_called_once_with()
+            transport.close.assert_not_called()

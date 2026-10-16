@@ -3,6 +3,7 @@
 import copy
 import threading
 import unittest
+from queue import Queue
 from dataclasses import replace
 from unittest.mock import Mock
 from uuid import uuid4
@@ -44,7 +45,7 @@ class LocalTestGate:
         del self.sessions[owner, session.session_id]
 
 
-class OwnershipTests(unittest.TestCase):
+class OwnershipFixture:
     def setUp(self):
         self.clock = FakeClock(start=100)
         self.gate = LocalTestGate(self.clock)
@@ -88,6 +89,8 @@ class OwnershipTests(unittest.TestCase):
     def acquire(self, owner=None, device_id=42, seconds=60):
         return (owner or self.owner).try_acquire_control(device_id, lease_seconds=seconds)
 
+
+class OwnershipTests(OwnershipFixture, unittest.TestCase):
     def test_bound_facade_and_reacquire_without_nesting_or_extension(self):
         self.assertIsInstance(self.owner, Controller)
         session = self.acquire()
@@ -108,7 +111,7 @@ class OwnershipTests(unittest.TestCase):
         self.clock.advance(60)
         self.acquire(self.other)
 
-    def test_expired_release_racing_reacquisition_cannot_delete_new_owner(self):
+    def test_expired_release_blocks_reacquisition_until_first_attempt_finishes(self):
         session = self.acquire()
         entered = threading.Event()
         release = self.executor._release_remote
@@ -120,9 +123,12 @@ class OwnershipTests(unittest.TestCase):
         thread = self.start(lambda: self.owner.release_control(session))
         self.assertTrue(entered.wait(1))
         self.clock.advance(60)
-        replacement = self.acquire(self.other)
+        with self.assertRaises(DeviceControlBusy):
+            self.acquire(self.other)
         self.unblock.set()
         thread.join(1)
+        self.assertEqual(self.gate.releases, [session])
+        replacement = self.acquire(self.other)
         self.other.execute_command(self.command(self.other), replacement)
         with self.assertRaises(DeviceControlBusy):
             self.acquire(self.owner)
@@ -328,7 +334,7 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaises(ControlOwnershipRequired):
             self.owner.execute_command(self.command(state=False), session)
         self.assertEqual(self.adapter.send_command.call_count, 1)
-        self.assertIs(self.acquire(), session)
+        self.assertIsNot(self.acquire(), session)
 
     def test_fresh_technical_checks_gate_and_expiry_precede_acceptance(self):
         session = self.acquire()
@@ -505,6 +511,506 @@ class OwnershipTests(unittest.TestCase):
                 self.assertTrue(result.api_accepted)
                 self.assertIsNone(result.observed_state)
                 self.assertEqual(result.received_at, self.clock.wall_now())
+
+
+class ExecutorShutdownTests(OwnershipFixture, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.stop_waiting = threading.Event()
+
+    def tearDown(self):
+        self.unblock.set()
+        for event in getattr(self, 'extra_unblocks', []):
+            event.set()
+        for thread in self.threads:
+            thread.join(2)
+        # Also clean up after a failed assertion, before joining drain waiters.
+        with self.executor._lock:
+            held_sessions = list(self.executor._devices.values())
+        for held in held_sessions:
+            if held.session is not None and not held.closing:
+                held.binding.release_control(held.session)
+        self.clock.advance(10000)
+        self.stop_waiting.set()
+        if hasattr(self.executor, '_idle'):
+            with self.executor._idle:
+                self.executor._idle.notify_all()
+        for thread in getattr(self, 'waiters', []):
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+        for thread in self.threads:
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(self.errors, [])
+
+    def wait_for_idle(self):
+        """Observe actual Condition waits, without guessing thread scheduling."""
+        waiting = Queue()
+        done = threading.Event()
+        original = self.executor._idle.wait
+        def wait(timeout=None):
+            waiting.put(timeout)
+            result = original(timeout)
+            if self.stop_waiting.is_set():
+                raise InterruptedError('test teardown')
+            return result
+        self.executor._idle.wait = wait
+        def drain():
+            try:
+                self.executor.wait_idle()
+                done.set()
+            except InterruptedError:
+                if not self.stop_waiting.is_set():
+                    raise
+            except BaseException as error:
+                self.errors.append(error)
+        thread = threading.Thread(target=drain)
+        self.waiters = getattr(self, 'waiters', []) + [thread]
+        thread.start()
+        waiting.get(timeout=1)
+        self.assertFalse(done.is_set())
+        return done, waiting
+
+    def test_close_rejects_new_consumers_and_acquisitions_but_allows_cleanup(self):
+        session = self.acquire()
+        self.executor.begin_close()
+        self.executor.begin_close()
+        with self.assertRaises(ControlOwnershipRequired):
+            self.service.for_consumer()
+        for owner, device in ((self.owner, 42), (self.other, 42), (self.other, 43)):
+            with self.subTest(device=device), self.assertRaises(ControlOwnershipRequired):
+                self.acquire(owner, device)
+        self.assertEqual(self.gate.acquisitions, 1)
+        self.owner.read_current(42)
+        self.owner.execute_command(self.command(state=False), session)
+        self.owner.release_control(session)
+        self.executor.wait_idle()
+        self.assertEqual(self.gate.releases, [session])
+        self.adapter.send_command.assert_called_once()
+
+    def test_empty_bindings_do_not_delay_idle(self):
+        self.executor.begin_close()
+        self.executor.wait_idle()
+        self.assertEqual(self.gate.acquisitions, 0)
+
+    def test_idle_waits_for_session_between_commands(self):
+        session = self.acquire()
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.owner.execute_command(self.command(state=False), session)
+        self.assertFalse(done.is_set())
+        self.owner.release_control(session)
+        self.assertTrue(done.wait(1))
+
+    def assert_phase_drained(self, phase):
+        session = self.acquire()
+        command = self.command()
+        entered = threading.Event()
+        target, method = {
+            'prepare': (self.service, '_prepare'),
+            'validate': (self.gate, 'validate'),
+            'send': (self.adapter, 'send_command'),
+            'release': (self.gate, 'release'),
+        }[phase]
+        original = getattr(target, method)
+        def block(*args, **kwargs):
+            entered.set()
+            self.assertTrue(self.unblock.wait(2))
+            return original(*args, **kwargs)
+        setattr(target, method, block)
+        def operation():
+            if phase == 'release':
+                self.owner.release_control(session)
+            else:
+                try:
+                    self.owner.execute_command(command, session)
+                except ControlOwnershipRequired:
+                    if phase not in ('prepare', 'validate'):
+                        raise
+        thread = self.start(operation)
+        self.assertTrue(entered.wait(1))
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        if phase != 'release':
+            self.owner.release_control(session)
+        self.clock.advance(60)
+        self.assertFalse(done.is_set())
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.assertEqual(self.gate.releases, [session])
+
+    def test_idle_waits_through_technical_validation(self):
+        self.assert_phase_drained('prepare')
+
+    def test_idle_waits_through_gate_validation(self):
+        self.assert_phase_drained('validate')
+
+    def test_idle_waits_through_send(self):
+        self.assert_phase_drained('send')
+
+    def test_idle_waits_through_remote_release_even_after_expiry(self):
+        self.assert_phase_drained('release')
+
+    def assert_pending_release_drained(self, *, deferred):
+        session = self.acquire(seconds=1)
+        release_pending = threading.Event()
+        original_release = self.executor._release_remote
+        self.gate.release = Mock(wraps=self.gate.release)
+        rows = []
+        self.executor._statistics = Statistics(rows.append, protocol_version='1', profile='test')
+        def release(held):
+            release_pending.set()
+            self.assertTrue(self.unblock.wait(2))
+            original_release(held)
+        self.executor._release_remote = release
+        if deferred:
+            command_entered = threading.Event()
+            command_can_finish = threading.Event()
+            self.extra_unblocks = [command_can_finish]
+            def send(prepared):
+                command_entered.set()
+                self.assertTrue(command_can_finish.wait(2))
+            self.adapter.send_command.side_effect = send
+            thread = self.start(lambda: self.owner.execute_command(self.command(), session))
+            self.assertTrue(command_entered.wait(1))
+            self.owner.release_control(session)
+            self.clock.advance(1)
+            command_can_finish.set()
+        else:
+            self.clock.advance(1)
+            thread = self.start(lambda: self.owner.release_control(session))
+        self.assertTrue(release_pending.wait(1))
+        self.executor.begin_close()
+        self.gate.release.assert_not_called()
+        done, _ = self.wait_for_idle()
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.gate.release.assert_called_once()
+        self.assertEqual(self.gate.releases, [session])
+        self.assertEqual(len([row for row in rows if row['event'] == 'cleanup'
+                              and row['phase'] == 'session']), 1)
+
+    def test_idle_waits_before_first_release_attempt_for_expired_session(self):
+        self.assert_pending_release_drained(deferred=False)
+
+    def test_idle_waits_before_deferred_release_attempt_after_expired_command(self):
+        self.assert_pending_release_drained(deferred=True)
+
+    def test_idle_waits_for_both_commands_and_every_device(self):
+        session = self.acquire()
+        other = self.acquire(self.other, 43)
+        command = self.command()
+        commands_entered = threading.Barrier(3)
+        first_can_finish = threading.Event()
+        self.extra_unblocks = [first_can_finish]
+        def send(prepared):
+            commands_entered.wait(1)
+            event = first_can_finish if prepared.body['target_state'] else self.unblock
+            self.assertTrue(event.wait(2))
+        self.adapter.send_command.side_effect = send
+        first = self.start(lambda: self.owner.execute_command(command, session))
+        second = self.start(lambda: self.owner.execute_command(self.command(state=False), session))
+        commands_entered.wait(1)
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.owner.release_control(session)
+        first_can_finish.set()
+        first.join(1)
+        self.assertEqual(self.gate.releases, [])
+        self.assertFalse(done.is_set())
+        self.unblock.set()
+        second.join(1)
+        self.assertEqual(self.gate.releases, [session])
+        self.assertFalse(done.is_set())
+        self.other.release_control(other)
+        self.assertTrue(done.wait(1))
+
+    def test_late_gate_session_is_only_released_and_never_issued(self):
+        gate_entered = threading.Event()
+        gate_can_return = threading.Event()
+        release_entered = threading.Event()
+        rejected = threading.Event()
+        self.extra_unblocks = [gate_can_return]
+        original_acquire = self.gate.try_acquire
+        original_release = self.gate.release
+        def acquire(*args, **kwargs):
+            session = original_acquire(*args, **kwargs)
+            gate_entered.set()
+            self.assertTrue(gate_can_return.wait(2))
+            return session
+        def release(*args):
+            release_entered.set()
+            self.assertTrue(self.unblock.wait(2))
+            return original_release(*args)
+        self.gate.try_acquire = acquire
+        self.gate.release = release
+        def acquire_late():
+            with self.assertRaises(ControlOwnershipRequired):
+                self.acquire()
+            rejected.set()
+        thread = self.start(acquire_late)
+        self.assertTrue(gate_entered.wait(1))
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        gate_can_return.set()
+        self.assertTrue(release_entered.wait(1))
+        self.assertFalse(done.is_set())
+        # A second shutdown enters the lock while release I/O is blocked.
+        lock_free = threading.Event()
+        self.start(lambda: (self.executor.begin_close(), lock_free.set()))
+        self.assertTrue(lock_free.wait(1))
+        self.assertFalse(rejected.is_set())
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(rejected.is_set())
+        self.assertTrue(done.wait(1))
+        self.assertEqual(len(self.gate.releases), 1)
+
+    def assert_gate_failure_drained(self, error):
+        entered = threading.Event()
+        def acquire(*args, **kwargs):
+            entered.set()
+            self.assertTrue(self.unblock.wait(2))
+            raise error
+        self.gate.try_acquire = acquire
+        def fail():
+            with self.assertRaises(type(error)):
+                self.acquire()
+        thread = self.start(fail)
+        self.assertTrue(entered.wait(1))
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.assertEqual(self.gate.releases, [])
+
+    def test_pending_gate_busy_releases_local_reservation_during_shutdown(self):
+        self.assert_gate_failure_drained(DeviceControlBusy())
+
+    def test_pending_gate_error_releases_local_reservation_during_shutdown(self):
+        self.assert_gate_failure_drained(DeviceUnavailable())
+
+    def test_acquisition_committed_before_close_survives_delayed_return(self):
+        committed = threading.Event()
+        sessions = []
+        def observation_context(*args):
+            committed.set()
+            self.assertTrue(self.unblock.wait(2))
+            return {}
+        self.gate.observation_context = observation_context
+        thread = self.start(lambda: sessions.append(self.acquire()))
+        self.assertTrue(committed.wait(1))
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.unblock.set()
+        thread.join(1)
+        self.assertEqual(len(sessions), 1)
+        self.assertFalse(done.is_set())
+        self.assertEqual(self.gate.releases, [])
+        self.owner.execute_command(self.command(state=False), sessions[0])
+        self.owner.release_control(sessions[0])
+        self.assertTrue(done.wait(1))
+
+    def assert_failed_release_expires(self, error):
+        session = self.acquire()
+        self.gate.release = Mock(side_effect=error)
+        with self.assertRaises(type(error)):
+            self.owner.release_control(session)
+        self.executor.begin_close()
+        done, waits = self.wait_for_idle()
+        with self.executor._lock:
+            self.assertIs(self.executor._devices[42].session, session)
+        with self.assertRaises(ControlOwnershipRequired):
+            self.owner.execute_command(self.command(state=False), session)
+        # Advance the injected lease clock; no acquire/notify should be needed
+        # to recheck expiry. The Condition itself must use a bounded wait.
+        self.clock.advance(60)
+        self.assertTrue(done.wait(1))
+        self.gate.release.assert_called_once()
+        self.adapter.send_command.assert_not_called()
+
+    def test_unknown_release_is_retained_until_expiry_without_retry(self):
+        self.assert_failed_release_expires(CommandOutcomeUnknown())
+
+    def test_failed_release_is_retained_until_expiry_without_retry(self):
+        self.assert_failed_release_expires(DeviceUnavailable())
+
+    def test_interrupted_release_observation_does_not_pin_releasing_forever(self):
+        session = self.acquire(seconds=1)
+        sink = Mock()
+        sink.emit.side_effect = KeyboardInterrupt()
+        self.executor._statistics = sink
+        self.gate.release = Mock(wraps=self.gate.release)
+        with self.assertRaises(KeyboardInterrupt):
+            self.owner.release_control(session)
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.clock.advance(1)
+        self.assertTrue(done.wait(1))
+        self.gate.release.assert_not_called()
+
+    def test_expired_idle_session_finishes_shutdown_without_owner_release(self):
+        session = self.acquire()
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.clock.advance(60)
+        self.assertTrue(done.wait(1))
+        with self.assertRaises(ControlOwnershipRequired):
+            self.owner.execute_command(self.command(state=False), session)
+        self.assertEqual(self.gate.releases, [])
+        self.adapter.send_command.assert_not_called()
+
+    def test_expired_idle_session_allows_same_and_different_consumers_to_reacquire(self):
+        for consumer in (self.owner, self.other):
+            with self.subTest(consumer=consumer):
+                previous = self.acquire(seconds=1)
+                self.clock.advance(1)
+                replacement = self.acquire(consumer)
+                self.assertIsNot(replacement, previous)
+                with self.assertRaises(ControlOwnershipRequired):
+                    self.owner.execute_command(self.command(), previous)
+                consumer.release_control(replacement)
+        self.adapter.send_command.assert_not_called()
+
+    def test_interrupted_acquisition_drains_at_lease_expiry(self):
+        for interruption in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interruption=interruption):
+                self.gate.observation_context = Mock(side_effect=interruption())
+                with self.assertRaises(interruption):
+                    self.acquire(seconds=1)
+                done, _ = self.wait_for_idle()
+                self.assertFalse(done.is_set())
+                self.clock.advance(1)
+                self.assertTrue(done.wait(1))
+        self.executor.begin_close()
+        self.executor.wait_idle()
+        self.adapter.send_command.assert_not_called()
+        self.assertEqual(self.gate.releases, [])
+
+    def test_expiry_waits_for_acquisition_observation_before_draining(self):
+        observing = threading.Event()
+        sessions = []
+        def observation_context(*args):
+            observing.set()
+            self.assertTrue(self.unblock.wait(2))
+            return {}
+        self.gate.observation_context = observation_context
+        thread = self.start(lambda: sessions.append(self.acquire(seconds=1)))
+        self.assertTrue(observing.wait(1))
+        self.executor.begin_close()
+        done, waits = self.wait_for_idle()
+        self.clock.advance(1)
+        with self.executor._idle:
+            self.executor._idle.notify_all()
+        waits.get(timeout=1)
+        self.assertFalse(done.is_set())
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(self.gate.releases, [])
+
+    def test_expiry_waits_for_accepted_command_without_explicit_release(self):
+        session = self.acquire(seconds=1)
+        sending = threading.Event()
+        def send(prepared):
+            sending.set()
+            self.assertTrue(self.unblock.wait(2))
+        self.adapter.send_command.side_effect = send
+        thread = self.start(lambda: self.owner.execute_command(self.command(), session))
+        self.assertTrue(sending.wait(1))
+        self.executor.begin_close()
+        done, waits = self.wait_for_idle()
+        self.clock.advance(1)
+        with self.executor._idle:
+            self.executor._idle.notify_all()
+        waits.get(timeout=1)
+        self.assertFalse(done.is_set())
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.assertEqual(self.gate.releases, [])
+
+    def test_late_acquisition_unknown_release_drains_only_at_local_expiry(self):
+        entered = threading.Event()
+        rejected = threading.Event()
+        original = self.gate.try_acquire
+        def acquire(*args, **kwargs):
+            session = original(*args, **kwargs)
+            entered.set()
+            self.assertTrue(self.unblock.wait(2))
+            return session
+        self.gate.try_acquire = acquire
+        self.gate.release = Mock(side_effect=CommandOutcomeUnknown())
+        def acquire_late():
+            with self.assertRaises(CommandOutcomeUnknown):
+                self.acquire()
+            rejected.set()
+        thread = self.start(acquire_late)
+        self.assertTrue(entered.wait(1))
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(rejected.is_set())
+        self.assertFalse(done.is_set())
+        with self.executor._lock:
+            held = self.executor._devices[42]
+            self.assertTrue(held.closing)
+            self.assertFalse(held.releasing)
+        self.gate.release.assert_called_once()
+        self.clock.advance(60)
+        self.assertTrue(done.wait(1))
+        self.gate.release.assert_called_once()
+
+    def test_failed_release_after_last_accepted_command_drains_at_expiry(self):
+        entered = threading.Event()
+        session = self.acquire()
+        def send(prepared):
+            entered.set()
+            self.assertTrue(self.unblock.wait(2))
+        self.adapter.send_command.side_effect = send
+        self.gate.release = Mock(side_effect=CommandOutcomeUnknown())
+        def execute():
+            with self.assertRaises(CommandOutcomeUnknown):
+                self.owner.execute_command(self.command(), session)
+        thread = self.start(execute)
+        self.assertTrue(entered.wait(1))
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.owner.release_control(session)
+        self.clock.advance(60)
+        self.assertFalse(done.is_set())
+        self.gate.release.assert_not_called()
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.gate.release.assert_called_once()
+
+    def test_late_expired_gate_session_still_completes_cleanup(self):
+        entered = threading.Event()
+        original = self.gate.try_acquire
+        def acquire(*args, **kwargs):
+            session = original(*args, **kwargs)
+            entered.set()
+            self.assertTrue(self.unblock.wait(2))
+            return session
+        self.gate.try_acquire = acquire
+        def acquire_late():
+            with self.assertRaises(ControlOwnershipRequired):
+                self.acquire()
+        thread = self.start(acquire_late)
+        self.assertTrue(entered.wait(1))
+        self.executor.begin_close()
+        done, _ = self.wait_for_idle()
+        self.clock.advance(60)
+        self.unblock.set()
+        thread.join(1)
+        self.assertTrue(done.wait(1))
+        self.assertEqual(len(self.gate.releases), 1)
+        self.assertEqual(self.gate.sessions, {})
 
 
 if __name__ == '__main__':

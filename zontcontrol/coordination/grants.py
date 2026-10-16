@@ -237,8 +237,7 @@ class ExecutorGate:
                 if key[1] == device_id and now >= pending.sent + pending.request.lease_seconds:
                     del self._pending[key]
             for key, held in tuple(self._held.items()):
-                if (key[1] == device_id and held.finished
-                        and now >= held.session.expires_at):
+                if key[1] == device_id and now >= held.session.expires_at:
                     del self._held[key]
             self._observe('attempt', store)
             key = owner, device_id
