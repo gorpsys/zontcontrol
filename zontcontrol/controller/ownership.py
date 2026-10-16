@@ -8,7 +8,7 @@ Gate I/O and command HTTP never hold the account-wide state lock.
 
 import math
 from dataclasses import dataclass, field
-from threading import Lock
+from threading import Condition, Lock
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -66,6 +66,8 @@ class CommandExecutor:
         self._gate = gate
         self._clock = clock
         self._lock = Lock()
+        self._idle = Condition(self._lock)
+        self._closed = False
         self._devices = {}
         self._statistics = statistics
 
@@ -85,7 +87,37 @@ class CommandExecutor:
                           coverage='partial')
 
     def bind(self):
-        return _ControlBinding(self)
+        with self._lock:
+            if self._closed:
+                raise ControlOwnershipRequired()
+            return _ControlBinding(self)
+
+    def begin_close(self):
+        """Close admission without revoking issued sessions or doing I/O."""
+        with self._lock:
+            self._closed = True
+
+    def wait_idle(self):
+        """Wait for reservations, including sessions held between commands."""
+        with self._idle:
+            while self._devices:
+                recheck = None
+                for device_id, held in list(self._devices.items()):
+                    if (held.closing and not held.releasing and held.in_flight == 0
+                            and held.session is not None):
+                        remaining = held.session.expires_at - self._clock()
+                        if remaining <= 0:
+                            if self._devices.get(device_id) is held:
+                                del self._devices[device_id]
+                                self._idle.notify_all()
+                        else:
+                            # Lease time is injected and can advance independently
+                            # of Condition's real wait clock. Recheck it regularly;
+                            # shutdown never renews a grant or retries release.
+                            recheck = min(remaining, .1,
+                                          recheck if recheck is not None else .1)
+                if self._devices:
+                    self._idle.wait(recheck)
 
     def _match(self, binding, session, device_id, *, allow_closing=False):
         if not isinstance(session, ControlSession) or session.device_id != device_id:
@@ -109,6 +141,8 @@ class CommandExecutor:
         if not valid:
             raise InvalidArguments()
         with self._lock:
+            if self._closed:
+                raise ControlOwnershipRequired()
             held = self._devices.get(device_id)
             if (held is not None and held.closing and not held.releasing
                     and held.in_flight == 0 and held.session is not None
@@ -124,23 +158,35 @@ class CommandExecutor:
         try:
             session = self._gate.try_acquire(binding._owner, device_id,
                                              lease_seconds=lease_seconds)
-            if (not isinstance(session, ControlSession) or session.device_id != device_id
-                    or not self._clock() < session.expires_at):
+            if not isinstance(session, ControlSession) or session.device_id != device_id:
                 raise ControlOwnershipRequired()
-            with self._lock:
-                held.session = session
-            # Instrumentation is optional and must not affect ownership.
-            try:
-                context = getattr(self._gate, 'observation_context', None)
-                if context is not None:
-                    held.context = context(binding._owner, session)
-            except Exception:
-                pass
-            return session
         except BaseException:
             with self._lock:
-                del self._devices[device_id]
+                if self._devices.get(device_id) is held:
+                    del self._devices[device_id]
+                self._idle.notify_all()
             raise
+        with self._lock:
+            # Commit issuance atomically with begin_close. A session returned
+            # by a late gate belongs only to cleanup, never to the consumer.
+            held.session = session
+            rejected = (self._closed or self._devices.get(device_id) is not held
+                        or not self._clock() < session.expires_at)
+            # Keep the reservation held until _release_remote atomically marks
+            # it closing/releasing. Even an expired late grant needs cleanup;
+            # drain must not discard it in the gap before release starts.
+            self._idle.notify_all()
+        # Instrumentation is optional and must not affect ownership.
+        try:
+            context = getattr(self._gate, 'observation_context', None)
+            if context is not None:
+                held.context = context(binding._owner, session)
+        except Exception:
+            pass
+        if rejected:
+            self._release_remote(held)
+            raise ControlOwnershipRequired()
+        return session
 
     def _release_remote(self, held):
         # Keep the closing reservation while completion is being published.
@@ -152,7 +198,9 @@ class CommandExecutor:
                 return
             if held.releasing:
                 return
+            held.closing = True
             held.releasing = True
+            self._idle.notify_all()
             report_cleanup = not held.cleanup_observed
             held.cleanup_observed = True
         if report_cleanup:
@@ -163,9 +211,12 @@ class CommandExecutor:
         except BaseException:
             with self._lock:
                 held.releasing = False
+                self._idle.notify_all()
             raise
         with self._lock:
-            del self._devices[held.session.device_id]
+            if self._devices.get(held.session.device_id) is held:
+                del self._devices[held.session.device_id]
+            self._idle.notify_all()
 
     def _release(self, binding, session):
         with self._lock:
@@ -173,6 +224,7 @@ class CommandExecutor:
             held = self._match(binding, session, device_id, allow_closing=True)
             held.closing = True
             release_now = held.in_flight == 0
+            self._idle.notify_all()
         if release_now:
             self._release_remote(held)
 
@@ -207,6 +259,7 @@ class CommandExecutor:
             with self._lock:
                 held.in_flight -= 1
                 release_now = held.closing and held.in_flight == 0
+                self._idle.notify_all()
             if release_now:
                 self._release_remote(held)
 
