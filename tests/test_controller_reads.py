@@ -83,6 +83,31 @@ class ControllerReadTests(unittest.TestCase):
         self.assertFalse(rows[key('value', 'regulators', 32)].history_available)
         self.assertFalse(rows[key('actual_temp', 'circuit', 10)].history_available)
 
+    def test_virtual_supply_sensor_does_not_hide_addressable_values(self):
+        self.raw['sensors'].insert(0, {
+            'id': 0, 'name': 'Питание', 'type': 'voltage', 'unit': 'В', 'value': 12.3,
+        })
+        self.raw['sensors'].append({
+            'id': 8, 'name': 'Контроль напряжения питания', 'type': 'voltage',
+            'unit': 'В', 'value': 12.3,
+        })
+        descriptors = self.service.describe_values(42)
+        self.assertTrue(all(row.key.element_id > 0 for row in descriptors))
+        readings = {row.key: row for row in self.service.read_current(42).values}
+        self.assertEqual(readings[key()].value, 21)
+        self.assertEqual(readings[key(element_id=8)].value, 12.3)
+        self.assertEqual(readings[key(element_id=8)].unit, 'В')
+        self.adapter.send_command.assert_not_called()
+
+    def test_widget_temperature_unit_matches_circuit_and_history(self):
+        self.raw['sensors'][0]['unit'] = '°'
+        descriptor = next(row for row in self.service.describe_values(42) if row.key == key())
+        self.assertEqual(descriptor.unit, '°C')
+        readings = {row.key: row for row in self.service.read_current(42).values}
+        self.assertEqual(readings[key()].unit, readings[key('target_temp', 'circuit', 10)].unit)
+        history = self.service.read_history(42, (key(),), START, END)
+        self.assertEqual(history.series[0].unit, '°C')
+
     def test_controls_include_hidden_unsupported_labels_and_limits(self):
         rows = {x.key.element_id: x for x in self.service.list_controls(42)}
         self.assertEqual(set(rows), {10, 11, 20, 30, 31, 32, 33, 34, 40, 50, 60})
