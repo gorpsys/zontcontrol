@@ -334,18 +334,18 @@ CI workflows и исполняемых scripts, меняющих discovery/пр�
 - Modify: `scripts/analyze_orchestration.py` — только импорт публичных объектов.
 - Tests: существующие файлы, **без изменений**.
 
-- [ ] Оформить перечисленный `__all__` статическими реэкспортами; не добавлять
+- [x] Оформить перечисленный `__all__` статическими реэкспортами; не добавлять
   service locator, динамическую загрузку, глобальный runtime или side effects.
-- [ ] Перевести application/config/ownership и analyze_orchestration на импорты
+- [x] Перевести application/config/ownership и analyze_orchestration на импорты
   через пакет. Внутренние модули используют собственные submodules/ports и
   neutral control_types; тела офлайн-анализатора и протокола неизменны.
-- [ ] Выполнить AST-аудит разрешённых зависимостей, identity классов и сравнение
+- [x] Выполнить AST-аудит разрешённых зависимостей, identity классов и сравнение
   алгоритмических модулей. Исправлять только расположение/импорты/assembly.
-- [ ] Запустить неизменённые `tests.test_module_boundaries`,
+- [x] Запустить неизменённые `tests.test_module_boundaries`,
   `tests.test_configuration`, `tests.test_orchestration_statistics`,
   `tests.test_application_coordination`, `tests.test_control_ownership` и
   `tests.test_control_requests`. Сохранить logger и optional hook семантику.
-- [ ] Проверить неизменность tests/тестовой инфраструктуры и green результат;
+- [x] Проверить неизменность tests/тестовой инфраструктуры и green результат;
   зафиксировать фактическую границу в журнале реализации.
 
 ### Task 4: Документация, выпуск и полная приёмка

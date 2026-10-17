@@ -15,8 +15,7 @@ from .contracts import (
     CommandOutcomeUnknown, ControlOwnershipRequired, ControlSession, DeviceControlBusy,
     InvalidArguments, ValidatedCommand,
 )
-from ..coordination.ports import CoordinationGate
-from ..coordination.statistics import error_event, observe
+from ..coordination import CoordinationGate, error_event, observe
 from .requests import ControlRequestManager
 
 

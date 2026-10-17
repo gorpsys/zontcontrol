@@ -13,7 +13,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 from .autonomy.contracts import Mode, valid_id
-from .coordination.clock import LeaseTiming
+from .coordination import LeaseTiming
 
 
 class ConfigurationError(ValueError):

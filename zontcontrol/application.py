@@ -22,10 +22,10 @@ from .controller.ownership import CommandExecutor
 from .controller.service import ControllerService
 from .controller.transport import HttpTransport
 from .controller.zont import ZontAdapter
-from .coordination import CoordinationRuntime
+from .coordination import (
+    BootClock, CoordinationRuntime, JsonlSink, ObservationError, Statistics,
+)
 from .coordination import CoordinatorWorker as _DeviceCoordinator
-from .coordination.clock import BootClock
-from .coordination.statistics import JsonlSink, ObservationError, Statistics
 
 
 def _credentials(environ):
