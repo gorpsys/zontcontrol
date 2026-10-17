@@ -43,7 +43,8 @@ class MetadataPort(Protocol):
 class CoordinationSettings(Protocol):
     """Already validated timing settings supplied by the composition root."""
 
-    delta_seconds: float
+    @property
+    def delta_seconds(self) -> float: ...
 
     @property
     def timing(self) -> LeaseTiming: ...

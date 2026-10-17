@@ -120,8 +120,8 @@ legacy-адаптер прототипа. Сессии не копируются
   `read_metadata_field(device_id, field)` и
   `update_metadata(device_id, field, value)`; никаких HTTP, URL или credentials.
   ZontAdapter структурно реализует этот порт без нового wrapper.
-- `CoordinationSettings` — существующие `delta_seconds` и свойство `timing`
-  типа LeaseTiming. Передаётся прежний CoordinationConfig; пакет не читает
+- `CoordinationSettings` — доступные только для чтения свойства `delta_seconds`
+  типа float и `timing` типа LeaseTiming. Передаётся прежний CoordinationConfig; пакет не читает
   JSON и не создаёт вторую копию настроек.
 - `Clock` — `now()` и `wait(cancelled, seconds)` в текущем порядке аргументов.
   BootClock, StepClock и FakeClock сохраняют структурную совместимость.
