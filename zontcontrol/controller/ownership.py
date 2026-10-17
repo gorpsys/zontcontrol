@@ -383,6 +383,22 @@ class _ControlBinding:
     def try_acquire_control(self, device_id, *, lease_seconds):
         return self._executor._acquire(self, device_id, lease_seconds)
 
+    def request_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
+        return self._executor._requests.request(
+            self, device_id, lease_seconds=lease_seconds, timeout=timeout,
+            poll_seconds=poll_seconds, cancelled=cancelled)
+
+    def get_control_request(self, request):
+        return self._executor._requests.get(self, request)
+
+    def cancel_control_request(self, request):
+        return self._executor._requests.cancel(self, request)
+
+    def acquire_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
+        return self._executor._requests.acquire(
+            self, device_id, lease_seconds=lease_seconds, timeout=timeout,
+            poll_seconds=poll_seconds, cancelled=cancelled)
+
     def release_control(self, session):
         return self._executor._release(self, session)
 

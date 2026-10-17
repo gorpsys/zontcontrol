@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from threading import Event
 from typing import Mapping, Protocol, TypeAlias, runtime_checkable
 from uuid import UUID
 
@@ -520,8 +521,16 @@ class CommandResult:
 class Controller(Protocol):
     """One account, bound by DI to one consumer; no credentials in this API.
 
-    Reads and preparation never acquire control. Acquisition is immediate:
-    return a session or raise DeviceControlBusy, without a hidden wait queue.
+    Reads and preparation never acquire control. try_acquire_control is immediate:
+    return a session or raise DeviceControlBusy. request_control registers a local
+    request without waiting for gate I/O. get/cancel require the exact issued
+    handle and its binding, and return the same immutable terminal result.
+    acquire_control waits for that request and returns only GRANTED or DENIED;
+    timeout/cancellation can deny it before in-flight gate I/O finishes. A late
+    session belongs to worker cleanup, never to the denied caller. Request
+    deadlines use the executor's local clock, including time spent in its queue.
+    Terminal status remains readable after shutdown, release and lease expiry;
+    it records issuance, not current command authority.
     Reacquiring an unexpired owned device returns the same session and deadline.
     The caller chooses lease_seconds for grant acquisition, its whole critical
     section, finally and its own margin. Expiry rejects new commands including
@@ -559,6 +568,18 @@ class Controller(Protocol):
                         arguments: Mapping[str, Scalar]) -> ValidatedCommand: ...
 
     def try_acquire_control(self, device_id: int, *, lease_seconds: float) -> ControlSession: ...
+
+    def request_control(self, device_id: int, *, lease_seconds: float, timeout: float,
+                        poll_seconds: float = 1, cancelled: Event | None = None
+                        ) -> ControlRequest: ...
+
+    def get_control_request(self, request: ControlRequest) -> ControlRequestResult: ...
+
+    def cancel_control_request(self, request: ControlRequest) -> ControlRequestResult: ...
+
+    def acquire_control(self, device_id: int, *, lease_seconds: float, timeout: float,
+                        poll_seconds: float = 1, cancelled: Event | None = None
+                        ) -> ControlRequestResult: ...
 
     def release_control(self, control_session: ControlSession) -> None: ...
 

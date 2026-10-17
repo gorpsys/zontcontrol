@@ -133,6 +133,23 @@ class ControlRequestManager:
                     self._deny_locked(state, Reason.CANCELLED)
             return self._lookup_locked(binding, handle)
 
+    def acquire(self, binding, device_id, *, lease_seconds, timeout, poll_seconds=1,
+                cancelled=None):
+        handle = self.request(binding, device_id, lease_seconds=lease_seconds, timeout=timeout,
+                              poll_seconds=poll_seconds, cancelled=cancelled)
+        with self._idle:
+            while True:
+                state = self._active.get(handle)
+                if state is not None:
+                    # The device worker may be blocked in gate I/O. The caller
+                    # can still settle this request, under the same state lock.
+                    self._check_locked(state)
+                result = self._lookup_locked(binding, handle)
+                if result.state is not State.REQUESTED:
+                    return result
+                now = self._clock()
+                self._idle.wait(min(.1, state.wait_deadline - now, state.lease_deadline - now))
+
     def busy_locked(self, binding, device_id, request_id=None):
         return any(state.binding is binding and state.handle.request_id != request_id
                    and state.result.state is not State.GRANTED

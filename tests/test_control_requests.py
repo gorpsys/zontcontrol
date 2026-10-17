@@ -12,9 +12,10 @@ from zontcontrol.controller.contracts import (
     AuthenticationError, CommandOutcomeUnknown, ControlOwnershipRequired, ControlRequest,
     ControlRequestErrorCode as Code, ControlRequestReason as Reason,
     ControlRequestState as State, ControlSession, DeviceControlBusy, DeviceUnavailable,
-    InvalidArguments, RateLimited,
+    Controller, InvalidArguments, RateLimited,
 )
 from zontcontrol.controller.ownership import CommandExecutor
+from zontcontrol.controller.service import ControllerService
 
 
 class RequestGate:
@@ -61,7 +62,9 @@ class RequestTests(unittest.TestCase):
         self.gate = RequestGate(self.clock)
         self.executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
         self.manager = self.executor._requests
-        self.binding = self.executor.bind()
+        self.service = ControllerService(None, executor=self.executor)
+        self.consumer = self.service.for_consumer()
+        self.binding = self.consumer._control
         self.other = self.executor.bind()
         self.unblock = threading.Event()
         self.threads = []
@@ -122,6 +125,148 @@ class RequestTests(unittest.TestCase):
         for worker in workers:
             worker.join(2)
             self.assertFalse(worker.is_alive())
+
+    def test_public_async_identity_and_local_status_cancel(self):
+        entered = threading.Event()
+        self.gate.action = lambda device: self.block(entered)
+        consumer = self.consumer
+        self.assertIsInstance(consumer, Controller)
+        handle = consumer.request_control(42, lease_seconds=60, timeout=30)
+        self.assertIs(handle.initial_state, State.REQUESTED)
+        self.assertTrue(entered.wait(1))
+        self.assertIs(consumer.request_control(42, lease_seconds=60, timeout=30), handle)
+        self.assertIs(consumer.get_control_request(handle).state, State.REQUESTED)
+        foreign = self.service.for_consumer()
+        other_executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        other = ControllerService(None, executor=other_executor).for_consumer()
+        forged = ControlRequest(handle.request_id, handle.device_id)
+        for owner, request in ((consumer, forged), (foreign, handle), (other, handle),
+                               (consumer, None), (consumer, handle.request_id)):
+            for method in ('get_control_request', 'cancel_control_request'):
+                with self.subTest(method=method), self.assertRaises(InvalidArguments):
+                    getattr(owner, method)(request)
+        self.assertEqual(len(self.gate.calls), 1)
+        denied = consumer.cancel_control_request(handle)
+        self.assertIs(denied.reason, Reason.CANCELLED)
+        self.assertIs(consumer.get_control_request(handle), denied)
+        self.assertIs(consumer.cancel_control_request(handle), denied)
+        self.assertEqual(len(self.gate.calls), 1)
+
+    def test_public_sync_grants_reuses_without_renew_and_returns_error_result(self):
+        result = self.consumer.acquire_control(42, lease_seconds=60, timeout=30)
+        self.assertIs(result.state, State.GRANTED)
+        self.assertIs(self.consumer.try_acquire_control(42, lease_seconds=1), result.session)
+        reused = self.consumer.acquire_control(42, lease_seconds=60, timeout=30)
+        self.assertIs(reused.state, State.GRANTED)
+        self.assertIs(reused.session, result.session)
+        self.assertEqual(len(self.gate.calls), 1)
+        self.consumer.release_control(result.session)
+        self.gate.action = lambda device: (_ for _ in ()).throw(AuthenticationError())
+        denied = self.consumer.acquire_control(42, lease_seconds=60, timeout=30)
+        self.assertIs(denied.state, State.DENIED)
+        self.assertIs(denied.reason, Reason.CONTROLLER_ERROR)
+        self.assertIs(denied.error_code, Code.AUTHENTICATION_ERROR)
+        self.assertIsInstance(denied.make_error(), AuthenticationError)
+
+    def test_public_sync_retries_busy_without_returning_requested_or_busy(self):
+        entered, done = threading.Event(), threading.Event()
+        results = []
+        def busy_once(device):
+            if len(self.gate.calls) == 1:
+                entered.set()
+                raise DeviceControlBusy()
+        self.gate.action = busy_once
+        def acquire():
+            results.append(self.consumer.acquire_control(42, lease_seconds=60, timeout=30))
+            done.set()
+        self.start(acquire)
+        self.assertTrue(entered.wait(1))
+        self.assertFalse(done.is_set())
+        with self.executor._idle:
+            self.assertTrue(self.executor._idle.wait_for(
+                lambda: next(iter(self.manager._active.values())).next_poll > self.clock.now(),
+                timeout=1))
+        self.advance(1)
+        self.assertTrue(done.wait(1))
+        self.assertIs(results[0].state, State.GRANTED)
+        self.assertEqual(len(self.gate.calls), 2)
+        self.consumer.release_control(results[0].session)
+
+    def test_public_sync_denies_during_blocked_http_without_status_polling(self):
+        for cause in ('timeout', 'lease', 'event', 'explicit'):
+            with self.subTest(cause=cause):
+                self.unblock.clear()
+                entered, done = threading.Event(), threading.Event()
+                cancelled = threading.Event()
+                self.gate.action = lambda device: self.block(entered)
+                timeout = 60 if cause == 'lease' else 30
+                handle = self.consumer.request_control(42, lease_seconds=60, timeout=timeout,
+                                                       cancelled=cancelled)
+                self.assertTrue(entered.wait(1))
+                results = []
+                def acquire():
+                    results.append(self.consumer.acquire_control(
+                        42, lease_seconds=60, timeout=timeout, cancelled=cancelled))
+                    done.set()
+                # Keep the duplicate request inside the original deadline.
+                enrolled = threading.Event()
+                original_request = self.manager.request
+                def duplicate(*args, **kwargs):
+                    request = original_request(*args, **kwargs)
+                    self.assertIs(request, handle)
+                    enrolled.set()
+                    return request
+                with patch.object(self.manager, 'request', side_effect=duplicate):
+                    self.start(acquire)
+                    self.assertTrue(enrolled.wait(1))
+                    if cause == 'explicit':
+                        expected = self.consumer.cancel_control_request(handle)
+                    elif cause == 'event':
+                        cancelled.set()
+                    else:
+                        # No notify/get: the sync waiter must check time itself.
+                        self.clock.advance(timeout)
+                    self.assertTrue(done.wait(1), 'sync waited for the blocked HTTP')
+                result, = results
+                self.assertIs(result.state, State.DENIED)
+                reason = (Reason.LEASE_EXPIRED if cause == 'lease' else
+                          Reason.TIMEOUT if cause == 'timeout' else Reason.CANCELLED)
+                self.assertIs(result.reason, reason)
+                self.assertIsNone(result.session)
+                if cause == 'explicit':
+                    self.assertIs(result, expected)
+                self.assertIs(self.consumer.get_control_request(handle), result)
+                self.assertFalse(self.unblock.is_set())
+                self.unblock.set()
+                self.join_workers()
+                self.assertIs(self.consumer.get_control_request(handle), result)
+                self.assertIs(self.consumer.cancel_control_request(handle), result)
+                self.assertEqual(len(self.gate.releases), 1 + ('timeout', 'lease', 'event',
+                                                              'explicit').index(cause))
+
+    def test_public_request_invalid_and_closed_create_no_worker_or_gate_io(self):
+        invalid = [dict(device_id=value) for value in (None, True, 0, -1, 1.5, '42')]
+        for name in ('lease_seconds', 'timeout', 'poll_seconds'):
+            invalid += [dict(**{name: value}) for value in
+                        (None, True, 0, -1, float('inf'), float('nan'), 10 ** 1000, '1')]
+        invalid += [dict(timeout=61), dict(cancelled=object()), dict(cancelled=True)]
+        with patch('zontcontrol.controller.requests.Thread.start') as start:
+            for method in (self.consumer.request_control, self.consumer.acquire_control):
+                for override in invalid:
+                    arguments = dict(device_id=42, lease_seconds=60, timeout=30) | override
+                    with self.subTest(method=method.__name__, fields=tuple(override)), \
+                            self.assertRaises(InvalidArguments):
+                        method(**arguments)
+            self.executor.begin_close()
+            for method in (self.consumer.request_control, self.consumer.acquire_control):
+                with self.assertRaises(ControlOwnershipRequired):
+                    method(42, lease_seconds=60, timeout=30)
+            start.assert_not_called()
+        self.assertEqual(self.gate.calls, [])
+        self.assertEqual(self.gate.abandoned, [])
+        self.assertEqual(self.manager._active, {})
+        self.assertEqual(self.manager._queues, {})
+        self.assertEqual(self.manager._workers, {})
 
     def test_creation_is_local_duplicate_identity_and_status_has_no_io(self):
         entered = threading.Event()

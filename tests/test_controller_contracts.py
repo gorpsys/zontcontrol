@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from zontcontrol.controller import contracts as api
+from zontcontrol.autonomy.contracts import CAPABILITIES
 from tests.fakes.clock import FakeClock
 from tests.fakes.zont import FakeZontServer
 
@@ -40,6 +41,24 @@ def series(device_id=1, **overrides):
 
 
 class ControllerContractTests(unittest.TestCase):
+    def test_control_request_methods_have_fixed_signatures_and_capabilities(self):
+        for name in ('request_control', 'acquire_control'):
+            with self.subTest(method=name):
+                parameters = inspect.signature(getattr(api.Controller, name)).parameters
+                self.assertEqual(tuple(parameters), ('self', 'device_id', 'lease_seconds',
+                                                     'timeout', 'poll_seconds', 'cancelled'))
+                for argument in ('lease_seconds', 'timeout', 'poll_seconds', 'cancelled'):
+                    self.assertEqual(parameters[argument].kind, inspect.Parameter.KEYWORD_ONLY)
+                for required in ('lease_seconds', 'timeout'):
+                    self.assertIs(parameters[required].default, inspect.Parameter.empty)
+                self.assertEqual(parameters['poll_seconds'].default, 1)
+                self.assertIsNone(parameters['cancelled'].default)
+        for name in ('get_control_request', 'cancel_control_request'):
+            self.assertEqual(tuple(inspect.signature(getattr(api.Controller, name)).parameters),
+                             ('self', 'request'))
+        methods = {name for name in vars(api.Controller) if not name.startswith('_')}
+        self.assertEqual(CAPABILITIES, methods)
+
     def test_control_request_enum_values_are_explicit_strings(self):
         for enum_type, values in (
             (api.ControlRequestState, {"REQUESTED": "requested", "GRANTED": "granted",
@@ -394,6 +413,7 @@ class ControllerContractTests(unittest.TestCase):
         self.assertEqual(set(name for name in vars(api.Controller) if not name.startswith("_")), {
             "list_devices", "describe_values", "read_current", "read_history", "list_controls",
             "prepare_command", "try_acquire_control", "release_control", "execute_command",
+            "request_control", "get_control_request", "cancel_control_request", "acquire_control",
         })
 
     def test_offline_import_has_no_transport_cli_or_environment_dependency(self):

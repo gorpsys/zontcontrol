@@ -1,6 +1,6 @@
 # Issue #4: запрос монополии с состоянием и ограниченным ожиданием
 
-Статус: **реализация начата, Tasks 1–3 завершены**. Приоритет: **P2**.
+Статус: **реализация начата, Tasks 1–4 завершены**. Приоритет: **P2**.
 Задача: [gorpsys/zontcontrol#4](https://github.com/gorpsys/zontcontrol/issues/4).
 База: `master`, `6b9174571f2f266b761cdcb1b95cad742fd41027`, версия `0.1.2`.
 Подход: TDD, stdlib, Python >=3.11, все проверки офлайн, без деплоя.
@@ -675,14 +675,14 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - Modify: `tests/test_control_requests.py`, `tests/test_controller_contracts.py`.
 - Modify: `tests/test_application.py`.
 
-- [ ] RED-тесты четырёх методов Controller, binding identity и forged/foreign
+- [x] RED-тесты четырёх методов Controller, binding identity и forged/foreign
   handle; добавить Protocol и фасадные методы после реализации маршрута.
-- [ ] RED-тесты acquire_control, затем общая sync-обёртка: terminal result,
+- [x] RED-тесты acquire_control, затем общая sync-обёртка: terminal result,
   timeout/cancel во время блокированного HTTP без ожидания сетевого завершения.
-- [ ] Проверить, что неверные параметры и закрытый вход не создают ни worker,
+- [x] Проверить, что неверные параметры и закрытый вход не создают ни worker,
   ни сетевой запрос; статус terminal handle доступен после close.
-- [ ] Проверить capability declarations и прежние тесты immediate API.
-- [ ] Запустить целевые тесты контрактов/requests/application и `make check`.
+- [x] Проверить capability declarations и прежние тесты immediate API.
+- [x] Запустить целевые тесты контрактов/requests/application и `make check`.
 
 ### Task 5: Перевод CLI и boiler_reset на ограниченное ожидание
 
