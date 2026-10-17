@@ -14,7 +14,8 @@ from time import monotonic
 from ..autonomy.contracts import AlgorithmResult, ResultStatus
 from ..config import ConfigurationError, read_json
 from ..controller.contracts import (
-    ControlKey, DeviceControlBusy, DeviceUnavailable, InvalidArguments, Quality, ValueKey,
+    ControlKey, ControlRequestReason, ControlRequestState, DeviceControlBusy,
+    DeviceUnavailable, InvalidArguments, Quality, ValueKey,
     ValueType,
 )
 from ..detection_profile import SMART_2_HEATING_CONFIG
@@ -180,20 +181,17 @@ class BoilerReset:
                                             reason=reason))
 
     def _acquire(self, context):
-        deadline = self._clock() + self.config.grant_wait_seconds
-        while not context.cancelled.is_set():
-            if self._clock() >= deadline:
-                raise DeviceControlBusy()
-            try:
-                return self._controller.try_acquire_control(
-                    self.config.device_id, lease_seconds=self.config.lease_seconds)
-            except DeviceControlBusy:
-                remaining = deadline - self._clock()
-                if remaining <= 0:
-                    raise
-                if self._wait(context, min(self.config.grant_poll_seconds, remaining)):
-                    return None
-        return None
+        result = self._controller.acquire_control(
+            self.config.device_id, lease_seconds=self.config.lease_seconds,
+            timeout=self.config.grant_wait_seconds, poll_seconds=self.config.grant_poll_seconds,
+            cancelled=context.cancelled)
+        if result.state is ControlRequestState.GRANTED:
+            return result.session
+        if result.reason is ControlRequestReason.CONTROLLER_ERROR:
+            raise result.make_error()
+        if result.reason in (ControlRequestReason.CANCELLED, ControlRequestReason.SHUTDOWN):
+            return None
+        raise DeviceControlBusy()
 
     def run_once(self, context):
         if context.cancelled.is_set():

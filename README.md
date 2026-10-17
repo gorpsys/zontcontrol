@@ -7,7 +7,7 @@ boiler_reset выполняет настоящий 40-секундный сбр�
 [будущая работа](docs/plans/yandex-cloud.md).
 
 Это полная замена прототипа без совместимости прежних Python/CLI/JSON.
-Текущий подготовленный выпуск — 0.1.2; завершение реализации не означает
+Текущий подготовленный выпуск — 0.2.0; завершение реализации не означает
 слияния PR, публикации тега или деплоя.
 
 ## Установка и конфигурация
@@ -40,7 +40,7 @@ registry.json — disabled_modules, autostart_dual_mode и once_timeouts.
 
 ```sh
 python3 -m venv /tmp/zontcontrol-venv
-/tmp/zontcontrol-venv/bin/python -m pip install /absolute/path/zontcontrol-0.1.2-py3-none-any.whl
+/tmp/zontcontrol-venv/bin/python -m pip install /absolute/path/zontcontrol-0.2.0-py3-none-any.whl
 cd /absolute/path/zontcontrol-work
 /tmp/zontcontrol-venv/bin/zontcontrol list
 ```
@@ -116,9 +116,20 @@ Timeout once выставляет отмену; continuous сам задаёт �
 Он сам завершает составное действие и освобождает сессию, например:
 
 ```python
+from zontcontrol.application import create_application
+from zontcontrol.controller.contracts import ControlRequestState
+
+
 def run_external_section(controller, on, off):
     # on/off — заранее подготовленные ValidatedCommand одного прибора.
-    session = controller.try_acquire_control(on.device_id, lease_seconds=120)
+    result = controller.acquire_control(on.device_id, lease_seconds=120, timeout=30)
+    if result.state is ControlRequestState.DENIED:
+        error = result.make_error()
+        if error is not None:
+            raise error
+        print(result.reason.value)
+        return
+    session = result.session
     try:
         controller.execute_command(on, session)
         # Здесь работа потребителя между on и off.
@@ -138,6 +149,33 @@ with create_application() as app:
 
 lease_seconds выбирает потребитель на получение grant, всю секцию, finally
 и запас; 120 секунд в примере не являются общим бюджетом приложения.
+timeout ограничивает ожидание выдачи; оба срока считаются от создания запроса
+и не продлеваются очередью/опросом. DENIED не даёт session и не отправляет
+команду. Успех execute_command означает ответ API, а не физический результат.
+
+Асинхронный вариант возвращает локальный handle без ожидания сети. Worker
+продвигает его самостоятельно; get/cancel не выполняют HTTP:
+
+```python
+def request_then_cancel(controller, device_id):
+    request = controller.request_control(device_id, lease_seconds=120, timeout=30)
+    status = controller.get_control_request(request)
+    print(status.state.value)  # requested, granted или denied
+    result = controller.cancel_control_request(request)
+    # Grant мог выиграть гонку с cancel. Terminal результат уже не меняется.
+    if result.state is ControlRequestState.GRANTED:
+        controller.release_control(result.session)
+    return result
+```
+
+Handle сохраняют, пока нужен статус; terminal registry хранит его слабо.
+Повторные get/cancel дают тот же terminal result даже после release/expiry.
+GRANTED фиксирует выдачу, текущее право проверяется при каждой команде.
+acquire_control возвращает только GRANTED/DENIED; try_acquire_control остаётся
+непосредственной попыткой с DeviceControlBusy без ожидания разрешения.
+Все четыре новых метода, error_code/make_error и поздний cleanup описаны
+в [контрактах](docs/agents/contracts.md#запрос-монополии-api-v1).
+
 close сначала запрещает новые app.controller() и захваты, затем отменяет
 зарегистрированные алгоритмы, ждёт их finally и освобождения всех сессий
 исполнителя, включая внешние, и закрывает координацию и транспорт.
@@ -193,8 +231,10 @@ command 42 circuit 20496 target-temp '{"target_temp":22}' --execute
 graph 42 air 2026-10-15T10:00:00+03:00 2026-10-15T12:00:00+03:00
 ```
 
-Ручная команда показывает предпросмотр; --execute явно получает монополию
-на весь прибор и отправляет команду. Чтения и предпросмотр не блокируются
+Ручная команда показывает предпросмотр; первый --execute ожидает монополию
+через acquire_control в пределах grant_wait_seconds и отправляет команду один
+раз. По умолчанию ожидание — min(30, lease_seconds/2); отмена/отказ не отправляют
+команду. Чтения и предпросмотр не блокируются
 занятым прибором. SVG сохраняется на диск; --view явно открывает его браузером.
 Графики строятся stdlib с настоящим временем, quality и разрывами истории.
 

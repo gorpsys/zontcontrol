@@ -11,6 +11,7 @@
     ]}
   ],
   "lease_seconds": 60,
+  "grant_wait_seconds": 30,
   "output_directory": "charts",
   "display_timezone": "Europe/Moscow"
 }

@@ -1,15 +1,18 @@
 """API v1 consumer scenarios, independent of HTTP and credentials."""
 
 import dataclasses
+import gc
 import inspect
 import math
 import subprocess
 import sys
 import unittest
+import weakref
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from zontcontrol.controller import contracts as api
+from zontcontrol.autonomy.contracts import CAPABILITIES
 from tests.fakes.clock import FakeClock
 from tests.fakes.zont import FakeZontServer
 
@@ -38,6 +41,201 @@ def series(device_id=1, **overrides):
 
 
 class ControllerContractTests(unittest.TestCase):
+    def test_control_request_methods_have_fixed_signatures_and_capabilities(self):
+        for name in ('request_control', 'acquire_control'):
+            with self.subTest(method=name):
+                parameters = inspect.signature(getattr(api.Controller, name)).parameters
+                self.assertEqual(tuple(parameters), ('self', 'device_id', 'lease_seconds',
+                                                     'timeout', 'poll_seconds', 'cancelled'))
+                for argument in ('lease_seconds', 'timeout', 'poll_seconds', 'cancelled'):
+                    self.assertEqual(parameters[argument].kind, inspect.Parameter.KEYWORD_ONLY)
+                for required in ('lease_seconds', 'timeout'):
+                    self.assertIs(parameters[required].default, inspect.Parameter.empty)
+                self.assertEqual(parameters['poll_seconds'].default, 1)
+                self.assertIsNone(parameters['cancelled'].default)
+        for name in ('get_control_request', 'cancel_control_request'):
+            self.assertEqual(tuple(inspect.signature(getattr(api.Controller, name)).parameters),
+                             ('self', 'request'))
+        methods = {name for name in vars(api.Controller) if not name.startswith('_')}
+        self.assertEqual(CAPABILITIES, methods)
+
+    def test_control_request_enum_values_are_explicit_strings(self):
+        for enum_type, values in (
+            (api.ControlRequestState, {"REQUESTED": "requested", "GRANTED": "granted",
+                                       "DENIED": "denied"}),
+            (api.ControlRequestReason, {"TIMEOUT": "timeout", "CANCELLED": "cancelled",
+                                        "SHUTDOWN": "shutdown", "LEASE_EXPIRED": "lease_expired",
+                                        "CONTROLLER_ERROR": "controller_error"}),
+        ):
+            self.assertEqual({item.name: item.value for item in enum_type}, values)
+            self.assertTrue(all(isinstance(item, str) for item in enum_type))
+
+    def test_control_request_is_an_immutable_identity_handle_with_weak_references(self):
+        request_id = uuid4()
+        request = api.ControlRequest(request_id, 1)
+        same_fields = api.ControlRequest(request_id, 1)
+        self.assertEqual(request.initial_state, api.ControlRequestState.REQUESTED)
+        self.assertIsNot(request, same_fields)
+        self.assertNotEqual(request, same_fields)
+        self.assertEqual(len({request, same_fields}), 2)
+        self.assertIs(weakref.ref(request)(), request)
+        self.assertFalse(hasattr(request, "__dict__"))
+        for name in ("request_id", "device_id", "initial_state"):
+            with self.subTest(name=name), self.assertRaises(dataclasses.FrozenInstanceError):
+                setattr(request, name, None)
+        with self.assertRaises(TypeError):
+            api.ControlRequest(request_id, 1, initial_state=api.ControlRequestState.GRANTED)
+
+    def test_control_request_ids_and_devices_are_validated(self):
+        for bad in (None, "request", UUID(int=0), [], {}):
+            with self.subTest(bad=bad), self.assertRaises(api.InvalidArguments):
+                api.ControlRequest(bad, 1)
+            with self.subTest(bad=bad), self.assertRaises(api.InvalidArguments):
+                api.ControlRequestResult(bad, 1, api.ControlRequestState.REQUESTED)
+        for bad in (True, 0, -1, 1.0, "1", None):
+            with self.subTest(bad=bad), self.assertRaises(api.InvalidArguments):
+                api.ControlRequest(uuid4(), bad)
+            with self.subTest(bad=bad), self.assertRaises(api.InvalidArguments):
+                api.ControlRequestResult(uuid4(), bad, api.ControlRequestState.REQUESTED)
+
+    def test_control_request_results_accept_only_consistent_state_combinations(self):
+        session = api.ControlSession(1, uuid4(), 100)
+        for state in api.ControlRequestState:
+            for candidate_session in (None, session):
+                for reason in (None, *api.ControlRequestReason):
+                    for code in (None, api.ControlRequestErrorCode.CONTROLLER_ERROR):
+                        valid = (
+                            state is api.ControlRequestState.REQUESTED
+                            and candidate_session is None and reason is None and code is None
+                            or state is api.ControlRequestState.GRANTED
+                            and candidate_session is session and reason is None and code is None
+                            or state is api.ControlRequestState.DENIED
+                            and candidate_session is None and reason is not None
+                            and (code is not None) == (reason is api.ControlRequestReason.CONTROLLER_ERROR)
+                        )
+                        with self.subTest(state=state, session=candidate_session,
+                                          reason=reason, error_code=code):
+                            if valid:
+                                result = api.ControlRequestResult(uuid4(), 1, state,
+                                                                  candidate_session, reason, code)
+                                self.assertIs(result.session, candidate_session)
+                                self.assertIs(result.reason, reason)
+                                self.assertIs(result.error_code, code)
+                            else:
+                                with self.assertRaises(api.InvalidArguments):
+                                    api.ControlRequestResult(uuid4(), 1, state,
+                                                             candidate_session, reason, code)
+
+    def test_control_request_result_rejects_foreign_session_and_untyped_payloads(self):
+        request_id = uuid4()
+        with self.assertRaises(api.InvalidArguments):
+            api.ControlRequestResult(request_id, 1, api.ControlRequestState.GRANTED,
+                                     api.ControlSession(2, uuid4(), 100))
+        for fields in (
+            {"state": "requested"}, {"state": {}},
+            {"state": api.ControlRequestState.GRANTED, "session": {"device_id": 1}},
+            {"state": api.ControlRequestState.DENIED, "reason": "timeout"},
+            {"state": api.ControlRequestState.DENIED, "reason": []},
+            {"state": api.ControlRequestState.DENIED,
+             "reason": api.ControlRequestReason.CONTROLLER_ERROR, "error_code": "controller_error"},
+            {"state": api.ControlRequestState.DENIED,
+             "reason": api.ControlRequestReason.CONTROLLER_ERROR, "error_code": RuntimeError("API body")},
+            {"state": api.ControlRequestState.DENIED,
+             "reason": api.ControlRequestReason.CONTROLLER_ERROR, "error_code": {}},
+        ):
+            with self.subTest(fields=fields), self.assertRaises(api.InvalidArguments):
+                api.ControlRequestResult(request_id, 1, **fields)
+
+    def test_control_request_error_codes_have_fixed_safe_mapping(self):
+        mapping = {
+            "authentication_error": api.AuthenticationError,
+            "device_unavailable": api.DeviceUnavailable,
+            "unsupported_action": api.UnsupportedAction,
+            "invalid_arguments": api.InvalidArguments,
+            "incomplete_history": api.IncompleteHistory,
+            "rate_limited": api.RateLimited,
+            "command_outcome_unknown": api.CommandOutcomeUnknown,
+            "device_control_busy": api.DeviceControlBusy,
+            "control_ownership_required": api.ControlOwnershipRequired,
+            "controller_error": api.ControllerError,
+        }
+        self.assertEqual({item.value for item in api.ControlRequestErrorCode}, set(mapping))
+        for value, error_type in mapping.items():
+            code = api.ControlRequestErrorCode(value)
+            with self.subTest(code=code):
+                self.assertIsInstance(code, str)
+                self.assertEqual(code.name, value.upper())
+                self.assertIs(api.ControlRequestErrorCode.from_error(error_type()), code)
+                result = api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.DENIED,
+                                                  reason=api.ControlRequestReason.CONTROLLER_ERROR,
+                                                  error_code=code)
+                first = result.make_error()
+                second = result.make_error()
+                self.assertIs(type(first), error_type)
+                self.assertIs(type(second), error_type)
+                self.assertIsNot(first, second)
+                self.assertEqual(first.args, error_type().args)
+                self.assertIsNone(first.__traceback__)
+                self.assertIsNone(first.__context__)
+                self.assertIsNone(first.__cause__)
+                try:
+                    raise first
+                except api.ControllerError:
+                    pass
+                third = result.make_error()
+                self.assertIsNot(first, third)
+                self.assertIsNone(third.__traceback__)
+                self.assertIsNone(third.__context__)
+                self.assertIsNone(third.__cause__)
+
+    def test_unknown_error_types_use_generic_safe_code_without_retaining_details(self):
+        class UnknownControllerError(api.AuthenticationError):
+            pass
+
+        for error in (RuntimeError("API body"), BaseException("API body"),
+                      KeyboardInterrupt("API body"), UnknownControllerError()):
+            with self.subTest(error=type(error).__name__):
+                code = api.ControlRequestErrorCode.from_error(error)
+                self.assertIs(code, api.ControlRequestErrorCode.CONTROLLER_ERROR)
+                result = api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.DENIED,
+                                                  reason=api.ControlRequestReason.CONTROLLER_ERROR,
+                                                  error_code=code)
+                self.assertIs(type(result.make_error()), api.ControllerError)
+                self.assertNotIn("API body", str(result.make_error()))
+                self.assertNotIn("API body", repr(result))
+
+    def test_results_without_error_code_make_no_exception(self):
+        session = api.ControlSession(1, uuid4(), 100)
+        for result in (
+            api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.REQUESTED),
+            api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.GRANTED, session),
+            *(api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.DENIED, reason=reason)
+              for reason in api.ControlRequestReason
+              if reason is not api.ControlRequestReason.CONTROLLER_ERROR),
+        ):
+            with self.subTest(state=result.state, reason=result.reason):
+                self.assertIsNone(result.make_error())
+
+    def test_control_request_result_is_frozen_and_does_not_keep_handle_alive(self):
+        request = api.ControlRequest(uuid4(), 1)
+        result = api.ControlRequestResult(request.request_id, request.device_id,
+                                          api.ControlRequestState.REQUESTED)
+        registry = weakref.WeakKeyDictionary({request: result})
+        reference = weakref.ref(request)
+        self.assertEqual({field.name for field in dataclasses.fields(result)},
+                         {"request_id", "device_id", "state", "session", "reason", "error_code"})
+        self.assertEqual({field.name for field in dataclasses.fields(request)},
+                         {"request_id", "device_id", "initial_state"})
+        self.assertFalse(hasattr(result, "__dict__"))
+        for field in dataclasses.fields(result):
+            with self.subTest(field=field.name), self.assertRaises(dataclasses.FrozenInstanceError):
+                setattr(result, field.name, None)
+        del request
+        gc.collect()
+        self.assertIsNone(reference())
+        self.assertEqual(len(registry), 0)
+        self.assertIsNotNone(result.request_id)
+
     def test_two_devices_share_element_ids_without_aliasing(self):
         values = {key(1): reading(1), key(2): reading(2, value=18.0)}
         self.assertEqual(len(values), 2)
@@ -215,6 +413,7 @@ class ControllerContractTests(unittest.TestCase):
         self.assertEqual(set(name for name in vars(api.Controller) if not name.startswith("_")), {
             "list_devices", "describe_values", "read_current", "read_history", "list_controls",
             "prepare_command", "try_acquire_control", "release_control", "execute_command",
+            "request_control", "get_control_request", "cancel_control_request", "acquire_control",
         })
 
     def test_offline_import_has_no_transport_cli_or_environment_dependency(self):

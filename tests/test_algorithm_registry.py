@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock
 
-from zontcontrol.autonomy.catalog import AlgorithmCatalog
+from zontcontrol.autonomy.catalog import AlgorithmCatalog, BUILTIN_SPECS
 from zontcontrol.autonomy.contracts import (
     AlgorithmBusy, AlgorithmFailed, AlgorithmResult, AlgorithmSpec, AlgorithmState,
     AlgorithmTimeout, Mode, ResultStatus,
@@ -43,6 +43,12 @@ def spec(name='reset', modes=DUAL, factory=Module, minimum=0, requirements=froze
 
 
 class RegistryTests(unittest.TestCase):
+    def test_builtins_require_sync_grants_instead_of_immediate_acquisition(self):
+        for builtin in BUILTIN_SPECS:
+            with self.subTest(algorithm=builtin.algorithm_id):
+                self.assertIn('acquire_control', builtin.required_capabilities)
+                self.assertNotIn('try_acquire_control', builtin.required_capabilities)
+
     def registry(self, specs, *, disabled=(), autostart=False, pairs=None,
                  bind=None, capabilities=None, close=None, begin_close=None):
         if pairs is None:

@@ -3,7 +3,7 @@
 from copy import deepcopy
 from dataclasses import replace
 import json
-from threading import Event, Thread
+from threading import Event, Thread, current_thread
 from time import monotonic
 import unittest
 from unittest.mock import patch
@@ -22,6 +22,7 @@ from zontcontrol.autonomy.contracts import (
 )
 from zontcontrol.controller.contracts import (
     CommandOutcomeUnknown, ControlKey, ControlOwnershipRequired, DeviceControlBusy,
+    ControlRequestReason as Reason, ControlRequestState as State,
     ValueDescriptor,
 )
 from zontcontrol.controller.transport import FailureKind, TransportError
@@ -46,10 +47,22 @@ class VirtualHTTP:
         self.off_resume = Event()
         self.off_resume.set()
         self.closed = False
+        self.requests = []
+        self.request_threads = []
+        self.before = lambda request: None
+        self.after = lambda request, response: None
 
     def request(self, request):
         if self.closed:
             raise AssertionError('request after transport close')
+        self.requests.append(request)
+        self.request_threads.append(current_thread())
+        self.before(request)
+        response = self.respond(request)
+        self.after(request, response)
+        return response
+
+    def respond(self, request):
         url = urlsplit(request.full_url)
         body = json.loads(request.data) if request.data else None
         if url.path.endswith('/update_device'):
@@ -117,11 +130,11 @@ class ProductFlowTests(unittest.TestCase):
         for app in reversed(self.apps):
             self.assertTrue(app.close(wait_timeout=2))
 
-    def build(self, catalog=()):
+    def build(self, catalog=(), *, clock=None, sink=None, period=10):
         data = {
             'config/controller.json': {'contact': 'offline@example.invalid',
                 'http_timeout_seconds': 1, 'coordination': {
-                    'delta_seconds': .02, 'leader_period_seconds': 10},
+                    'delta_seconds': .02, 'leader_period_seconds': period},
                 'statistics': {'path': 'reports/unused.jsonl', 'profile': 'product-offline'}},
             'config/registry.json': {'once_timeouts': {
                 spec.algorithm_id: {'minimum_seconds': .01, 'recommended_seconds': .5}
@@ -131,7 +144,7 @@ class ProductFlowTests(unittest.TestCase):
         self.transports.append(transport)
         app = create_application(environ={'ZONT_TOKEN': 'synthetic-offline'}, catalog=catalog,
             reader=lambda path: data[str(path)], transport_factory=lambda **_: transport,
-            statistics_sink=self.rows.append)
+            statistics_sink=self.rows.append if sink is None else sink, clock=clock)
         self.apps.append(app)
         return app, transport
 
@@ -164,6 +177,113 @@ class ProductFlowTests(unittest.TestCase):
         return controller.prepare_command(device_id,
             ControlKey(device_id, 'toggle_buttons', 8832 if device_id == 42 else 31),
             'trigger', {'target_state': state})
+
+    def settled(self, app, controller, handle):
+        # Synchronize on local completion, without driving acquisition by get.
+        executor = app._controller._executor
+        with executor._idle:
+            self.assertTrue(executor._idle.wait_for(
+                lambda: handle in executor._requests._terminal, timeout=2))
+        return controller.get_control_request(handle)
+
+    def test_first_cli_execute_waits_for_real_grant_and_sends_once(self):
+        terminal = Terminal()
+        spec = AlgorithmSpec('boiler_cli', 'Offline terminal', frozenset({Mode.CONTINUOUS}),
+            lambda controller: BoilerCLI(controller, terminal=terminal, reader=lambda _: {
+                'devices': [42], 'controls': [{'device_id': 42, 'kind': 'toggle_buttons',
+                    'element_id': 8832, 'actions': ['trigger']}], 'graphs': [],
+                'grant_wait_seconds': 2}))
+        app, transport = self.build((spec,))
+        terminal.lines.put('command 42 toggle_buttons 8832 trigger '
+                           "'{\"target_state\":true}' --execute")
+        self.assertTrue(transport.on_entered.wait(2))
+        self.assertTrue(app.stop('boiler_cli', wait_timeout=2))
+        self.assertTrue(app.close(wait_timeout=2))
+        self.assertEqual(transport.commands, [(42, {'target_state': True})])
+        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        events = [row['event'] for row in self.rows]
+        for event in ('request', 'grant', 'grant_ack', 'command', 'finished'):
+            self.assertIn(event, events)
+
+    def test_async_progress_status_cancel_and_independent_device_with_http_barrier(self):
+        app, transport = self.build(period=.3)
+        owner, other = app.controller(), app.controller()
+        entered, resume = Event(), Event()
+        self.external_resumes.append(resume)
+        def pause(request):
+            if (current_thread().name == 'control-request-42'
+                    and not entered.is_set()):
+                entered.set()
+                self.assertTrue(resume.wait(2))
+        transport.before = pause
+        handle = owner.request_control(42, lease_seconds=60, timeout=2, poll_seconds=.005)
+        self.assertTrue(entered.wait(1))
+        before = len(transport.requests)
+        pending = owner.get_control_request(handle)
+        self.assertIs(pending.state, State.REQUESTED)
+        self.assertIs(owner.get_control_request(handle), pending)
+        self.assertEqual(len(transport.requests), before)
+        second = other.request_control(43, lease_seconds=60, timeout=2, poll_seconds=.005)
+        granted = self.settled(app, other, second)
+        self.assertIs(granted.state, State.GRANTED)
+        self.sessions.append((other, granted.session))
+        # Device 42 is still inside its first HTTP; 43 progressed autonomously.
+        before = len(transport.requests)
+        denied = owner.cancel_control_request(handle)
+        self.assertIs(denied.reason, Reason.CANCELLED)
+        self.assertIs(owner.get_control_request(handle), denied)
+        self.assertIs(owner.cancel_control_request(handle), denied)
+        self.assertEqual(len(transport.requests), before)
+        resume.set()
+        self.assertEqual(transport.commands, [])
+        caller_io = transport.request_threads.count(current_thread())
+        before_grant = other.get_control_request(second)
+        self.assertIs(before_grant, granted)
+        self.assertIs(other.get_control_request(second), granted)
+        self.assertIs(other.cancel_control_request(second), granted)
+        self.assertIs(owner.get_control_request(handle), denied)
+        self.assertIs(owner.cancel_control_request(handle), denied)
+        self.assertEqual(transport.request_threads.count(current_thread()), caller_io)
+        other.release_control(granted.session)
+
+    def test_contended_requests_timeout_and_succeed_after_release(self):
+        app, transport = self.build(period=.3)
+        owner, rival = app.controller(), app.controller()
+        session = self.acquire(owner)
+        timed = rival.request_control(42, lease_seconds=60, timeout=.05, poll_seconds=.005)
+        denied = self.settled(app, rival, timed)
+        self.assertIs(denied.state, State.DENIED)
+        self.assertIs(denied.reason, Reason.TIMEOUT)
+        self.assertIsNone(denied.session)
+        with self.assertRaises(ControlOwnershipRequired):
+            rival.execute_command(self.command(rival), denied.session)
+        cleared = Event()
+        self.external_resumes.append(cleared)
+        def observe_clear(request, response):
+            if request.data and json.loads(request.data).get('name') == PREFIX:
+                cleared.set()
+        def await_clear(request):
+            if current_thread().name == 'control-request-42':
+                self.assertTrue(cleared.wait(1))
+        # Keep the new R1 publication behind confirmation of the old finished
+        # request. This scenario tests local contention, independently of R1 RMW.
+        transport.after, transport.before = observe_clear, await_clear
+        handle = rival.request_control(42, lease_seconds=60, timeout=2, poll_seconds=.2)
+        self.assertNotEqual(handle.request_id, timed.request_id)
+        self.assertIs(rival.get_control_request(handle).state, State.REQUESTED)
+        executor = app._controller._executor
+        with executor._idle:
+            self.assertTrue(executor._idle.wait_for(lambda:
+                executor._requests._active[handle].next_poll > executor._clock(), timeout=1))
+        owner.release_control(session)
+        granted = self.settled(app, rival, handle)
+        self.assertIs(granted.state, State.GRANTED)
+        self.sessions.append((rival, granted.session))
+        self.assertIs(rival.get_control_request(timed), denied)
+        self.assertEqual(transport.commands, [])
+        rival.execute_command(self.command(rival), granted.session)
+        self.assertEqual(transport.commands, [(42, {'target_state': True})])
+        rival.release_control(granted.session)
 
     def test_independent_applications_two_devices_and_no_ownership_bypass(self):
         first, first_http = self.build()
@@ -366,7 +486,8 @@ class ProductFlowTests(unittest.TestCase):
         terminal = Terminal()
         cli_data = {'devices': [42, 43], 'controls': [{'device_id': device_id,
             'kind': 'toggle_buttons', 'element_id': element, 'actions': ['trigger']}
-            for device_id, element in ((42, 8832), (43, 31))], 'graphs': []}
+            for device_id, element in ((42, 8832), (43, 31))], 'graphs': [],
+            'grant_wait_seconds': .05}
         cli = AlgorithmSpec('boiler_cli', 'Offline terminal', frozenset({Mode.CONTINUOUS}),
             lambda controller: BoilerCLI(controller, reader=lambda _: cli_data, terminal=terminal))
         descriptions, archive = self.history_patches()

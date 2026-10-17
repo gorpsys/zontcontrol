@@ -13,12 +13,12 @@ BUILTIN_SPECS = (AlgorithmSpec(
     'boiler_reset', 'Calibrated heating assessment and owned 40-second reset pulse',
     frozenset({Mode.ONCE, Mode.CONTINUOUS}), BoilerReset,
     frozenset({'describe_values', 'read_history', 'list_devices', 'read_current',
-               'prepare_command', 'try_acquire_control', 'execute_command', 'release_control'}),
+               'prepare_command', 'acquire_control', 'execute_command', 'release_control'}),
     MINIMUM_SECONDS), AlgorithmSpec(
     'boiler_cli', 'Persistent interactive readings, explicit commands and SVG history',
     frozenset({Mode.CONTINUOUS}), BoilerCLI,
     frozenset({'list_devices', 'describe_values', 'read_current', 'read_history',
-               'list_controls', 'prepare_command', 'try_acquire_control',
+               'list_controls', 'prepare_command', 'acquire_control',
                'release_control', 'execute_command'})),)
 
 

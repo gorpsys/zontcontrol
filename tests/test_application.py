@@ -3,11 +3,15 @@
 import unittest
 from threading import Event, Thread
 from unittest.mock import Mock, patch
+from uuid import uuid4
 
 from zontcontrol.application import create_application, create_read_controller
 from zontcontrol.autonomy.contracts import AlgorithmResult, AlgorithmSpec, Mode, ResultStatus
 from zontcontrol.config import ConfigurationError
-from zontcontrol.controller.contracts import ControlOwnershipRequired, ControlKey
+from zontcontrol.controller.contracts import (
+    ControlOwnershipRequired, ControlKey, ControlRequestReason, ControlRequestState,
+    ControlSession, DeviceControlBusy,
+)
 from zontcontrol.controller.ownership import CommandExecutor
 from tests.test_inventory import inventory_device
 from zontcontrol.autonomy.contracts import AlgorithmState
@@ -161,6 +165,65 @@ class ApplicationTests(unittest.TestCase):
                 with self.assertRaises(ControlOwnershipRequired):
                     consumer.execute_command(command, None)
                 send.assert_not_called()
+
+    def test_public_request_shutdown_is_terminal_and_status_survives_close(self):
+        transport = Mock()
+        app = self.build(transport_factory=lambda **kw: transport)
+        consumer = app.controller()
+        entered, finish = Event(), Event()
+        def acquire(*args, **kwargs):
+            entered.set()
+            if not finish.wait(3):
+                raise AssertionError('test barrier timed out')
+            raise DeviceControlBusy()
+        def cleanup():
+            finish.set()
+            self.assertTrue(app.close(wait_timeout=2))
+        self.addCleanup(cleanup)
+        with patch.object(app._coordination, 'try_acquire', side_effect=acquire) as gate:
+            handle = consumer.request_control(42, lease_seconds=60, timeout=30)
+            self.assertTrue(entered.wait(1))
+            self.assertFalse(app.close(wait_timeout=0))
+            denied = consumer.get_control_request(handle)
+            self.assertIs(denied.state, ControlRequestState.DENIED)
+            self.assertIs(denied.reason, ControlRequestReason.SHUTDOWN)
+            with patch('zontcontrol.controller.requests.Thread.start') as start:
+                for method in (consumer.request_control, consumer.acquire_control):
+                    with self.assertRaises(ControlOwnershipRequired):
+                        method(42, lease_seconds=60, timeout=30)
+                start.assert_not_called()
+            transport.close.assert_not_called()
+            finish.set()
+            self.assertTrue(app.close(wait_timeout=2))
+            self.assertIs(consumer.get_control_request(handle), denied)
+            self.assertIs(consumer.cancel_control_request(handle), denied)
+            gate.assert_called_once()
+        transport.request.assert_not_called()
+        transport.close.assert_called_once()
+
+    def test_granted_public_request_remains_readable_after_release_and_close(self):
+        transport = Mock()
+        app = self.build(transport_factory=lambda **kw: transport)
+        self.addCleanup(app.close)
+        consumer = app.controller()
+        session = ControlSession(42, uuid4(), consumer._control._executor._clock() + 60)
+        with patch.object(app._coordination, 'try_acquire', return_value=session) as gate, \
+                patch.object(app._coordination, 'observation_context', return_value={}), \
+                patch.object(app._coordination, 'release') as release:
+            handle = consumer.request_control(42, lease_seconds=60, timeout=30)
+            result = consumer.acquire_control(42, lease_seconds=60, timeout=30)
+            self.assertIs(result.state, ControlRequestState.GRANTED)
+            self.assertIs(result.session, session)
+            terminal = consumer.get_control_request(handle)
+            self.assertIs(terminal.session, session)
+            consumer.release_control(session)
+            self.assertTrue(app.close(wait_timeout=2))
+            self.assertIs(consumer.get_control_request(handle), terminal)
+            self.assertIs(consumer.cancel_control_request(handle), terminal)
+            gate.assert_called_once()
+            release.assert_called_once()
+        transport.request.assert_not_called()
+        transport.close.assert_called_once()
 
     def test_close_waits_for_worker_finally_before_resources(self):
         entered, finish = Event(), Event()

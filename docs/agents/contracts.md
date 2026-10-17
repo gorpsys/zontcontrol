@@ -1,6 +1,6 @@
 # Контракты приложения
 
-Описывает реализованное локальное приложение API v1 на 16.10.2026.
+Описывает реализованное локальное приложение 0.2.0, API v1 на 17.10.2026.
 [Архитектура](architecture.md) раскрывает границы и решения; точные DTO и
 ошибки определены в zontcontrol/controller/contracts.py, алгоритмы —
 в zontcontrol/autonomy/contracts.py. Прототип удалён без обратной совместимости.
@@ -66,8 +66,10 @@ prepare_command читает актуальные возможности и со
 управляющего эффекта; чистая подготовка без сети доступна в commands.
 execute_command
 требует собственной действующей ControlSession на весь прибор и повторяет
-актуальные проверки. try_acquire_control(device_id, lease_seconds=...) и
-release_control задают границу монополии. Без неё — ошибка без команды ZONT.
+актуальные проверки. acquire_control либо request_control с получением GRANTED
+и release_control задают границу монополии. try_acquire_control остаётся
+непосредственной попыткой: сессия либо DeviceControlBusy, без ожидания grant.
+Без монополии — ошибка без команды ZONT.
 Разные приборы допускают параллельное управление, чтения/preview не блокируются.
 
 Принятая команда завершается независимо от последующего stop/timeout once.
@@ -91,7 +93,7 @@ continuous владеет внутренним циклом и таймаута�
 
 Первый валидный app.close(wait_timeout=...) закрывает вход общего исполнителя
 до отмены зарегистрированных алгоритмов. Новые app.controller() и
-try_acquire_control, в том числе на уже выданном фасаде, получают
+try_acquire_control, request_control и acquire_control, в том числе на уже выданном фасаде, получают
 ControlOwnershipRequired без gate/HTTP. Существующая действующая сессия,
 для которой ещё не запрошен release, сохраняет обычное право execute_command
 и finally до истечения R2. Shutdown не продлевает аренду и не отменяет уже
@@ -134,6 +136,132 @@ Shutdown-поток и завершающий hook не запускаются, 
 Прямой ЛК остаётся с принятым человеком риском. Занятость видна в name/R2
 с исходным префиксом, но это не техническая блокировка ЛК и не доказательство
 авторства команды. Ручной on во время импульса не отменяет его finally off.
+
+## Запрос монополии API v1
+
+Все четыре метода доступны на привязанном Controller:
+
+```python
+request_control(device_id: int, *, lease_seconds: float, timeout: float,
+                poll_seconds: float = 1, cancelled: Event | None = None) -> ControlRequest
+get_control_request(request: ControlRequest) -> ControlRequestResult
+cancel_control_request(request: ControlRequest) -> ControlRequestResult
+acquire_control(device_id: int, *, lease_seconds: float, timeout: float,
+                poll_seconds: float = 1, cancelled: Event | None = None) -> ControlRequestResult
+```
+
+Event — threading.Event. device_id — положительный int; длительности — конечные
+положительные int/float, bool запрещён; timeout <= lease_seconds. cancelled —
+Event либо None. Неверные аргументы и ограничения нижнего gate проверяются
+до worker/I/O: InvalidArguments. Закрытый вход — ControlOwnershipRequired
+без handle и I/O. У уже выданной сессии expires_at должен помещаться в новую
+аренду, иначе создание запроса отклоняется. Если сессия появилась позже из
+параллельного immediate, это проверяется повторно перед reuse: несовместимый
+срок даёт DENIED/CONTROLLER_ERROR/invalid_arguments, сохраняя прежнюю сессию.
+
+request_control локально регистрирует запрос и запускает worker, не ждёт
+gate/HTTP. ControlRequest — неизменяемый identity handle с request_id: UUID,
+device_id и initial_state=REQUESTED. initial_state не меняется, даже если
+первый get уже видит GRANTED. Для одного binding/device повторный REQUESTED
+с теми же lease/timeout/poll и тем же объектом cancelled возвращает тот же
+handle; другие параметры дают InvalidArguments. После terminal новый вызов
+создаёт новый request_id. UUID или сконструированный DTO не дают полномочий:
+get/cancel принимают только точный выданный handle своего DI-binding.
+Чужой/поддельный handle — InvalidArguments без I/O.
+
+ControlRequestState: REQUESTED='requested', GRANTED='granted', DENIED='denied'.
+Неизменяемый ControlRequestResult содержит request_id, device_id, state,
+session, reason, error_code:
+
+| state | session | reason / error_code |
+| --- | --- | --- |
+| REQUESTED | None | None / None |
+| GRANTED | Точный объект ControlSession своего прибора | None / None |
+| DENIED | None | Обязательная reason; error_code только при CONTROLLER_ERROR |
+
+ControlRequestReason: TIMEOUT='timeout', CANCELLED='cancelled',
+SHUTDOWN='shutdown', LEASE_EXPIRED='lease_expired',
+CONTROLLER_ERROR='controller_error'. ControlRequestErrorCode задаёт безопасное
+соответствие: authentication_error → AuthenticationError, device_unavailable →
+DeviceUnavailable, unsupported_action → UnsupportedAction, invalid_arguments →
+InvalidArguments, incomplete_history → IncompleteHistory, rate_limited →
+RateLimited, command_outcome_unknown → CommandOutcomeUnknown, device_control_busy →
+DeviceControlBusy, control_ownership_required → ControlOwnershipRequired,
+controller_error → ControllerError. Неизвестный тип ошибки, включая BaseException,
+классифицируется как controller_error. Result не хранит exception, traceback,
+cause/context, credentials или текст ответа. make_error() возвращает None без
+error_code; иначе каждый вызов создаёт новый безопасный ControllerError нужного
+типа без аргументов. Его можно поднять, не меняя DTO и weak registry.
+
+get/cancel работают локально, без gate/HTTP, повторной публикации и renew.
+get может зафиксировать уже наступивший отказ при зависшем HTTP. Terminal
+не меняется: повторные get/cancel возвращают тот же объект результата и session.
+GRANTED остаётся фактом выдачи после release/expiry/close; execute_command
+проверяет действующее право отдельно. Отмена после GRANTED не отзывает сессию:
+владелец сам завершает секцию и release. Гонку grant/cancel решает общий lock.
+
+acquire_control использует тот же запрос и возвращает только GRANTED/DENIED.
+При timeout/cancel фиксирует отказ, даже пока worker ждёт отправленный HTTP;
+caller не ждёт его завершения. Ошибки admission выбрасываются до создания
+запроса, а CONTROLLER_ERROR в результате обрабатывается через make_error().
+
+### Время, worker и поздний cleanup
+
+Локальные BOOTTIME-часы общие для исполнителя и gate, без wall-clock/NTP.
+При создании фиксируются created_at, wait_deadline=created_at+timeout,
+lease_deadline=created_at+lease_seconds и attempt_deadline=min(wait_deadline,
+lease_deadline). Очередь, polling, повторная публикация и ack их не переносят.
+poll_seconds — интервал gate-попыток, а не timeout и не новый срок аренды;
+timeout короче poll_seconds допустим. Session.expires_at — минимум нижнего
+срока подтверждённого R2 и исходного lease_deadline; это тот же объект у gate
+и исполнителя. Аренду на grant, всю секцию, finally и запас выбирает потребитель.
+
+Busy, DeviceUnavailable и RateLimited оставляют REQUESTED до следующего poll;
+CommandOutcomeUnknown при публикации R1 оставляет gate в uncertain и допускает
+чтение ack без слепого повтора записи. Иная ошибка даёт DENIED/CONTROLLER_ERROR.
+При одновременных причинах приоритет SHUTDOWN, CANCELLED, LEASE_EXPIRED, TIMEOUT.
+Равенство deadline уже означает отказ. Просроченная полученная session даёт
+LEASE_EXPIRED. После terminal причина не меняется; поздний grant не оживляет DENIED.
+Эти повторы относятся к получению разрешения; физические команды не повторяются.
+
+У каждого прибора — ленивый worker и локальная FIFO-очередь на общей Condition
+исполнителя; другие приборы продвигаются независимо. Вне блокирующего callback
+сроки и Event проверяются с ожиданием не более 0.1 с. Во время HTTP единственный
+worker не обслуживает очередь: без get/sync/cancel отказ фиксируется после
+возврата попытки. Polling статуса не нужен для продвижения или cleanup.
+Пустая очередь и собственная регистрация worker удаляются атомарно под той же
+Condition: новая заявка подхватывается прежним worker либо создаёт следующего.
+У одного прибора gate-попытки не пересекаются. Завершённые Thread не архивируются
+сильно; WeakSet позволяет shutdown дождаться и уходящего потока.
+
+Активная очередь удерживает handle до terminal и окончания cleanup, затем
+terminal registry хранит его слабо; значение содержит UUID/result, не handle.
+Потребитель удерживает handle для дальнейшего чтения. Сборка handle удаляет
+запись без forget/TTL/БД. Terminal handles сами по себе не задерживают close.
+
+Новая session сначала unclaimed: immediate/reuse/execute её не раскрывают,
+expiry/drain не удаляют её до решения manager. Под общей Condition она становится
+issued вместе с GRANTED либо closing для cleanup отказа. Reuse старой issued
+session проверяет точную reservation, binding, identity, срок и отсутствие
+release/closing; не сокращает и не продлевает её. Cleanup отказанного запроса
+касается только созданной им reservation и не отзывает прежнюю issued-session.
+
+Timeout/cancel/close не прерывают принятый HTTP. Поздний результат и прерывание
+после сохранения unclaimed завершаются первой попыткой release и локальным
+abandon; неизвестный/ошибочный release не повторяется, reservation остаётся до
+исходного expiry. begin_close локально закрывает вход и даёт pending-запросам
+DENIED/SHUTDOWN. wait_idle ждёт acquisition, workers, late cleanup, команды и
+release до закрытия координации/транспорта; уже выданный GRANTED не отзывается.
+
+Deadline проверяется между стадиями ленивого создания устройства: metadata,
+read_r1, read_r2, публикацией пары gate/worker и запуском нового coordinator.
+Начатая составная стадия может закончиться поздно, следующая после границы
+не начинается. Ранее работающий coordinator независим от timeout заявки.
+Эти проверки обеспечивают срок API и не доказывают строгую монополию ZONT.
+Принятый A04 допускает потерю idle-session до возврата handle с ожиданием expiry;
+C03 запрещает новому запросу наследовать отказанные session/ack или новый lease.
+Причины новых нарушений сверяются с [реестром R/L/A/C](../reference/coordination-failure-scenarios.md),
+а не объявляются принятыми по одному совпавшему результату.
 
 ## Конфиги и секреты
 

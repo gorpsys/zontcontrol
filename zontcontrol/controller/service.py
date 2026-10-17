@@ -237,6 +237,22 @@ class _ConsumerController:
     def try_acquire_control(self, device_id, *, lease_seconds):
         return self._control.try_acquire_control(device_id, lease_seconds=lease_seconds)
 
+    def request_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
+        return self._control.request_control(device_id, lease_seconds=lease_seconds,
+                                             timeout=timeout, poll_seconds=poll_seconds,
+                                             cancelled=cancelled)
+
+    def get_control_request(self, request):
+        return self._control.get_control_request(request)
+
+    def cancel_control_request(self, request):
+        return self._control.cancel_control_request(request)
+
+    def acquire_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
+        return self._control.acquire_control(device_id, lease_seconds=lease_seconds,
+                                             timeout=timeout, poll_seconds=poll_seconds,
+                                             cancelled=cancelled)
+
     def release_control(self, control_session):
         return self._control.release_control(control_session)
 

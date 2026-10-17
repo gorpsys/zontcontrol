@@ -13,6 +13,7 @@ from zontcontrol.autonomy.contracts import (
 from zontcontrol.config import (
     ConfigurationError, load_controller_config, load_registry_config, read_json,
 )
+from zontcontrol.algorithms.boiler_cli import load_config as load_cli_config
 
 
 def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
@@ -22,6 +23,19 @@ def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_cli_existing_json_uses_default_and_new_wait_is_module_owned(self):
+        self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
+                                     'lease_seconds': 20})
+        self.assertEqual(load_cli_config(root=self.root).grant_wait_seconds, 10)
+        for value in (0, True, 21, '5'):
+            self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
+                'lease_seconds': 20, 'grant_wait_seconds': value})
+            with self.subTest(value=value), self.assertRaises(ConfigurationError):
+                load_cli_config(root=self.root)
+        self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
+                                     'lease_seconds': 20, 'grant_wait_seconds': 5})
+        self.assertEqual(load_cli_config(root=self.root).grant_wait_seconds, 5)
+
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
