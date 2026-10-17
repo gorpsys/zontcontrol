@@ -29,8 +29,12 @@ class CoordinationGate(Protocol):
     release publishes completion only after all reserved work has finished.
     """
 
-    def try_acquire(self, owner: UUID, device_id: int, *, lease_seconds: float
+    def try_acquire(self, owner: UUID, device_id: int, *, lease_seconds: float,
+                    request_id: UUID | None = None, local_deadline: float | None = None,
+                    attempt_deadline: float | None = None
                     ) -> ControlSession: ...
+
+    def abandon_request(self, owner: UUID, device_id: int, request_id: UUID) -> None: ...
 
     def validate(self, owner: UUID, session: ControlSession) -> None: ...
 

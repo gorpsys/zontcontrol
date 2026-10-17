@@ -1,6 +1,7 @@
 """Executor leases on offline, independent participants and relative clocks."""
 
 from dataclasses import replace
+from threading import Event, Thread
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
@@ -16,6 +17,7 @@ from zontcontrol.coordination.clock import LeaseTiming, clock_factor, clock_rho
 from zontcontrol.coordination.grants import ExecutorGate, GrantCoordinator
 from zontcontrol.coordination.leader import LeaderElection, LeaseLost
 from zontcontrol.coordination.models import R1Record
+from zontcontrol.coordination.statistics import Statistics
 from zontcontrol.coordination.store import ExecutorStore, LeaderStore
 
 
@@ -49,6 +51,245 @@ class GrantTests(unittest.TestCase):
         self.pending(gate, owner, seconds)
         self.coordinator.step()
         return gate.try_acquire(owner, 42, lease_seconds=seconds)
+
+    def request_attempt(self, request_id, **changes):
+        options = dict(lease_seconds=60, request_id=request_id,
+                       local_deadline=self.request_start + 30,
+                       attempt_deadline=self.request_start + 20)
+        options.update(changes)
+        return self.gate.try_acquire(self.owner, 42, **options)
+
+    def start_request(self, **options):
+        self.request_start = self.clock.now()
+        request_id = uuid4()
+        with self.assertRaises(DeviceControlBusy):
+            self.request_attempt(request_id, **options)
+        return request_id
+
+    def test_request_identity_deadlines_survive_lost_request_and_retries(self):
+        request_id = self.start_request()
+        pending = self.gate._pending[self.owner, 42]
+        self.assertEqual(pending.request.request_id, str(request_id))
+        first = pending.request
+        sent = pending.sent
+        self.store.write_r1(R1Record(self.leader.record))
+        self.clock.advance(2)
+        with self.assertRaises(DeviceControlBusy):
+            self.request_attempt(request_id, local_deadline=self.request_start + 100,
+                                 attempt_deadline=self.request_start + 100)
+        self.assertIs(self.gate._pending[self.owner, 42], pending)
+        self.assertEqual((pending.request, pending.sent), (first, sent))
+        self.assertEqual((pending.local_deadline, pending.attempt_deadline),
+                         (self.request_start + 30, self.request_start + 20))
+        self.coordinator.step()
+        session = self.request_attempt(request_id)
+        self.assertEqual(session.expires_at, self.request_start + 30)
+        self.assertIs(self.gate._held[self.owner, 42].session, session)
+
+    def test_uncertain_request_only_polls_original_identity(self):
+        self.request_start = self.clock.now()
+        request_id = uuid4()
+        self.adapter.write_mode = 'lose_response'
+        with self.assertRaises(CommandOutcomeUnknown):
+            self.request_attempt(request_id)
+        pending = self.gate._pending[self.owner, 42]
+        self.adapter.write_mode = 'apply'
+        self.store.write_r1(R1Record(self.leader.record))
+        before = len(self.adapter.writes)
+        with self.assertRaises(DeviceControlBusy):
+            self.request_attempt(request_id)
+        self.assertEqual(len(self.adapter.writes), before)
+        self.assertIs(self.gate._pending[self.owner, 42], pending)
+
+    def test_ack_observer_precedes_commit_and_rechecks_deadlines(self):
+        for mode in ('interrupt', 'attempt', 'lease'):
+            with self.subTest(mode=mode):
+                self.setUp()
+                options = dict(attempt_deadline=self.clock.now() + 100) if mode == 'lease' else {}
+                request_id = self.start_request(**options)
+                self.coordinator.step()
+                def sink(row):
+                    if row['event'] == 'grant_ack':
+                        if mode == 'interrupt':
+                            raise SystemExit()
+                        self.clock.advance(20 if mode == 'attempt' else 30)
+                self.gate._statistics = Statistics(sink, protocol_version='1', profile='test')
+                expected = SystemExit if mode == 'interrupt' else ControlOwnershipRequired
+                with self.assertRaises(expected):
+                    self.request_attempt(request_id, **options)
+                self.assertNotIn((self.owner, 42), self.gate._held)
+                self.assertIn((self.owner, 42), self.gate._pending)
+                before = len(self.adapter.writes)
+                self.gate.abandon_request(self.owner, 42, request_id)
+                self.assertNotIn((self.owner, 42), self.gate._pending)
+                self.assertEqual(len(self.adapter.writes), before)
+
+    def test_deadline_crossing_in_ack_or_lost_read_starts_no_publication(self):
+        for stage in ('ack', 'lost_read'):
+            for boundary in ('attempt_deadline', 'local_deadline'):
+                with self.subTest(stage=stage, boundary=boundary):
+                    self.setUp()
+                    options = (dict(attempt_deadline=self.clock.now() + 100)
+                               if boundary == 'local_deadline' else {})
+                    request_id = self.start_request(**options)
+                    pending = self.gate._pending[self.owner, 42]
+                    deadline = getattr(pending, boundary)
+                    read = self.gate._stores[42].read_r1
+                    calls = 0
+                    entered, resume = Event(), Event()
+                    errors = []
+                    def delayed():
+                        nonlocal calls
+                        calls += 1
+                        value = read()
+                        if calls == (1 if stage == 'ack' else 2):
+                            entered.set()
+                            self.assertTrue(resume.wait(2))
+                        return replace(value, request=None)
+                    def attempt():
+                        try:
+                            self.request_attempt(request_id, **options)
+                        except BaseException as error:
+                            errors.append(error)
+                    before = len(self.adapter.writes)
+                    with patch.object(self.gate._stores[42], 'read_r1', side_effect=delayed):
+                        thread = Thread(target=attempt)
+                        thread.start()
+                        try:
+                            self.assertTrue(entered.wait(1))
+                            self.clock.advance(deadline - self.clock.now())
+                        finally:
+                            resume.set()
+                            thread.join(2)
+                    self.assertFalse(thread.is_alive())
+                    self.assertEqual(len(errors), 1)
+                    self.assertIsInstance(errors[0], ControlOwnershipRequired)
+                    self.assertEqual(calls, 1 if stage == 'ack' else 2)
+                    self.assertEqual(len(self.adapter.writes), before)
+
+    def test_started_publication_finishes_late_without_session(self):
+        self.request_start = self.clock.now()
+        request_id = uuid4()
+        entered, resume = Event(), Event()
+        store = self.gate._stores[42]
+        publish = store.publish_request
+        errors = []
+        def blocked(request):
+            entered.set()
+            self.assertTrue(resume.wait(2))
+            publish(request)
+        def attempt():
+            try:
+                self.request_attempt(request_id)
+            except BaseException as error:
+                errors.append(error)
+        with patch.object(store, 'publish_request', side_effect=blocked):
+            thread = Thread(target=attempt)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.clock.advance(30)
+            finally:
+                resume.set()
+                thread.join(2)
+        self.assertFalse(thread.is_alive())
+        # The accepted composite publication may complete; it never issues a session.
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], (ControlOwnershipRequired, CommandOutcomeUnknown))
+        self.assertNotIn((self.owner, 42), self.gate._held)
+        self.assertEqual(self.store.read_r1().request.request_id, str(request_id))
+
+    def test_cache_does_not_lend_lost_session_to_new_request(self):
+        old = self.acquire()
+        grant = self.store.read_r2()
+        self.request_start = self.clock.now()
+        before = len(self.adapter.writes)
+        with self.assertRaises(DeviceControlBusy):
+            self.request_attempt(uuid4(), lease_seconds=5,
+                                 local_deadline=self.clock.now() + 5,
+                                 attempt_deadline=self.clock.now() + 5)
+        self.assertIs(self.gate._held[self.owner, 42].session, old)
+        self.gate.abandon_request(self.owner, 42, grant.request_id)
+        self.assertIs(self.gate._held[self.owner, 42].session, old)
+        self.assertEqual(self.store.read_r2(), grant)
+        self.assertEqual(len(self.adapter.writes), before)
+
+    def test_cache_checks_exact_deadline_before_reuse(self):
+        request_id = self.start_request()
+        self.coordinator.step()
+        session = self.request_attempt(request_id)
+        self.assertIs(self.request_attempt(request_id), session)
+        self.clock.advance(20)
+        with self.assertRaises(ControlOwnershipRequired):
+            self.request_attempt(request_id, attempt_deadline=self.request_start + 100)
+        self.assertIs(self.gate._held[self.owner, 42].session, session)
+
+    def test_queue_delay_and_late_ack_preserve_original_local_lease(self):
+        self.request_start = self.clock.now()
+        request_id = uuid4()
+        self.clock.advance(10)  # the public lease also covers time before first send
+        with self.assertRaises(DeviceControlBusy):
+            self.request_attempt(request_id)
+        sent = self.gate._pending[self.owner, 42].sent
+        self.clock.advance(5)
+        self.coordinator.step()
+        session = self.request_attempt(request_id)
+        self.assertEqual(session.expires_at, self.request_start + 30)
+        self.assertLess(session.expires_at, sent + 60)
+
+    def test_interrupted_ack_leaves_no_lower_or_executor_session(self):
+        executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        binding = executor.bind()
+        with self.assertRaises(DeviceControlBusy):
+            binding.try_acquire_control(42, lease_seconds=60)
+        request_id = self.gate._pending[binding._owner, 42].request.request_id
+        self.coordinator.step()
+        def sink(row):
+            if row['event'] == 'grant_ack':
+                raise SystemExit()
+        self.gate._statistics = Statistics(sink, protocol_version='1', profile='test')
+        with self.assertRaises(SystemExit):
+            binding.try_acquire_control(42, lease_seconds=60)
+        self.assertEqual(executor._devices, {})
+        self.assertEqual(self.gate._held, {})
+        self.assertIn((binding._owner, 42), self.gate._pending)
+        before = len(self.adapter.writes)
+        self.gate.abandon_request(binding._owner, 42, request_id)
+        self.assertEqual(self.gate._pending, {})
+        self.assertEqual(len(self.adapter.writes), before)
+
+    def test_gate_and_executor_issue_exact_same_session(self):
+        executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        binding = executor.bind()
+        with self.assertRaises(DeviceControlBusy):
+            binding.try_acquire_control(42, lease_seconds=60)
+        self.coordinator.step()
+        session = binding.try_acquire_control(42, lease_seconds=60)
+        self.assertIs(self.gate._held[binding._owner, 42].session, session)
+        self.assertIs(executor._devices[42].session, session)
+        binding.release_control(session)
+
+    def test_abandon_is_local_identity_scoped_and_new_request_rejects_old_ack(self):
+        self.pending()  # immediate API's logical request
+        old = self.store.read_r1().request
+        self.coordinator.step()
+        self.request_start = self.clock.now()
+        request_id = uuid4()
+        with self.assertRaises(DeviceControlBusy):
+            self.request_attempt(request_id)
+        pending = self.gate._pending[self.owner, 42]
+        self.assertNotEqual(pending.request.request_id, old.request_id)
+        self.assertNotEqual(pending.request.nonce, old.nonce)
+        before = len(self.adapter.writes)
+        self.gate.abandon_request(uuid4(), 42, request_id)
+        self.gate.abandon_request(self.owner, 42, uuid4())
+        self.assertIs(self.gate._pending[self.owner, 42], pending)
+        with self.assertRaises(DeviceControlBusy):
+            self.request_attempt(request_id)
+        self.gate.abandon_request(self.owner, 42, request_id)
+        self.gate.abandon_request(self.owner, 42, request_id)
+        self.assertEqual(len(self.adapter.writes), before)
+        self.assertEqual(self.store.read_r2().request_id, old.request_id)
 
     def test_request_grant_heartbeat_finished_and_release(self):
         session = self.acquire()

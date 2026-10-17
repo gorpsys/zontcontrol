@@ -120,6 +120,9 @@ class _Pending:
     request: RequestRecord
     sent: float
     uncertain: bool = False
+    request_id: UUID | None = None
+    local_deadline: float | None = None
+    attempt_deadline: float | None = None
 
 
 @dataclass
@@ -129,6 +132,7 @@ class _Held:
     finished: bool = False
     renewal: _Pending | None = None
     observed_finished: bool = False
+    attempt_deadline: float | None = None
 
 
 class ExecutorGate:
@@ -188,7 +192,9 @@ class ExecutorGate:
         return grant, record.leader
 
     def _ack(self, store, pending):
+        self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
         grant, leader = self._read(store)
+        self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
         request = pending.request
         if (grant is None or leader is None or grant.owner != request.owner
                 or grant.request_id != request.request_id or grant.nonce != request.nonce
@@ -204,6 +210,8 @@ class ExecutorGate:
             return None
         factor = (1 + grant.clock_rho) / (1 - grant.clock_rho)
         deadline = pending.sent + grant.lease_s / factor
+        if pending.local_deadline is not None:
+            deadline = min(deadline, pending.local_deadline)
         if self._clock.now() >= deadline:
             return None
         return grant, deadline
@@ -228,49 +236,93 @@ class ExecutorGate:
             raise CommandOutcomeUnknown()
         self._observe(pending.request.state, store, pending.request, outcome='success')
 
-    def try_acquire(self, owner, device_id, *, lease_seconds):
+    def _check_deadlines(self, *deadlines):
+        if any(deadline is not None and self._clock.now() >= deadline
+               for deadline in deadlines):
+            raise ControlOwnershipRequired()
+
+    def try_acquire(self, owner, device_id, *, lease_seconds, request_id=None,
+                    local_deadline=None, attempt_deadline=None):
         self._arguments(owner, lease_seconds)
+        if request_id is not None and (not isinstance(request_id, UUID) or request_id.int == 0):
+            raise InvalidArguments()
         store, lock = self._device(device_id)
         with lock:
-            now = self._clock.now()
-            for key, pending in tuple(self._pending.items()):
-                if key[1] == device_id and now >= pending.sent + pending.request.lease_seconds:
-                    del self._pending[key]
-            for key, held in tuple(self._held.items()):
-                if key[1] == device_id and now >= held.session.expires_at:
-                    del self._held[key]
-            self._observe('attempt', store)
+            self._check_deadlines(local_deadline, attempt_deadline)
             key = owner, device_id
+            previous = self._pending.get(key)
+            if previous is not None and previous.request_id == request_id:
+                self._check_deadlines(previous.local_deadline, previous.attempt_deadline)
+            now = self._clock.now()
+            for expired_key, pending in tuple(self._pending.items()):
+                if expired_key[1] == device_id and now >= pending.sent + pending.request.lease_seconds:
+                    del self._pending[expired_key]
+            for expired_key, held in tuple(self._held.items()):
+                if expired_key[1] == device_id and now >= held.session.expires_at:
+                    del self._held[expired_key]
+            self._observe('attempt', store)
             held = self._held.get(key)
             if held is not None and not held.finished:
+                if request_id is not None and held.grant.request_id != str(request_id):
+                    raise DeviceControlBusy()
+                self._check_deadlines(held.attempt_deadline if request_id is not None else None)
                 if self._clock.now() >= held.session.expires_at:
                     raise ControlOwnershipRequired()
                 return held.session
             pending = self._pending.get(key)
-            if pending is None or self._clock.now() >= pending.sent + pending.request.lease_seconds:
-                pending = _Pending(RequestRecord(str(owner), str(uuid4()), str(uuid4()),
-                                                 lease_seconds, "request"), self._clock.now())
+            if (pending is None or pending.request_id != request_id
+                    or self._clock.now() >= pending.sent + pending.request.lease_seconds):
+                self._check_deadlines(local_deadline, attempt_deadline)
+                pending = _Pending(RequestRecord(str(owner), str(request_id or uuid4()), str(uuid4()),
+                                                 lease_seconds, "request"), self._clock.now(),
+                                   request_id=request_id, local_deadline=local_deadline,
+                                   attempt_deadline=attempt_deadline)
                 self._pending[key] = pending
                 self._observe('episode_started', store, pending.request)
+                self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
                 self._publish(store, pending)
+                self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
             else:
+                self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
                 ack = self._ack(store, pending)
+                self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
                 if ack is not None:
                     grant, deadline = ack
                     session = ControlSession(device_id, uuid4(), deadline)
-                    self._held[key] = _Held(grant, session)
-                    del self._pending[key]
+                    # Observation is external code and can raise BaseException or
+                    # consume the remaining attempt budget. Keep pending until it
+                    # completes and the exact same deadlines still permit issue.
                     self._observe('grant_ack', store, pending.request,
                                   grant_id=grant.grant_id, leader_term=grant.leader_token,
                                   revision=grant.revision, wait_s=self._clock.now() - pending.sent)
+                    self._check_deadlines(deadline, pending.local_deadline,
+                                          pending.attempt_deadline)
+                    self._held[key] = _Held(grant, session,
+                                           attempt_deadline=pending.attempt_deadline)
+                    del self._pending[key]
                     return session
                 # Lost requests are repeated explicitly, with the original nonce
                 # timestamp. An unknown send is only polled, never blindly resent.
-                if not pending.uncertain and store.read_r1().request != pending.request:
-                    self._observe('request_lost', store, pending.request)
-                    self._observe('request_repeated', store, pending.request)
-                    self._publish(store, pending)
+                if not pending.uncertain:
+                    self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
+                    record = store.read_r1()
+                    self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
+                    if record.request != pending.request:
+                        self._observe('request_lost', store, pending.request)
+                        self._observe('request_repeated', store, pending.request)
+                        self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
+                        self._publish(store, pending)
+                        self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
             raise DeviceControlBusy()
+
+    def abandon_request(self, owner, device_id, request_id):
+        """Discard only this local pending request, without remote completion."""
+        _, lock = self._device(device_id)
+        with lock:
+            key = owner, device_id
+            pending = self._pending.get(key)
+            if pending is not None and pending.request.request_id == str(request_id):
+                del self._pending[key]
 
     def _match(self, owner, session, *, allow_finished=False):
         if not isinstance(session, ControlSession):

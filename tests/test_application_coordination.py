@@ -9,6 +9,7 @@ from threading import Event, Lock, Thread
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from tests.test_application import settings
 from tests.test_inventory import inventory_device
@@ -17,6 +18,7 @@ from zontcontrol.autonomy.contracts import AlgorithmSpec, Mode
 from zontcontrol.controller.contracts import ControlKey, ControlOwnershipRequired, DeviceControlBusy
 from zontcontrol.controller.transport import HttpTransport
 from zontcontrol.coordination.models import RecordError, decode_r1, decode_r2, encode_r1, original_name
+from zontcontrol.coordination.store import ExecutorStore
 
 
 class StepClock:
@@ -124,6 +126,112 @@ class ComposedCoordinationTests(unittest.TestCase):
             except DeviceControlBusy:
                 self.clock.advance_wait()
         self.fail('Offline grant was not acknowledged after explicit reconciliation')
+
+    def test_lazy_initialization_checks_deadlines_and_close_between_stages(self):
+        runtime = self.app._coordination
+        adapter = runtime.adapter
+        for stage in ('metadata', 'r1', 'r2', 'lock'):
+            for reason in ('attempt', 'lease', 'closed'):
+                with self.subTest(stage=stage, reason=reason):
+                    entered, resume = Event(), Event()
+                    errors, calls = [], []
+                    deadline = self.clock.now() + 1
+                    def pause():
+                        entered.set()
+                        self.assertTrue(resume.wait(2))
+                    metadata = adapter.read_metadata
+                    read_r1, read_r2 = ExecutorStore.read_r1, ExecutorStore.read_r2
+                    def initial(device_id):
+                        calls.append('metadata')
+                        result = metadata(device_id)
+                        if stage == 'metadata':
+                            pause()
+                        return result
+                    def r1(store):
+                        calls.append('r1')
+                        result = read_r1(store)
+                        if stage == 'r1':
+                            pause()
+                        return result
+                    def r2(store):
+                        calls.append('r2')
+                        result = read_r2(store)
+                        if stage == 'r2':
+                            pause()
+                        return result
+                    class WaitingLock:
+                        def __enter__(self):
+                            entered.set()
+                            blocked_lock.acquire()
+                        def __exit__(self, *_):
+                            blocked_lock.release()
+                    if stage == 'lock':
+                        blocked_lock = Lock()
+                        blocked_lock.acquire()
+                        runtime._device_locks[42] = WaitingLock()
+                    def attempt():
+                        try:
+                            runtime.try_acquire(uuid4(), 42, lease_seconds=10,
+                                request_id=uuid4(),
+                                local_deadline=deadline if reason == 'lease' else deadline + 10,
+                                attempt_deadline=deadline if reason == 'attempt' else deadline + 10)
+                        except BaseException as error:
+                            errors.append(error)
+                    with patch.object(adapter, 'read_metadata', side_effect=initial), \
+                            patch.object(ExecutorStore, 'read_r1', r1), \
+                            patch.object(ExecutorStore, 'read_r2', r2), \
+                            patch('zontcontrol.application._DeviceCoordinator') as worker:
+                        thread = Thread(target=attempt)
+                        thread.start()
+                        try:
+                            self.assertTrue(entered.wait(1))
+                            if reason == 'closed':
+                                with runtime._lock:
+                                    runtime._closed = True
+                            else:
+                                with self.clock.lock:
+                                    self.clock.time = deadline
+                        finally:
+                            if stage == 'lock':
+                                blocked_lock.release()
+                            resume.set()
+                            thread.join(2)
+                            with runtime._lock:
+                                runtime._closed = False
+                            runtime._device_locks.pop(42, None)
+                        self.assertFalse(thread.is_alive())
+                        self.assertEqual(len(errors), 1)
+                        self.assertIsInstance(errors[0], ControlOwnershipRequired)
+                        worker.return_value.thread.start.assert_not_called()
+                    self.assertEqual(calls, {'metadata': ['metadata'],
+                        'r1': ['metadata', 'r1', 'metadata'],
+                        'r2': ['metadata', 'r1', 'metadata', 'r2', 'metadata'],
+                        'lock': []}[stage])
+                    self.assertNotIn(42, runtime._devices)
+                    self.assertEqual(self.transport.commands, [])
+
+    def test_runtime_abandon_never_initializes_missing_device(self):
+        runtime = self.app._coordination
+        with patch.object(runtime.adapter, 'read_metadata') as metadata:
+            runtime.abandon_request(uuid4(), 42, uuid4())
+            metadata.assert_not_called()
+        self.assertEqual(runtime._devices, {})
+
+    def test_expired_attempt_preserves_existing_shared_coordinator(self):
+        session = self.acquire()
+        runtime = self.app._coordination
+        gate, worker = runtime._devices[42]
+        deadline = self.clock.now()
+        with patch.object(gate, 'try_acquire') as attempt:
+            with self.assertRaises(ControlOwnershipRequired):
+                runtime.try_acquire(uuid4(), 42, lease_seconds=5,
+                    request_id=uuid4(), local_deadline=deadline + 5,
+                    attempt_deadline=deadline)
+            attempt.assert_not_called()
+        self.assertIs(runtime._devices[42][1], worker)
+        self.assertFalse(worker.cancelled.is_set())
+        self.assertTrue(worker.thread.is_alive())
+        self.owner.release_control(session)
 
     def test_shutdown_does_not_extend_expired_r2_or_authorize_cleanup(self):
         session = self.acquire()

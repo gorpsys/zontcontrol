@@ -1,6 +1,6 @@
 # Issue #4: запрос монополии с состоянием и ограниченным ожиданием
 
-Статус: **реализация начата, Task 1 завершён**. Приоритет: **P2**.
+Статус: **реализация начата, Tasks 1–2 завершены**. Приоритет: **P2**.
 Задача: [gorpsys/zontcontrol#4](https://github.com/gorpsys/zontcontrol/issues/4).
 База: `master`, `6b9174571f2f266b761cdcb1b95cad742fd41027`, версия `0.1.2`.
 Подход: TDD, stdlib, Python >=3.11, все проверки офлайн, без деплоя.
@@ -558,38 +558,38 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - Modify: `tests/test_executor_grants.py`, `tests/test_application_coordination.py`.
 - Modify: `tests/test_control_ownership.py` — только test gate при необходимости.
 
-- [ ] Написать RED-тесты одного request_id/nonce/sent на всех попытках,
+- [x] Написать RED-тесты одного request_id/nonce/sent на всех попытках,
   потерянной R1-заявки и uncertain без слепой повторной записи.
-- [ ] Написать RED-тесты local_deadline: очередь/поздний ack не сдвигают
+- [x] Написать RED-тесты local_deadline: очередь/поздний ack не сдвигают
   expires_at, точное равенство не даёт session, gate и executor используют
   один объект session. Добавить request_id/local_deadline/attempt_deadline в _Pending/_ack.
-- [ ] RED: пересечь attempt_deadline/local_deadline внутри `_ack`, отдельно
+- [x] RED: пересечь attempt_deadline/local_deadline внутри `_ack`, отдельно
   во время следующего чтения R1; не начинать новую публикацию после границы.
   Начатый до неё store.publish_request разрешить завершить с поздним ответом,
   но session не выдавать. Использовать барьеры и тестовые BOOTTIME-часы.
-- [ ] Добавить необязательные request_id/local_deadline/attempt_deadline по внутреннему DI-маршруту;
+- [x] Добавить необязательные request_id/local_deadline/attempt_deadline по внутреннему DI-маршруту;
   сохранить немедленные вызовы без нового аргумента.
-- [ ] RED с настоящим ExecutorGate и DI sink, бросающим SystemExit только на
+- [x] RED с настоящим ExecutorGate и DI sink, бросающим SystemExit только на
   grant_ack: session не возвращена, `_Held` не сохранён, pending доступна
   abandon. Вызвать sink также с переводом часов за deadline без исключения:
   после observer нельзя commit/вернуть позднюю session. Затем перенести observer
   перед commit _Held/_Pending и добавить повторную проверку сроков.
-- [ ] RED нижнего cache: request_id старого _Held не подтверждает новую заявку;
+- [x] RED нижнего cache: request_id старого _Held не подтверждает новую заявку;
   ранний return не обходит local_deadline/attempt_deadline, старый grant не отзывается.
   Отдельно имитировать A04 — session уже в _Held, но не выдана executor:
   новая заявка с меньшим lease получает Busy до expiry, без старой session/ack.
   Принудительное восстановление/удаление старого _Held до expiry не требуется.
-- [ ] RED ленивой инициализации: барьеры на metadata, read_r1, read_r2 и
+- [x] RED ленивой инициализации: барьеры на metadata, read_r1, read_r2 и
   ожидании device lock; перевести часы за timeout/lease, вернуть управление.
   Следующая стадия не начинается, новая пара gate/worker не регистрируется,
   coordinator не стартует. Передать deadlines в _device и добавить проверки
   перед стадиями и общей регистрацией/стартом. Отдельно проверить `_closed`.
-- [ ] Написать RED-тесты abandon: только совпадающий pending, без I/O,
+- [x] Написать RED-тесты abandon: только совпадающий pending, без I/O,
   без изменения чужого pending/grant, новая заявка не принимает старый ack.
-- [ ] Смешанный путь: pending от immediate, затем async того же binding;
+- [x] Смешанный путь: pending от immediate, затем async того же binding;
   новая логическая заявка получает новый request_id/nonce и отвергает старый ack.
-- [ ] Реализовать abandon_request и согласовать с локальными сроками/очисткой.
-- [ ] Запустить `python3 -m unittest tests.test_executor_grants
+- [x] Реализовать abandon_request и согласовать с локальными сроками/очисткой.
+- [x] Запустить `python3 -m unittest tests.test_executor_grants
   tests.test_application_coordination tests.test_control_ownership` одной командой
   и `make check PYTHON=python3`.
 
