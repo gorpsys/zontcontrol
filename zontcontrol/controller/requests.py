@@ -6,7 +6,7 @@ request outcomes, per-device FIFO scheduling and the lifetime of its workers.
 
 import math
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from threading import Event, Thread, current_thread
 from uuid import uuid4
 from weakref import WeakKeyDictionary, WeakSet
@@ -31,7 +31,6 @@ class RequestState:
     lease_deadline: float
     next_poll: float
     result: ControlRequestResult
-    completion: Event = field(default_factory=Event)
     in_flight: bool = False
 
 
@@ -103,7 +102,7 @@ class ControlRequestManager:
             return handle
 
     def _lookup_locked(self, binding, handle):
-        if not isinstance(handle, ControlRequest):
+        if type(handle) is not ControlRequest:
             raise InvalidArguments()
         state = self._active.get(handle)
         if state is not None:
@@ -164,7 +163,6 @@ class ControlRequestManager:
         state.result = result
         # Values retain only binding and UUID-bearing DTO, never their weak key.
         self._terminal[state.handle] = (state.binding, result)
-        state.completion.set()
         self._idle.notify_all()
 
     def _deny_locked(self, state, reason, code=None):

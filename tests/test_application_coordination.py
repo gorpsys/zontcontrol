@@ -295,8 +295,13 @@ class ComposedCoordinationTests(unittest.TestCase):
     def test_shutdown_keeps_async_granted_until_local_expiry_without_new_rights(self):
         handle = self.request(lease=5, timeout=4)
         granted = self.wait_result(handle, pump=True)
-        self.assertIs(granted.state, State.GRANTED)
         session = granted.session
+        if session is not None:
+            def expire_session():
+                with self.clock.lock:
+                    self.clock.time = max(self.clock.time, session.expires_at)
+            self.addCleanup(expire_session)
+        self.assertIs(granted.state, State.GRANTED)
         grant = decode_r2(self.transport.raw['name'], 'Дом')
         self.assertFalse(self.app.close(wait_timeout=.01))
         self.assertFalse(self.transport.closed)

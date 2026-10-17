@@ -307,7 +307,8 @@ class BoilerCLI:
             return
         result = self._controller.acquire_control(
             key.device_id, lease_seconds=self.config.lease_seconds,
-            timeout=self.config.grant_wait_seconds, cancelled=context.cancelled)
+            timeout=self.config.grant_wait_seconds,
+            poll_seconds=min(1, self.config.grant_wait_seconds), cancelled=context.cancelled)
         if result.state is not ControlRequestState.GRANTED:
             if result.reason is ControlRequestReason.CONTROLLER_ERROR:
                 raise result.make_error()

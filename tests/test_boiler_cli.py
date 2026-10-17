@@ -130,11 +130,21 @@ class BoilerCLITests(unittest.TestCase):
                 **SETTINGS, 'grant_wait_seconds': value}).grant_wait_seconds, value)
         self.assertEqual(self.controller.mock_calls, [])
 
+    def test_execute_poll_interval_is_bounded_by_grant_wait(self):
+        for timeout, poll in ((.1, .1), (30, 1)):
+            with self.subTest(timeout=timeout):
+                self.reader.side_effect = lambda _: {**SETTINGS, 'grant_wait_seconds': timeout}
+                self.controller.reset_mock()
+                self.command('--execute')
+                self.controller.acquire_control.assert_called_once_with(
+                    42, lease_seconds=60, timeout=timeout, poll_seconds=poll,
+                    cancelled=self.context.cancelled)
+
     def test_first_execute_waits_for_grant_while_reader_remains_available(self):
         entered, grant = Event(), Event()
         self.addCleanup(grant.set)
-        def acquire(device, *, lease_seconds, timeout, cancelled):
-            self.assertEqual((device, lease_seconds, timeout), (42, 60, 30))
+        def acquire(device, *, lease_seconds, timeout, poll_seconds, cancelled):
+            self.assertEqual((device, lease_seconds, timeout, poll_seconds), (42, 60, 30, 1))
             self.assertIs(cancelled, self.context.cancelled)
             entered.set()
             self.assertTrue(grant.wait(2))
@@ -176,7 +186,7 @@ class BoilerCLITests(unittest.TestCase):
 
     def test_stop_cancels_wait_without_sending_command(self):
         entered = Event()
-        def acquire(device, *, lease_seconds, timeout, cancelled):
+        def acquire(device, *, lease_seconds, timeout, poll_seconds, cancelled):
             entered.set()
             self.assertTrue(cancelled.wait(2))
             return ControlRequestResult(uuid4(), device, ControlRequestState.DENIED,
@@ -305,7 +315,7 @@ class BoilerCLITests(unittest.TestCase):
         self.assertIn('preview', '\n'.join(self.terminal.output))
         self.command('--execute')
         self.controller.acquire_control.assert_called_once_with(
-            42, lease_seconds=60, timeout=30, cancelled=self.context.cancelled)
+            42, lease_seconds=60, timeout=30, poll_seconds=1, cancelled=self.context.cancelled)
         self.controller.execute_command.assert_called_once_with(
             ValidatedCommand(CONTROL, 'target-temp', (('target_temp', 20),)), self.session)
         self.controller.release_control.assert_called_once_with(self.session)

@@ -153,7 +153,7 @@ REQUESTED, второй request с теми же параметрами возв
 
 Sync acquire использует этот же request и механизм состояний; возвращает
 только GRANTED либо DENIED. Не возвращает REQUESTED и промежуточный Busy.
-Ожидание использует Event/Condition, а не циклический gate I/O в caller.
+Ожидание использует общую Condition, а не циклический gate I/O в caller.
 При timeout/cancelled синхронный caller самостоятельно фиксирует DENIED
 под общим lock, не ожидая окончания зависшего HTTP. Уже отправленный HTTP
 не убивается; его поздний результат обрабатывает worker.
@@ -217,7 +217,7 @@ RequestState и циклом обслуживания. Он получает cal
 В нём нет HTTP, credentials, форматов R1/R2 или регистратора.
 
 RequestState хранит binding, параметры, created_at/wait_deadline/lease_deadline/next_poll,
-результат, completion Event и признак выполняющейся попытки. Переходы,
+результат и признак выполняющейся попытки. Переходы,
 локальные очереди и `_devices` синхронизируются одним lock Condition;
 отдельной независимой копии владения устройством не создавать.
 
@@ -466,7 +466,7 @@ observation_context. После cleanup вызывается abandon совпа�
 ## Стыковка с shutdown issue #3
 
 begin_close остаётся без I/O и join: под общим lock закрывает вход, переводит
-REQUESTED в DENIED/SHUTDOWN, устанавливает completion и будит workers.
+REQUESTED в DENIED/SHUTDOWN и будит workers через общую Condition.
 Уже GRANTED не отзываются. При неудаче раннего hook сохраняется принятая
 терминальная политика регистратора; запросы не получают обход admission.
 
@@ -801,6 +801,10 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 ## Отслеживание и внешние действия
 
 Проверки Task 7 от 17.10.2026:
+
+При последующем комплексном review удалён неиспользуемый completion Event
+из RequestState: синхронный caller и worker уже ждут общую Condition.
+Это малое упрощение механизма уведомления, без изменения договора состояний.
 
 - `make check PYTHON=python3`: lint 141 файлов; 546 unittest, OK, 4 installed-only
   проверки пропущены в checkout.

@@ -168,6 +168,38 @@ class RequestTests(unittest.TestCase):
         self.assertIs(denied.error_code, Code.AUTHENTICATION_ERROR)
         self.assertIsInstance(denied.make_error(), AuthenticationError)
 
+    def assert_forged_subclass_rejected(self, handle):
+        class ForgedRequest(ControlRequest):
+            def __hash__(self):
+                return hash(handle)
+
+            def __eq__(self, other):
+                return True
+
+        forged = ForgedRequest(handle.request_id, handle.device_id)
+        before = len(self.gate.calls)
+        for method in ('get_control_request', 'cancel_control_request'):
+            with self.subTest(method=method), self.assertRaises(InvalidArguments):
+                getattr(self.consumer, method)(forged)
+        self.assertEqual(len(self.gate.calls), before)
+
+    def test_forged_subclass_cannot_read_or_cancel_active_request(self):
+        entered = threading.Event()
+        self.gate.action = lambda device: self.block(entered)
+        handle = self.consumer.request_control(42, lease_seconds=60, timeout=30)
+        self.assertTrue(entered.wait(1))
+        self.assert_forged_subclass_rejected(handle)
+        self.assertIs(self.consumer.get_control_request(handle).state, State.REQUESTED)
+
+    def test_forged_subclass_cannot_read_terminal_grant(self):
+        handle = self.consumer.request_control(42, lease_seconds=60, timeout=30)
+        granted = self.terminal(handle)
+        self.join_workers()
+        self.assertIs(granted.state, State.GRANTED)
+        self.assert_forged_subclass_rejected(handle)
+        self.assertIs(self.consumer.get_control_request(handle), granted)
+        self.consumer.release_control(granted.session)
+
     def test_public_sync_retries_busy_without_returning_requested_or_busy(self):
         entered, done = threading.Event(), threading.Event()
         results = []
