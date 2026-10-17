@@ -123,7 +123,7 @@ def observe(statistics, event, **fields):
 
 def error_event(error):
     """Map safe exception types to categories without serializing any message."""
-    from ..controller.contracts import CommandOutcomeUnknown, RateLimited
+    from ..control_types import CommandOutcomeUnknown, RateLimited
     if isinstance(error, RateLimited):
         return 'rate_limited'
     if isinstance(error, CommandOutcomeUnknown):

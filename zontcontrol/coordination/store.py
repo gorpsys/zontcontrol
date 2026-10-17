@@ -8,7 +8,7 @@ internal writer capability: the coordinator must confirm its R1 term before
 each R2 write. The store itself does not elect or authorize a leader.
 """
 
-from ..controller.contracts import CommandOutcomeUnknown, ControllerError
+from ..control_types import CommandOutcomeUnknown, ControllerError
 from .models import R1Record, RecordError, decode_r1, decode_r2, encode_r1, encode_r2
 
 

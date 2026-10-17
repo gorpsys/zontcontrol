@@ -10,7 +10,7 @@ from dataclasses import replace
 from secrets import token_hex
 from threading import Event, RLock
 
-from ..controller.contracts import ControllerError
+from ..control_types import ControllerError
 from .clock import BootClock, _duration
 from .models import LeaderRecord, R1Record, RecordError, _uuid
 from .statistics import error_event, observe

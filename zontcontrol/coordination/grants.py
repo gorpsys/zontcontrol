@@ -10,7 +10,7 @@ import math
 from threading import RLock
 from uuid import UUID, uuid4
 
-from ..controller.contracts import (
+from ..control_types import (
     CommandOutcomeUnknown, ControllerError, ControlOwnershipRequired,
     ControlSession, DeviceControlBusy, InvalidArguments,
 )

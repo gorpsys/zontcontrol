@@ -7,7 +7,6 @@ Only an identity-bound controller can issue/validate a session; constructing a
 DTO does not confer ownership. Command preparation is not an authorization.
 """
 
-import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -15,19 +14,15 @@ from threading import Event
 from typing import Mapping, Protocol, TypeAlias, runtime_checkable
 from uuid import UUID
 
+from ..control_types import (
+    CommandOutcomeUnknown, ControllerError, ControlOwnershipRequired, ControlSession,
+    DeviceControlBusy, InvalidArguments, RateLimited, _id, _number, _require,
+)
+
 
 API_VERSION = 1
 Scalar: TypeAlias = str | float | int | bool | None
 Arguments: TypeAlias = tuple[tuple[str, Scalar], ...]
-
-
-class ControllerError(Exception):
-    """Safe public failure. Arbitrary upstream messages are never accepted."""
-
-    message = "Controller operation failed."
-
-    def __init__(self):
-        super().__init__(self.message)
 
 
 class AuthenticationError(ControllerError):
@@ -42,30 +37,8 @@ class UnsupportedAction(ControllerError):
     message = "Action is not supported."
 
 
-class InvalidArguments(ControllerError):
-    message = "Invalid controller arguments or data."
-
-
 class IncompleteHistory(ControllerError):
     message = "Required history is incomplete."
-
-
-class RateLimited(ControllerError):
-    message = "API rate limit reached."
-
-
-class CommandOutcomeUnknown(ControllerError):
-    """A write was sent but its outcome could not be established; do not retry."""
-
-    message = "Command outcome is unknown after sending."
-
-
-class DeviceControlBusy(ControllerError):
-    message = "Device control is busy."
-
-
-class ControlOwnershipRequired(ControllerError):
-    message = "A current control session for this device is required."
 
 
 class ControlRequestState(str, Enum):
@@ -135,29 +108,12 @@ class SeriesKind(Enum):
     STEP = "step"
 
 
-def _require(condition):
-    if not condition:
-        raise InvalidArguments()
-
-
-def _id(value):
-    _require(type(value) is int and value > 0)
-
-
 def _text(value):
     _require(isinstance(value, str) and bool(value.strip()))
 
 
 def _bool(value):
     _require(type(value) is bool)
-
-
-def _number(value):
-    _require(type(value) in (int, float))
-    try:
-        _require(math.isfinite(value))
-    except OverflowError:
-        raise InvalidArguments() from None
 
 
 def _scalar(value, value_type=None):
@@ -439,19 +395,6 @@ class ValidatedCommand:
     @property
     def device_id(self) -> int:
         return self.control_key.device_id
-
-
-@dataclass(frozen=True, slots=True)
-class ControlSession:
-    device_id: int
-    session_id: UUID
-    expires_at: float
-
-    def __post_init__(self):
-        _id(self.device_id)
-        _require(isinstance(self.session_id, UUID) and self.session_id.int != 0)
-        _number(self.expires_at)
-        _require(self.expires_at > 0)
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
