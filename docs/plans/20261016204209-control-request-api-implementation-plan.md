@@ -1,6 +1,6 @@
 # Issue #4: запрос монополии с состоянием и ограниченным ожиданием
 
-Статус: **реализация начата, Tasks 1–5 завершены**. Приоритет: **P2**.
+Статус: **реализация начата, Tasks 1–6 завершены**. Приоритет: **P2**.
 Задача: [gorpsys/zontcontrol#4](https://github.com/gorpsys/zontcontrol/issues/4).
 База: `master`, `6b9174571f2f266b761cdcb1b95cad742fd41027`, версия `0.1.2`.
 Подход: TDD, stdlib, Python >=3.11, все проверки офлайн, без деплоя.
@@ -716,28 +716,28 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - Modify: `tests/test_product_flows.py`, `tests/test_application_coordination.py`.
 - Modify: `tests/test_module_boundaries.py` при новом модуле requests.
 
-- [ ] Первый --execute на свободном виртуальном приборе сам проходит request →
+- [x] Первый --execute на свободном виртуальном приборе сам проходит request →
   grant → один send → release, без повторного пользовательского ввода.
-- [ ] Async request выдаётся без status polling; get/cancel не создают
+- [x] Async request выдаётся без status polling; get/cancel не создают
   HTTP-запросов. Pending, granted, denied и повторные terminal reads наблюдаемы.
-- [ ] Занятый прибор: успех после освобождения и отказ после timeout;
+- [x] Занятый прибор: успех после освобождения и отказ после timeout;
   другой прибор получает grant независимо, пока первый HTTP остановлен барьером.
-- [ ] Отмена/timeout во время отправленного request: немедленный DENIED,
+- [x] Отмена/timeout во время отправленного request: немедленный DENIED,
   затем поздний grant не исполняется, cleanup не трогает чужое разрешение;
   следующий request имеет новый ID и не принимает старый grant.
-- [ ] Через composition root с настоящим ExecutorGate прервать grant_ack
+- [x] Через composition root с настоящим ExecutorGate прервать grant_ack
   посредством DI sink: первая заявка с lease=60 получает DENIED, следующая
   с lease=5 не наследует старую session/ack и не превышает собственный срок.
   Пока старый remote grant занят, допустим REQUESTED/отказ; после его окончания
   новая выдача возможна только для новых request_id/nonce.
-- [ ] Через composition root остановить первый metadata HTTP, перевести часы
+- [x] Через composition root остановить первый metadata HTTP, перевести часы
   за deadline и вернуть ответ: новых read_r1/read_r2, request-публикации и
   нового coordinator нет, исходная попытка завершается отказом. Второй сценарий:
   coordinator уже запущен своевременно, timeout заявки его не останавливает
   и не отзывает ранее выданный grant другого binding.
-- [ ] Shutdown во время request/late cleanup сохраняет транспорт до конца,
+- [x] Shutdown во время request/late cleanup сохраняет транспорт до конца,
   отменяет pending и не отзывает прежний GRANTED; локальный expiry остаётся рабочим.
-- [ ] Запустить `python3 -m unittest tests.test_product_flows
+- [x] Запустить `python3 -m unittest tests.test_product_flows
   tests.test_application_coordination tests.test_control_requests` одной командой
   и `make check PYTHON=python3`. Отсутствие физических send при DENIED проверять явно.
 
