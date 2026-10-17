@@ -67,6 +67,54 @@ class ControlOwnershipRequired(ControllerError):
     message = "A current control session for this device is required."
 
 
+class ControlRequestState(str, Enum):
+    REQUESTED = "requested"
+    GRANTED = "granted"
+    DENIED = "denied"
+
+
+class ControlRequestReason(str, Enum):
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+    SHUTDOWN = "shutdown"
+    LEASE_EXPIRED = "lease_expired"
+    CONTROLLER_ERROR = "controller_error"
+
+
+class ControlRequestErrorCode(str, Enum):
+    AUTHENTICATION_ERROR = "authentication_error"
+    DEVICE_UNAVAILABLE = "device_unavailable"
+    UNSUPPORTED_ACTION = "unsupported_action"
+    INVALID_ARGUMENTS = "invalid_arguments"
+    INCOMPLETE_HISTORY = "incomplete_history"
+    RATE_LIMITED = "rate_limited"
+    COMMAND_OUTCOME_UNKNOWN = "command_outcome_unknown"
+    DEVICE_CONTROL_BUSY = "device_control_busy"
+    CONTROL_OWNERSHIP_REQUIRED = "control_ownership_required"
+    CONTROLLER_ERROR = "controller_error"
+
+    @classmethod
+    def from_error(cls, error: BaseException) -> "ControlRequestErrorCode":
+        """Classify only the fixed public types; never retain upstream details."""
+        return _CONTROL_REQUEST_ERROR_CODES.get(type(error), cls.CONTROLLER_ERROR)
+
+
+_CONTROL_REQUEST_ERROR_TYPES = {
+    ControlRequestErrorCode.AUTHENTICATION_ERROR: AuthenticationError,
+    ControlRequestErrorCode.DEVICE_UNAVAILABLE: DeviceUnavailable,
+    ControlRequestErrorCode.UNSUPPORTED_ACTION: UnsupportedAction,
+    ControlRequestErrorCode.INVALID_ARGUMENTS: InvalidArguments,
+    ControlRequestErrorCode.INCOMPLETE_HISTORY: IncompleteHistory,
+    ControlRequestErrorCode.RATE_LIMITED: RateLimited,
+    ControlRequestErrorCode.COMMAND_OUTCOME_UNKNOWN: CommandOutcomeUnknown,
+    ControlRequestErrorCode.DEVICE_CONTROL_BUSY: DeviceControlBusy,
+    ControlRequestErrorCode.CONTROL_OWNERSHIP_REQUIRED: ControlOwnershipRequired,
+    ControlRequestErrorCode.CONTROLLER_ERROR: ControllerError,
+}
+_CONTROL_REQUEST_ERROR_CODES = {error_type: code for code, error_type
+                                in _CONTROL_REQUEST_ERROR_TYPES.items()}
+
+
 class ValueType(Enum):
     NUMBER = "number"
     INTEGER = "integer"
@@ -403,6 +451,54 @@ class ControlSession:
         _require(isinstance(self.session_id, UUID) and self.session_id.int != 0)
         _number(self.expires_at)
         _require(self.expires_at > 0)
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
+class ControlRequest:
+    """Local identity handle; its UUID alone does not confer control rights."""
+
+    request_id: UUID
+    device_id: int
+    initial_state: ControlRequestState = field(default=ControlRequestState.REQUESTED, init=False)
+
+    def __post_init__(self):
+        _require(isinstance(self.request_id, UUID) and self.request_id.int != 0)
+        _id(self.device_id)
+
+
+@dataclass(frozen=True, slots=True)
+class ControlRequestResult:
+    """Immutable request outcome with safe codes, never exception instances."""
+
+    request_id: UUID
+    device_id: int
+    state: ControlRequestState
+    session: ControlSession | None = None
+    reason: ControlRequestReason | None = None
+    error_code: ControlRequestErrorCode | None = None
+
+    def __post_init__(self):
+        _require(isinstance(self.request_id, UUID) and self.request_id.int != 0)
+        _id(self.device_id)
+        _require(isinstance(self.state, ControlRequestState))
+        _require(self.reason is None or isinstance(self.reason, ControlRequestReason))
+        _require(self.error_code is None or isinstance(self.error_code, ControlRequestErrorCode))
+        if self.state is ControlRequestState.GRANTED:
+            _require(isinstance(self.session, ControlSession))
+            _require(self.session.device_id == self.device_id)
+            _require(self.reason is None and self.error_code is None)
+        elif self.state is ControlRequestState.DENIED:
+            _require(self.session is None and self.reason is not None)
+            _require((self.error_code is not None)
+                     == (self.reason is ControlRequestReason.CONTROLLER_ERROR))
+        else:
+            _require(self.session is None and self.reason is None and self.error_code is None)
+
+    def make_error(self) -> ControllerError | None:
+        """Make an independent safe exception; raising it cannot mutate this DTO."""
+        if self.error_code is None:
+            return None
+        return _CONTROL_REQUEST_ERROR_TYPES[self.error_code]()
 
 
 @dataclass(frozen=True, slots=True)
