@@ -1,6 +1,6 @@
 # Issue #4: запрос монополии с состоянием и ограниченным ожиданием
 
-Статус: **реализация начата, Tasks 1–2 завершены**. Приоритет: **P2**.
+Статус: **реализация начата, Tasks 1–3 завершены**. Приоритет: **P2**.
 Задача: [gorpsys/zontcontrol#4](https://github.com/gorpsys/zontcontrol/issues/4).
 База: `master`, `6b9174571f2f266b761cdcb1b95cad742fd41027`, версия `0.1.2`.
 Подход: TDD, stdlib, Python >=3.11, все проверки офлайн, без деплоя.
@@ -602,66 +602,67 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - Modify: `zontcontrol/controller/ownership.py`.
 - Modify: `tests/test_control_ownership.py`.
 
-- [ ] Сначала RED-тесты локального создания без I/O, неизменного handle,
+- [x] Сначала RED-тесты локального создания без I/O, неизменного handle,
   самостоятельного продвижения без get, статуса без I/O и GC terminal handles.
-- [ ] RED GC после CONTROLLER_ERROR: функция с локальными handle/result
+- [x] RED GC после CONTROLLER_ERROR: функция с локальными handle/result
   делает `raise result.make_error()`, ошибка ловится снаружи; после удаления
   пользовательских ссылок/exception и gc.collect weakref handle пуста,
   terminal registry освобождён. Проверка только до raise недостаточна.
-- [ ] Реализовать RequestState/weak registry/очереди и ленивый worker прибора
+- [x] Реализовать RequestState/weak registry/очереди и ленивый worker прибора
   на общей Condition, callbacks в текущую реализацию acquisition/release.
-- [ ] RED накопления: последовательные заявки к разным неизвестным положительным
+- [x] RED накопления: последовательные заявки к разным неизвестным положительным
   device_id завершаются отказом; после cleanup/join живых request-workers снова
   столько же, сколько до теста, в manager нет пустых очередей/регистраций и
   сильного архива завершённых Thread. Затем заявка к действительному прибору
   обслуживается. Gate — офлайн fake или настоящий composition root с VirtualHTTP.
-- [ ] Барьерный RED ухода worker: последняя заявка очищена, одновременно приходит
+- [x] Барьерный RED ухода worker: последняя заявка очищена, одновременно приходит
   новая для того же прибора. Проверить оба порядка общей Condition: прежний
   worker видит заявку до deregistration либо новый worker создаётся после неё.
   Заявка не теряется, gate-попытки не пересекаются, старый finally не удаляет
   регистрацию преемника. Реализовать атомарное снятие собственной записи и
   освобождение пустой очереди, WeakSet для учёта Thread при shutdown.
-- [ ] RED begin_close на границе deregistration: новые заявки отклоняются,
+- [x] RED begin_close на границе deregistration: новые заявки отклоняются,
   wait_idle делает join уходящего Thread до закрытия ресурсов. При ошибке
   Thread.start нет вечного REQUESTED или незапущенного worker в shutdown snapshot.
-- [ ] RED-тесты, затем реализация: повтор Busy, таймаут/отмена, точная граница
+- [x] RED-тесты, затем реализация: повтор Busy, таймаут/отмена, точная граница
   deadline, ошибки/uncertain, одновременные cancel/grant, одинаковый терминальный
   результат повторных get/cancel и независимый второй прибор при медленном первом.
-- [ ] Проверить отсутствие попыток и выдачи после исходного lease_deadline,
+- [x] Проверить отсутствие попыток и выдачи после исходного lease_deadline,
   в том числе без единого status polling, после очереди и при задержанном HTTP;
   повторная публикация не начинает новую полную аренду.
-- [ ] При блокированном HTTP и без get проверить автономный DENIED после
-  возврата попытки; отдельно get/sync фиксируют отказ до возврата HTTP.
+- [x] При блокированном HTTP и без get проверить автономный DENIED после
+  возврата попытки; отдельно get фиксирует отказ до возврата HTTP.
+  Проверка синхронной обёртки выполняется в Task 4.
   Не требовать от занятого единственного worker проверки очереди каждые 0.1 с.
-- [ ] RED-тесты и реализация request_id в _Ownership: защита от подтверждения
+- [x] RED-тесты и реализация request_id в _Ownership: защита от подтверждения
   чужой pending через немедленный API, cleanup только собственной новой session,
   повторное получение уже выданной session без продления или отзыва при cancel,
   отказ создания запроса с lease_deadline раньше существующей session.expires_at.
-- [ ] Барьерный RED: immediate того же binding ещё in-flight; создать request
+- [x] Барьерный RED: immediate того же binding ещё in-flight; создать request
   с более ранним lease_deadline, затем выдать immediate-session. Новый request
   получает DENIED/CONTROLLER_ERROR/invalid_arguments, старая session остаётся
   той же issued без release/сокращения/abandon. Повторить с подходящим сроком:
   получить прежнюю session без renew; grant/cancel решаются под общим lock.
-- [ ] RED reuse/release: остановить manager после возврата ранее issued-session
+- [x] RED reuse/release: остановить manager после возврата ранее issued-session
   из _acquire и до GRANTED; release помечает closing, отдельно удаляет reservation.
   Устаревшая session не выдаётся, лишнего release/renew нет, запрос остаётся
   REQUESTED либо получает наступивший отказ. Обратный порядок: GRANTED раньше
   release, terminal result неизменен, execute после release отклоняется.
-- [ ] RED-тесты late HTTP success/error/unknown cleanup, первая попытка release
+- [x] RED-тесты late HTTP success/error/unknown cleanup, первая попытка release
   до expiry-discard, interruption worker и отсутствие вечного REQUESTED.
-- [ ] RED C02: барьер в observation_context после сохранения session; cancel
+- [x] RED C02: барьер в observation_context после сохранения session; cancel
   и timeout дают DENIED, immediate того же binding получает Busy, session
   не раскрывается, первая попытка cleanup ровно одна. Второй барьер между
   возвратом `_acquire` и решением manager: expiry/drain не удаляют unclaimed.
   Реализовать unclaimed→issued/closing под общей Condition и запрет reuse.
-- [ ] RED BaseException в observation_context после сохранения unclaimed:
+- [x] RED BaseException в observation_context после сохранения unclaimed:
   callback не возвращает session, worker находит её по binding/request_id,
   публикует DENIED, выполняет одну первую попытку release и завершает drain.
   При неизвестном release reservation остаётся до expiry без повторной записи;
   чужая/issued reservation не освобождается. Общий cleanup работает и без handle session.
-- [ ] RED-тесты shutdown pending и in-flight, затем включить manager в
+- [x] RED-тесты shutdown pending и in-flight, затем включить manager в
   begin_close/wait_idle и join workers. Терминальные handles не удерживают close.
-- [ ] Проверить успех и все ошибки targeted набором запросов/ownership,
+- [x] Проверить успех и все ошибки targeted набором запросов/ownership,
   затем `make check PYTHON=python3`.
 
 ### Task 4: Потребительский фасад и синхронная обёртка ожидания

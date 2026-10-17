@@ -17,6 +17,7 @@ from .contracts import (
     InvalidArguments, ValidatedCommand,
 )
 from ..coordination.statistics import error_event, observe
+from .requests import ControlRequestManager
 
 
 class CoordinationGate(Protocol):
@@ -44,6 +45,8 @@ class CoordinationGate(Protocol):
 @dataclass
 class _Ownership:
     binding: object
+    request_id: UUID | None = None
+    unclaimed: bool = False
     session: ControlSession | None = None
     in_flight: int = 0
     closing: bool = False
@@ -75,6 +78,10 @@ class CommandExecutor:
         self._closed = False
         self._devices = {}
         self._statistics = statistics
+        self._requests = ControlRequestManager(
+            idle=self._idle, clock=clock, admission=self._request_admission_locked,
+            attempt=self._acquire, decision=self._request_decision_locked,
+            cleanup=self._release_unclaimed, abandon=self._abandon_request)
 
     def _observe(self, held, event, **fields):
         try:
@@ -101,6 +108,7 @@ class CommandExecutor:
         """Close admission without revoking issued sessions or doing I/O."""
         with self._lock:
             self._closed = True
+            self._requests.begin_close_locked()
 
     def _expiry_remaining(self, held):
         """Lease time left for an idle reservation, or None while work owns it.
@@ -108,7 +116,7 @@ class CommandExecutor:
         Call under the state lock. A requested release must get its first
         attempt; only a completed failure can expire without publication.
         """
-        if (held.session is None or held.in_flight or held.releasing
+        if (held.session is None or held.unclaimed or held.in_flight or held.releasing
                 or held.closing and not held.release_failed):
             return None
         return held.session.expires_at - self._clock()
@@ -116,7 +124,7 @@ class CommandExecutor:
     def wait_idle(self):
         """Wait for reservations, including sessions held between commands."""
         with self._idle:
-            while self._devices:
+            while self._devices or self._requests._workers:
                 recheck = None
                 for device_id, held in list(self._devices.items()):
                     remaining = self._expiry_remaining(held)
@@ -130,8 +138,11 @@ class CommandExecutor:
                         # real wait clock. No renewal or release retry here.
                         recheck = min(remaining, .1,
                                       recheck if recheck is not None else .1)
-                if self._devices:
+                if self._devices or self._requests._workers:
                     self._idle.wait(recheck)
+            workers = self._requests.thread_snapshot_locked()
+        for worker in workers:
+            worker.join()
 
     def _match(self, binding, session, device_id, *, allow_closing=False):
         if not isinstance(session, ControlSession) or session.device_id != device_id:
@@ -139,12 +150,68 @@ class CommandExecutor:
         held = self._devices.get(device_id)
         # DTO equality does not confer ownership. Only the issued object and
         # its DI-bound consumer identify this local acquisition.
-        if (held is None or held.binding is not binding or held.session is not session
+        if (held is None or held.unclaimed or held.binding is not binding or held.session is not session
                 or held.closing and not allow_closing):
             raise ControlOwnershipRequired()
         return held
 
-    def _acquire(self, binding, device_id, lease_seconds):
+    def _request_admission_locked(self, binding, device_id, lease_deadline):
+        if self._closed:
+            raise ControlOwnershipRequired()
+        if not isinstance(binding, _ControlBinding) or binding._executor is not self:
+            raise InvalidArguments()
+        held = self._devices.get(device_id)
+        if (held is not None and held.binding is binding and held.session is not None
+                and not held.unclaimed and not held.closing
+                and self._clock() < held.session.expires_at
+                and held.session.expires_at > lease_deadline):
+            raise InvalidArguments()
+
+    def _request_decision_locked(self, binding, request_id, session, lease_deadline, *, grant):
+        if grant:
+            held = self._devices.get(session.device_id)
+            if (held is None or held.binding is not binding or held.session is not session
+                    or held.closing or held.releasing
+                    or held.unclaimed and held.request_id != request_id):
+                return False
+            if session.expires_at > lease_deadline:
+                raise InvalidArguments()
+            if not self._clock() < session.expires_at:
+                return False
+            held.unclaimed = False
+            return True
+        for held in self._devices.values():
+            if held.binding is binding and held.request_id == request_id and held.unclaimed:
+                held.closing = True
+        return False
+
+    def _release_unclaimed(self, binding, request_id, session=None):
+        with self._idle:
+            held = next((held for held in self._devices.values()
+                         if held.binding is binding and held.request_id == request_id
+                         and held.unclaimed and (session is None or held.session is session)), None)
+            if held is None or held.session is None or held.releasing or held.release_failed:
+                return
+            held.closing = True
+            # Retain the reservation until the normal first release attempt.
+            # Once closing, the unclaimed flag is no longer needed by expiry.
+            held.unclaimed = False
+            release_now = held.in_flight == 0
+            self._idle.notify_all()
+        if release_now:
+            self._release_remote(held)
+
+    def _abandon_request(self, binding, device_id, request_id):
+        with self._idle:
+            held = self._devices.get(device_id)
+            if (held is not None and held.binding is binding and held.session is not None
+                    and not held.unclaimed and held.request_id != request_id):
+                # Reusing a previously issued session never acquired this ID.
+                return
+        self._gate.abandon_request(binding._owner, device_id, request_id)
+
+    def _acquire(self, binding, device_id, lease_seconds, *, request_id=None,
+                 local_deadline=None, attempt_deadline=None):
         if (type(device_id) is not int or device_id <= 0
                 or type(lease_seconds) not in (int, float)):
             raise InvalidArguments()
@@ -157,6 +224,12 @@ class CommandExecutor:
         with self._lock:
             if self._closed:
                 raise ControlOwnershipRequired()
+            if request_id is not None:
+                if (not self._requests.live_locked(binding, device_id, request_id)
+                        or not self._clock() < min(local_deadline, attempt_deadline)):
+                    raise ControlOwnershipRequired()
+            if self._requests.busy_locked(binding, device_id, request_id):
+                raise DeviceControlBusy()
             held = self._devices.get(device_id)
             remaining = self._expiry_remaining(held) if held is not None else None
             if remaining is not None and remaining <= 0:
@@ -164,14 +237,20 @@ class CommandExecutor:
                 self._idle.notify_all()
                 held = None
             if held is not None:
-                if held.binding is binding and held.session is not None and not held.closing:
+                if (held.binding is binding and held.session is not None
+                        and not held.unclaimed and not held.closing):
+                    if local_deadline is not None and held.session.expires_at > local_deadline:
+                        raise InvalidArguments()
                     return held.session
                 raise DeviceControlBusy()
-            held = _Ownership(binding)
+            held = _Ownership(binding, request_id=request_id)
             self._devices[device_id] = held
         try:
+            arguments = {} if request_id is None else dict(
+                request_id=request_id, local_deadline=local_deadline,
+                attempt_deadline=attempt_deadline)
             session = self._gate.try_acquire(binding._owner, device_id,
-                                             lease_seconds=lease_seconds)
+                                             lease_seconds=lease_seconds, **arguments)
             if not isinstance(session, ControlSession) or session.device_id != device_id:
                 raise ControlOwnershipRequired()
         except BaseException:
@@ -184,18 +263,20 @@ class CommandExecutor:
             # Commit issuance atomically with begin_close. A session returned
             # by a late gate belongs only to cleanup, never to the consumer.
             held.session = session
+            held.unclaimed = request_id is not None
             # Instrumentation still belongs to acquisition: its gate I/O must
             # finish before expiry can discard the reservation/close transport.
             held.in_flight += 1
             rejected = (self._closed or self._devices.get(device_id) is not held
                         or not self._clock() < session.expires_at)
-            if rejected:
+            if rejected and request_id is None:
                 held.closing = True
             self._idle.notify_all()
         try:
             # Ordinary instrumentation failures do not affect ownership.
-            # KeyboardInterrupt/SystemExit propagate; their unreturned idle
-            # session then expires without needing the lost session handle.
+            # KeyboardInterrupt/SystemExit propagate. The request manager finds
+            # its unclaimed session by request_id; an interrupted immediate
+            # caller can still lose its handle and await expiry (accepted A04).
             try:
                 context = getattr(self._gate, 'observation_context', None)
                 if context is not None:
@@ -205,11 +286,11 @@ class CommandExecutor:
         finally:
             with self._lock:
                 held.in_flight -= 1
-                release_now = held.closing and held.in_flight == 0
+                release_now = (request_id is None and held.closing and held.in_flight == 0)
                 self._idle.notify_all()
             if release_now:
                 self._release_remote(held)
-        if rejected:
+        if rejected and request_id is None:
             raise ControlOwnershipRequired()
         return session
 
