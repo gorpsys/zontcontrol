@@ -10,7 +10,7 @@ from queue import Empty, Queue
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from zontcontrol.algorithms.boiler_cli import BoilerCLI, Terminal as RealTerminal, load_config, UPDATE_SECONDS
@@ -22,6 +22,7 @@ from zontcontrol.controller.service import ControllerService
 from tests.test_inventory import inventory_device
 from zontcontrol.controller.contracts import (
     CommandOutcomeUnknown, ControlDescriptor, ControlKey, ControlSession, DeviceControlBusy,
+    ControlRequestResult, ControlRequestState, ControlRequestReason, ControlRequestErrorCode,
     DeviceInfo, DeviceUnavailable, HistoryPoint, HistoryResult, HistorySeries, Quality,
     SeriesKind, Snapshot, ValidatedCommand, ValueDescriptor, ValueKey, ValueReading, ValueType,
 )
@@ -74,7 +75,9 @@ class BoilerCLITests(unittest.TestCase):
         self.controller.prepare_command.side_effect = lambda device, key, action, args: (
             ValidatedCommand(key, action, tuple(args.items())))
         self.session = ControlSession(42, uuid4(), 200)
-        self.controller.try_acquire_control.return_value = self.session
+        self.granted = ControlRequestResult(uuid4(), 42, ControlRequestState.GRANTED,
+                                            session=self.session)
+        self.controller.acquire_control.return_value = self.granted
         self.reader = Mock(side_effect=lambda _: json.loads(json.dumps(SETTINGS)))
 
     def module(self, **kwargs):
@@ -113,6 +116,101 @@ class BoilerCLITests(unittest.TestCase):
             with self.subTest(updates=updates), self.assertRaises(ConfigurationError):
                 load_config(reader=lambda _: {**SETTINGS, **updates})
         self.assertEqual(self.controller.mock_calls, [])
+
+    def test_grant_wait_optional_default_and_validation_before_facade(self):
+        for lease, expected in ((60, 30), (10, 5), (1200, 30), (.1, .05)):
+            with self.subTest(lease=lease):
+                config = load_config(reader=lambda _: {**SETTINGS, 'lease_seconds': lease})
+                self.assertEqual(config.grant_wait_seconds, expected)
+        for value in (0, -1, True, False, float('inf'), float('nan'), '3', None, 61):
+            with self.subTest(value=value), self.assertRaises(ConfigurationError):
+                load_config(reader=lambda _: {**SETTINGS, 'grant_wait_seconds': value})
+        for value in (.1, 30, 60):
+            self.assertEqual(load_config(reader=lambda _: {
+                **SETTINGS, 'grant_wait_seconds': value}).grant_wait_seconds, value)
+        self.assertEqual(self.controller.mock_calls, [])
+
+    def test_first_execute_waits_for_grant_while_reader_remains_available(self):
+        entered, grant = Event(), Event()
+        self.addCleanup(grant.set)
+        def acquire(device, *, lease_seconds, timeout, cancelled):
+            self.assertEqual((device, lease_seconds, timeout), (42, 60, 30))
+            self.assertIs(cancelled, self.context.cancelled)
+            entered.set()
+            self.assertTrue(grant.wait(2))
+            return self.granted
+        self.controller.acquire_control.side_effect = acquire
+        self.terminal.lines.put('command 42 circuit 8 target-temp \'{"target_temp":20}\' --execute')
+        thread, errors = self.launch()
+        self.assertTrue(entered.wait(1))
+        self.controller.execute_command.assert_not_called()
+        reads = self.controller.read_current.call_count
+        # The independent reader remains usable throughout the synchronous wait.
+        self.module().refresh()
+        self.assertGreater(self.controller.read_current.call_count, reads)
+        grant.set()
+        self.terminal.lines.put('quit')
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.controller.acquire_control.assert_called_once()
+        self.controller.try_acquire_control.assert_not_called()
+        self.controller.execute_command.assert_called_once()
+        self.controller.release_control.assert_called_once_with(self.session)
+
+    def test_denied_grant_never_executes_or_releases(self):
+        for reason in ControlRequestReason:
+            with self.subTest(reason=reason):
+                self.controller.reset_mock()
+                self.controller.acquire_control.return_value = ControlRequestResult(
+                    uuid4(), 42, ControlRequestState.DENIED, reason=reason,
+                    error_code=ControlRequestErrorCode.AUTHENTICATION_ERROR
+                    if reason is ControlRequestReason.CONTROLLER_ERROR else None)
+                self.command('--execute')
+                self.controller.acquire_control.assert_called_once()
+                self.controller.try_acquire_control.assert_not_called()
+                self.controller.execute_command.assert_not_called()
+                self.controller.release_control.assert_not_called()
+                if reason is ControlRequestReason.CONTROLLER_ERROR:
+                    self.assertEqual(self.terminal.output[-1], 'Authentication failed.')
+
+    def test_stop_cancels_wait_without_sending_command(self):
+        entered = Event()
+        def acquire(device, *, lease_seconds, timeout, cancelled):
+            entered.set()
+            self.assertTrue(cancelled.wait(2))
+            return ControlRequestResult(uuid4(), device, ControlRequestState.DENIED,
+                                        reason=ControlRequestReason.CANCELLED)
+        self.controller.acquire_control.side_effect = acquire
+        self.terminal.lines.put('command 42 circuit 8 target-temp \'{"target_temp":20}\' --execute')
+        thread, errors = self.launch()
+        self.assertTrue(entered.wait(1))
+        self.context.cancelled.set()
+        thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.controller.execute_command.assert_not_called()
+        self.controller.release_control.assert_not_called()
+
+    def test_controller_error_uses_new_safe_exception_for_each_attempt(self):
+        result = ControlRequestResult(uuid4(), 42, ControlRequestState.DENIED,
+            reason=ControlRequestReason.CONTROLLER_ERROR,
+            error_code=ControlRequestErrorCode.DEVICE_UNAVAILABLE)
+        self.controller.acquire_control.return_value = result
+        made = []
+        original = ControlRequestResult.make_error
+        def make_error(outcome):
+            error = original(outcome)
+            made.append(error)
+            return error
+        with patch.object(ControlRequestResult, 'make_error', make_error):
+            self.command('--execute')
+            self.command('--execute')
+        self.assertEqual(len(made), 2)
+        self.assertIsNot(made[0], made[1])
+        self.assertEqual(self.terminal.output[-1], str(DeviceUnavailable()))
+        self.controller.execute_command.assert_not_called()
+        self.controller.release_control.assert_not_called()
 
     def test_headless_registration_failed_and_disabled_never_reads_config(self):
         self.terminal.active = False
@@ -198,14 +296,16 @@ class BoilerCLITests(unittest.TestCase):
         module = self.module()
         self.controller.list_devices.return_value = ()
         self.command('--execute', module=module)
-        self.controller.try_acquire_control.assert_not_called()
+        self.controller.acquire_control.assert_not_called()
         self.controller.prepare_command.assert_not_called()
 
     def test_preview_and_explicit_execute_acquire_release_only_during_command(self):
         self.command()
-        self.controller.try_acquire_control.assert_not_called()
+        self.controller.acquire_control.assert_not_called()
         self.assertIn('preview', '\n'.join(self.terminal.output))
         self.command('--execute')
+        self.controller.acquire_control.assert_called_once_with(
+            42, lease_seconds=60, timeout=30, cancelled=self.context.cancelled)
         self.controller.execute_command.assert_called_once_with(
             ValidatedCommand(CONTROL, 'target-temp', (('target_temp', 20),)), self.session)
         self.controller.release_control.assert_called_once_with(self.session)
@@ -218,7 +318,10 @@ class BoilerCLITests(unittest.TestCase):
         for error in (DeviceControlBusy(), CommandOutcomeUnknown(), DeviceUnavailable()):
             with self.subTest(error=error):
                 self.controller.reset_mock()
-                self.controller.try_acquire_control.side_effect = error if isinstance(error, DeviceControlBusy) else None
+                self.controller.acquire_control.return_value = (
+                    ControlRequestResult(uuid4(), 42, ControlRequestState.DENIED,
+                                         reason=ControlRequestReason.TIMEOUT)
+                    if isinstance(error, DeviceControlBusy) else self.granted)
                 self.controller.execute_command.side_effect = error
                 self.command('--execute')
                 self.assertIn(str(error), self.terminal.output[-1])
@@ -235,7 +338,7 @@ class BoilerCLITests(unittest.TestCase):
         self.command('--execute', action='reset')
         self.module().handle_line('command 43 circuit 8 target-temp {} --execute', self.context)
         self.controller.prepare_command.assert_not_called()
-        self.controller.try_acquire_control.assert_not_called()
+        self.controller.acquire_control.assert_not_called()
 
     def test_temperature_bounds_and_invalid_json_never_acquire(self):
         raw = inventory_device()
@@ -246,7 +349,7 @@ class BoilerCLITests(unittest.TestCase):
         for args in ('{"target_temp":4}', '{"target_temp":31}', '{"target_temp":NaN}',
                      '{"target_temp":true}', 'oops'):
             self.command('--execute', args=args)
-        self.controller.try_acquire_control.assert_not_called()
+        self.controller.acquire_control.assert_not_called()
 
     def test_reset_uses_same_facade_and_does_not_schedule_automatic_off(self):
         key = ControlKey(42, 'toggle_buttons', 8)
@@ -343,7 +446,7 @@ class BoilerCLITests(unittest.TestCase):
             viewer.assert_called_once_with(viewed)
             self.assertTrue(viewed.is_file())
             self.controller.read_history.assert_called_with(42, (KEY,), start, NOW)
-            self.controller.try_acquire_control.assert_not_called()
+            self.controller.acquire_control.assert_not_called()
 
     def test_mixed_graph_units_and_unavailable_control_fail_without_history_or_command(self):
         target = ValueKey(42, 'circuit', 8, 'target_temp')

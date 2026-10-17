@@ -1,6 +1,6 @@
 # Issue #4: запрос монополии с состоянием и ограниченным ожиданием
 
-Статус: **реализация начата, Tasks 1–4 завершены**. Приоритет: **P2**.
+Статус: **реализация начата, Tasks 1–5 завершены**. Приоритет: **P2**.
 Задача: [gorpsys/zontcontrol#4](https://github.com/gorpsys/zontcontrol/issues/4).
 База: `master`, `6b9174571f2f266b761cdcb1b95cad742fd41027`, версия `0.1.2`.
 Подход: TDD, stdlib, Python >=3.11, все проверки офлайн, без деплоя.
@@ -695,18 +695,18 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - Modify: `tests/test_algorithm_registry.py`, `tests/test_configuration.py`
   и тестовые consumers/mocks, реально затронутые сменой вызова.
 
-- [ ] RED CLI: REQUESTED внутри исполнителя не ошибка пользователю, первый
+- [x] RED CLI: REQUESTED внутри исполнителя не ошибка пользователю, первый
   --execute дожидается GRANTED; DENIED не отправляет команду, stop отменяет ожидание.
-- [ ] Добавить необязательный grant_wait_seconds, его default/валидацию и
+- [x] Добавить необязательный grant_wait_seconds, его default/валидацию и
   синхронное получение сессии; успех API/ошибка/unknown command не повторяются.
-- [ ] RED boiler_reset: отмена/timeout без on, подтверждённая аномалия+grant
+- [x] RED boiler_reset: отмена/timeout без on, подтверждённая аномалия+grant
   даёт прежний on/finally off; заменить ручной цикл _acquire новым методом.
-- [ ] RED CONTROLLER_ERROR у потребителей: CLI печатает безопасное сообщение
+- [x] RED CONTROLLER_ERROR у потребителей: CLI печатает безопасное сообщение
   из нового exception, reset выбрасывает новый ControllerError нужного типа;
   Result хранит только error_code, ошибка не превращается в normal/повтор команды.
-- [ ] Обновить required_capabilities и подставные Controller без изменений
+- [x] Обновить required_capabilities и подставные Controller без изменений
   пауз, бюджета once или калибровки. История и unknown/suppressed не меняются.
-- [ ] Проверить старый CLI JSON без нового поля, неверные значения нового поля,
+- [x] Проверить старый CLI JSON без нового поля, неверные значения нового поля,
   все existing CLI/reset tests; выполнить `make check PYTHON=python3`.
 
 ### Task 6: Интеграционные сценарии на настоящем composition root

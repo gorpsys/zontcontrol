@@ -366,7 +366,8 @@ class ProductFlowTests(unittest.TestCase):
         terminal = Terminal()
         cli_data = {'devices': [42, 43], 'controls': [{'device_id': device_id,
             'kind': 'toggle_buttons', 'element_id': element, 'actions': ['trigger']}
-            for device_id, element in ((42, 8832), (43, 31))], 'graphs': []}
+            for device_id, element in ((42, 8832), (43, 31))], 'graphs': [],
+            'grant_wait_seconds': .05}
         cli = AlgorithmSpec('boiler_cli', 'Offline terminal', frozenset({Mode.CONTINUOUS}),
             lambda controller: BoilerCLI(controller, reader=lambda _: cli_data, terminal=terminal))
         descriptions, archive = self.history_patches()

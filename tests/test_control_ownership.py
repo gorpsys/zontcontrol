@@ -30,11 +30,18 @@ class LocalTestGate:
         self.acquisitions = 0
         self.releases = []
 
-    def try_acquire(self, owner, device_id, *, lease_seconds):
+    def try_acquire(self, owner, device_id, *, lease_seconds, request_id=None,
+                    local_deadline=None, attempt_deadline=None):
         self.acquisitions += 1
-        session = ControlSession(device_id, uuid4(), self.clock.now() + lease_seconds)
+        expires_at = self.clock.now() + lease_seconds
+        if local_deadline is not None:
+            expires_at = min(expires_at, local_deadline)
+        session = ControlSession(device_id, uuid4(), expires_at)
         self.sessions[owner, session.session_id] = session
         return session
+
+    def abandon_request(self, owner, device_id, request_id):
+        pass  # This immediate local fake never stores pending requests.
 
     def validate(self, owner, session):
         if not self.allowed or self.sessions.get((owner, session.session_id)) is not session:
