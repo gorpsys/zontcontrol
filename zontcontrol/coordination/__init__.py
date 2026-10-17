@@ -1,1 +1,5 @@
-"""Internal R1/R2 coordination primitives; no heating commands or leader loop."""
+"""Device coordination runtime and R1/R2 primitives."""
+
+from .runtime import CoordinationRuntime, CoordinatorWorker
+
+__all__ = ['CoordinationRuntime', 'CoordinatorWorker']

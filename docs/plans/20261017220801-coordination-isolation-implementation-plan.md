@@ -311,15 +311,15 @@ CI workflows и исполняемых scripts, меняющих discovery/пр�
 - Modify: `zontcontrol/application.py`, `zontcontrol/coordination/__init__.py`.
 - Tests: существующие файлы, **без изменений**.
 
-- [ ] Перенести оба класса с сохранением методов, атрибутов, timing и порядка
+- [x] Перенести оба класса с сохранением методов, атрибутов, timing и порядка
   операций; добавить только worker_factory DI в указанных двух местах.
-- [ ] Объявить экспорты CoordinationRuntime/CoordinatorWorker; собрать runtime
+- [x] Объявить экспорты CoordinationRuntime/CoordinatorWorker; собрать runtime
   в create_application и сохранить позднюю factory seam для прежнего patch.
-- [ ] Удалить тела старых классов из application, не оставлять второй реализации.
+- [x] Удалить тела старых классов из application, не оставлять второй реализации.
   Сохранить там создание BootClock, транспорт/sink и порядок закрытия ресурсов.
-- [ ] Сравнить методы с базой по правилам выше; проверить существующие DI seams,
+- [x] Сравнить методы с базой по правилам выше; проверить существующие DI seams,
   `_devices` tuple shape, отсутствие запуска при import/read-only controller.
-- [ ] Выполнить неизменённые `tests.test_application`,
+- [x] Выполнить неизменённые `tests.test_application`,
   `tests.test_application_coordination`, `tests.test_product_flows`,
   `tests.test_control_requests` одной командой unittest. Проверить отсутствие
   изменений/новых файлов tests. Любое требование изменить patch/fixture
