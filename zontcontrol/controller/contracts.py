@@ -7,27 +7,24 @@ Only an identity-bound controller can issue/validate a session; constructing a
 DTO does not confer ownership. Command preparation is not an authorization.
 """
 
-import math
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from threading import Event
-from typing import Mapping, Protocol, TypeAlias, runtime_checkable
+from typing import Mapping, Protocol, TypeAlias, cast, runtime_checkable
 from uuid import UUID
+
+from ..control_types import (
+    CommandOutcomeUnknown, ControllerError, ControlOwnershipRequired, ControlSession,
+    DeviceControlBusy, InvalidArguments, RateLimited, _id, _number, _require,
+)
 
 
 API_VERSION = 1
 Scalar: TypeAlias = str | float | int | bool | None
 Arguments: TypeAlias = tuple[tuple[str, Scalar], ...]
-
-
-class ControllerError(Exception):
-    """Safe public failure. Arbitrary upstream messages are never accepted."""
-
-    message = "Controller operation failed."
-
-    def __init__(self):
-        super().__init__(self.message)
 
 
 class AuthenticationError(ControllerError):
@@ -42,30 +39,8 @@ class UnsupportedAction(ControllerError):
     message = "Action is not supported."
 
 
-class InvalidArguments(ControllerError):
-    message = "Invalid controller arguments or data."
-
-
 class IncompleteHistory(ControllerError):
     message = "Required history is incomplete."
-
-
-class RateLimited(ControllerError):
-    message = "API rate limit reached."
-
-
-class CommandOutcomeUnknown(ControllerError):
-    """A write was sent but its outcome could not be established; do not retry."""
-
-    message = "Command outcome is unknown after sending."
-
-
-class DeviceControlBusy(ControllerError):
-    message = "Device control is busy."
-
-
-class ControlOwnershipRequired(ControllerError):
-    message = "A current control session for this device is required."
 
 
 class ControlRequestState(str, Enum):
@@ -135,32 +110,15 @@ class SeriesKind(Enum):
     STEP = "step"
 
 
-def _require(condition):
-    if not condition:
-        raise InvalidArguments()
-
-
-def _id(value):
-    _require(type(value) is int and value > 0)
-
-
-def _text(value):
+def _text(value: object) -> None:
     _require(isinstance(value, str) and bool(value.strip()))
 
 
-def _bool(value):
+def _bool(value: object) -> None:
     _require(type(value) is bool)
 
 
-def _number(value):
-    _require(type(value) in (int, float))
-    try:
-        _require(math.isfinite(value))
-    except OverflowError:
-        raise InvalidArguments() from None
-
-
-def _scalar(value, value_type=None):
+def _scalar(value: object, value_type: ValueType | None = None) -> None:
     _require(value is None or type(value) in (str, int, float, bool))
     if value is None:
         return
@@ -173,28 +131,28 @@ def _scalar(value, value_type=None):
         _require(type(value) in allowed[value_type])
 
 
-def _time(value):
+def _time(value: object) -> datetime:
     _require(isinstance(value, datetime) and value.tzinfo is not None and value.utcoffset() is not None)
-    return value.astimezone(timezone.utc)
+    return cast(datetime, value).astimezone(timezone.utc)
 
 
-def _utc(dto, *names):
+def _utc(dto: object, *names: str) -> None:
     for name in names:
         object.__setattr__(dto, name, _time(getattr(dto, name)))
 
 
-def _tuple(values, item_type):
+def _tuple(values: object, item_type: type) -> None:
     _require(isinstance(values, tuple) and all(isinstance(item, item_type) for item in values))
 
 
-def _strings(values):
+def _strings(values: tuple[str, ...]) -> None:
     _tuple(values, str)
     for value in values:
         _text(value)
     _require(len(set(values)) == len(values))
 
 
-def _unique_keys(values):
+def _unique_keys(values: tuple[ValueDescriptor | ValueReading | HistorySeries, ...]) -> None:
     _require(len({value.key for value in values}) == len(values))
 
 
@@ -205,7 +163,7 @@ class DeviceInfo:
     model: str | None
     online: bool | None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _id(self.device_id)
         _text(self.name)
         if self.model is not None:
@@ -221,7 +179,7 @@ class ValueKey:
     element_id: int
     field: str
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _id(self.device_id)
         _id(self.element_id)
         _text(self.kind)
@@ -234,7 +192,7 @@ class ControlKey:
     kind: str
     element_id: int
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _id(self.device_id)
         _id(self.element_id)
         _text(self.kind)
@@ -253,7 +211,7 @@ class ValueDescriptor:
     history_kind: SeriesKind | None = None
     unavailable_reason: str | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.key, ValueKey) and isinstance(self.value_type, ValueType))
         for value in (self.name, self.source, self.meaning):
             _text(value)
@@ -278,7 +236,7 @@ class ValueReading:
     received_at: datetime
     quality: Quality
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.key, ValueKey) and isinstance(self.value_type, ValueType))
         _require(isinstance(self.quality, Quality))
         _scalar(self.value, self.value_type)
@@ -298,7 +256,7 @@ class Snapshot:
     values: tuple[ValueReading, ...]
     is_atomic: bool = field(default=False, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _id(self.device_id)
         _utc(self, "received_at")
         _tuple(self.values, ValueReading)
@@ -313,7 +271,7 @@ class HistoryPoint:
     value: Scalar
     quality: Quality = Quality.GOOD
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _utc(self, "measured_at")
         _scalar(self.value)
         _require(isinstance(self.quality, Quality))
@@ -329,7 +287,7 @@ class HistorySeries:
     points: tuple[HistoryPoint, ...]
     incomplete_reasons: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.key, ValueKey) and isinstance(self.value_type, ValueType))
         _require(isinstance(self.kind, SeriesKind))
         _text(self.source)
@@ -361,7 +319,7 @@ class HistoryResult:
     time_truncated: bool = False
     incomplete_reasons: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _id(self.device_id)
         _utc(self, "start", "end", "received_at")
         _require(self.start < self.end)
@@ -396,7 +354,7 @@ class ControlDescriptor:
     hidden: bool = False
     unavailable_reasons: tuple[str, ...] = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.key, ControlKey))
         _text(self.name)
         _strings(self.actions)
@@ -426,7 +384,7 @@ class ValidatedCommand:
     action: str
     arguments: Arguments = ()
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.control_key, ControlKey))
         _text(self.action)
         _tuple(self.arguments, tuple)
@@ -441,19 +399,6 @@ class ValidatedCommand:
         return self.control_key.device_id
 
 
-@dataclass(frozen=True, slots=True)
-class ControlSession:
-    device_id: int
-    session_id: UUID
-    expires_at: float
-
-    def __post_init__(self):
-        _id(self.device_id)
-        _require(isinstance(self.session_id, UUID) and self.session_id.int != 0)
-        _number(self.expires_at)
-        _require(self.expires_at > 0)
-
-
 @dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
 class ControlRequest:
     """Local identity handle; its UUID alone does not confer control rights."""
@@ -462,7 +407,7 @@ class ControlRequest:
     device_id: int
     initial_state: ControlRequestState = field(default=ControlRequestState.REQUESTED, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.request_id, UUID) and self.request_id.int != 0)
         _id(self.device_id)
 
@@ -478,7 +423,7 @@ class ControlRequestResult:
     reason: ControlRequestReason | None = None
     error_code: ControlRequestErrorCode | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.request_id, UUID) and self.request_id.int != 0)
         _id(self.device_id)
         _require(isinstance(self.state, ControlRequestState))
@@ -509,7 +454,7 @@ class CommandResult:
     observed_state: Snapshot | None = None
     api_accepted: bool = field(default=True, init=False)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _require(isinstance(self.command, ValidatedCommand))
         _utc(self, "received_at")
         if self.observed_state is not None:

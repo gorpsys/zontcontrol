@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
+from tests.fakes.uuid import uuid_generator
 from tests.fakes.zont import FakeZontServer
 from tests.test_boiler_cli import Terminal
 from tests.test_boiler_reset import SETTINGS, history
@@ -97,6 +98,7 @@ class VirtualHTTP:
 
 class ProductFlowTests(unittest.TestCase):
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         devices = {device_id: {**deepcopy(inventory_device()), 'id': device_id,
                                'name': PREFIX, 'notes': None} for device_id in (42, 43)}
         devices[42]['controls']['toggle_buttons'][0]['id'] = SETTINGS['reset_control_id']
@@ -144,7 +146,8 @@ class ProductFlowTests(unittest.TestCase):
         self.transports.append(transport)
         app = create_application(environ={'ZONT_TOKEN': 'synthetic-offline'}, catalog=catalog,
             reader=lambda path: data[str(path)], transport_factory=lambda **_: transport,
-            statistics_sink=self.rows.append if sink is None else sink, clock=clock)
+            statistics_sink=self.rows.append if sink is None else sink, clock=clock,
+            uuid_factory=self.uuid_generator)
         self.apps.append(app)
         return app, transport
 
@@ -187,7 +190,7 @@ class ProductFlowTests(unittest.TestCase):
         return controller.get_control_request(handle)
 
     def test_first_cli_execute_waits_for_real_grant_and_sends_once(self):
-        terminal = Terminal()
+        terminal = Terminal(uuid_factory=self.uuid_generator)
         spec = AlgorithmSpec('boiler_cli', 'Offline terminal', frozenset({Mode.CONTINUOUS}),
             lambda controller: BoilerCLI(controller, terminal=terminal, reader=lambda _: {
                 'devices': [42], 'controls': [{'device_id': 42, 'kind': 'toggle_buttons',
@@ -483,7 +486,7 @@ class ProductFlowTests(unittest.TestCase):
                 return context.cancelled.wait(seconds)
             pulse.set()
             return context.cancelled.wait(2)
-        terminal = Terminal()
+        terminal = Terminal(uuid_factory=self.uuid_generator)
         cli_data = {'devices': [42, 43], 'controls': [{'device_id': device_id,
             'kind': 'toggle_buttons', 'element_id': element, 'actions': ['trigger']}
             for device_id, element in ((42, 8832), (43, 31))], 'graphs': [],
@@ -569,7 +572,7 @@ class ProductFlowTests(unittest.TestCase):
                 pass
             def run_once(self, context):
                 raise RuntimeError('private module failure')
-        terminal = Terminal()
+        terminal = Terminal(uuid_factory=self.uuid_generator)
         cli = AlgorithmSpec('boiler_cli', 'Offline terminal', frozenset({Mode.CONTINUOUS}),
             lambda controller: BoilerCLI(controller, terminal=terminal,
                 reader=lambda _: {'devices': [42], 'controls': [], 'graphs': []}))

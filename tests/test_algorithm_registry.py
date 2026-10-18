@@ -5,6 +5,7 @@ from threading import Barrier, Event, Thread
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock
+from uuid import UUID
 
 from zontcontrol.autonomy.catalog import AlgorithmCatalog, BUILTIN_SPECS
 from zontcontrol.autonomy.contracts import (
@@ -16,6 +17,7 @@ from zontcontrol.config import ConfigurationError, OnceTimeout, RegistryConfig, 
 from zontcontrol.controller.contracts import ControlKey
 from zontcontrol.controller.ownership import CommandExecutor
 from zontcontrol.controller.service import ControllerService
+from tests.fakes.uuid import uuid_generator
 from tests.fakes.clock import FakeClock
 from tests.test_control_ownership import LocalTestGate
 from tests.test_inventory import inventory_device
@@ -43,6 +45,19 @@ def spec(name='reset', modes=DUAL, factory=Module, minimum=0, requirements=froze
 
 
 class RegistryTests(unittest.TestCase):
+    def setUp(self):
+        self.uuid_generator = uuid_generator()
+
+    def test_registry_passes_uuid_generator_to_algorithm_runtime(self):
+        module = Mock()
+        module.run_once.return_value = SUCCESS
+        registry, _ = self.registry([spec(factory=lambda controller: module)])
+        self.uuid_generator.assert_not_called()  # Registration does not start a run.
+        self.assertIs(registry.run_once('reset'), SUCCESS)
+        context = module.run_once.call_args.args[0]
+        self.assertEqual((context.instance_id, context.run_id), (UUID(int=1), UUID(int=2)))
+        self.assertEqual(self.uuid_generator.call_count, 2)
+
     def test_builtins_require_sync_grants_instead_of_immediate_acquisition(self):
         for builtin in BUILTIN_SPECS:
             with self.subTest(algorithm=builtin.algorithm_id):
@@ -58,7 +73,8 @@ class RegistryTests(unittest.TestCase):
                                      begin_close_controller=begin_close,
                                      close_controller=close,
                                      **({} if capabilities is None else
-                                        {'available_capabilities': capabilities}))
+                                        {'available_capabilities': capabilities}),
+                                        uuid_factory=self.uuid_generator)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         report = registry.register_all(AlgorithmCatalog(specs))
         return registry, {item.spec.algorithm_id: item for item in report}
@@ -299,8 +315,8 @@ class RegistryTests(unittest.TestCase):
 
     def test_same_element_id_on_different_devices_uses_independent_consumer_bindings(self):
         clock = FakeClock(start=100)
-        gate = LocalTestGate(clock)
-        executor = CommandExecutor(gate=gate, clock=clock.now)
+        gate = LocalTestGate(clock, uuid_factory=self.uuid_generator)
+        executor = CommandExecutor(gate=gate, clock=clock.now, uuid_factory=self.uuid_generator)
         adapter = Mock()
         adapter.devices.side_effect = lambda device_id=None: [
             {**inventory_device(), 'id': device_id}]
@@ -381,7 +397,7 @@ class RegistryTests(unittest.TestCase):
         for specs, config in (
                 ([spec(factory=factory), spec(factory=factory)], RegistryConfig(frozenset(), False, {})),
                 ([spec(factory=factory)], RegistryConfig(frozenset({'typo'}), False, {}))):
-            registry = AlgorithmRegistry(config, Mock())
+            registry = AlgorithmRegistry(config, Mock(), uuid_factory=self.uuid_generator)
             with self.assertRaises(ValueError):
                 registry.register_all(specs)
             self.assertTrue(registry.close())
@@ -396,7 +412,8 @@ class RegistryTests(unittest.TestCase):
             return Module(controller)
 
         registry = AlgorithmRegistry(RegistryConfig(frozenset(), False,
-                                                   {'reset': OnceTimeout(.01, 1)}), object)
+                                                   {'reset': OnceTimeout(.01, 1)}), object,
+                                                   uuid_factory=self.uuid_generator)
         self.addCleanup(registry.close)
         self.addCleanup(release.set)
         thread = Thread(target=lambda: registry.register_all([spec(factory=factory)]))
@@ -424,7 +441,8 @@ class RegistryTests(unittest.TestCase):
     def test_shared_close_failure_is_safe_and_not_retried(self):
         close = Mock(side_effect=RuntimeError('private-value'))
         registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), object,
-                                     close_controller=close)
+                                     close_controller=close,
+                                     uuid_factory=self.uuid_generator)
         registry.register_all(AlgorithmCatalog())
         for _ in range(2):
             with self.assertRaisesRegex(RuntimeError, '^Shared controller shutdown failed$'):
@@ -526,7 +544,8 @@ class RegistryTests(unittest.TestCase):
         begin, final = Mock(side_effect=fail), Mock()
         registry = AlgorithmRegistry(RegistryConfig(frozenset(), False,
             {'reset': OnceTimeout(.01, 1)}), object,
-            begin_close_controller=begin, close_controller=final)
+            begin_close_controller=begin, close_controller=final,
+            uuid_factory=self.uuid_generator)
         registry.register_all([spec(factory=Worker)])
         handle = registry.start('reset')
         self.addCleanup(worker_finish.set)
@@ -571,7 +590,8 @@ class RegistryTests(unittest.TestCase):
             return Mock(run_continuous=ran)
         begin = Mock(side_effect=RuntimeError('private-value'))
         registry = AlgorithmRegistry(RegistryConfig(frozenset(), True, {}), object,
-            begin_close_controller=begin, close_controller=close)
+            begin_close_controller=begin, close_controller=close,
+            uuid_factory=self.uuid_generator)
         self.addCleanup(resume.set)
         thread = Thread(target=lambda: registry.register_all([
             spec(modes=frozenset({Mode.CONTINUOUS}), factory=factory),
@@ -592,7 +612,8 @@ class RegistryTests(unittest.TestCase):
     def test_early_close_hook_dependency_must_be_callable(self):
         with self.assertRaises(ValueError):
             AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), object,
-                              begin_close_controller=object())
+                              begin_close_controller=object(),
+                              uuid_factory=self.uuid_generator)
 
 
 if __name__ == '__main__':

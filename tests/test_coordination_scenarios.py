@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 import unittest
 from unittest.mock import patch
-from uuid import uuid4
+from tests.fakes.uuid import uuid_generator
 
 from tests.fakes.clock import FakeClock
 from tests.fakes.zont import FakeMetadataAdapter, FakeZontServer
@@ -23,6 +23,7 @@ from zontcontrol.coordination.store import ExecutorStore, LeaderStore
 
 class ScenarioTests(unittest.TestCase):
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         self.clock = FakeClock()
         self.server = FakeZontServer({42: {'name': PREFIX, 'notes': None}}, clock=self.clock)
         self.adapter = FakeMetadataAdapter(self.server)
@@ -33,8 +34,9 @@ class ScenarioTests(unittest.TestCase):
         self.leader = self.make_leader()
         self.leader.try_acquire()
         self.coordinator = GrantCoordinator(self.store, self.leader, clock=self.clock,
-                                             statistics=self.stats)
-        self.owner = uuid4()
+                                             statistics=self.stats,
+                                             uuid_factory=self.uuid_generator)
+        self.owner = self.uuid_generator()
         self.gate = self.make_gate()
 
     def make_store(self, cls, adapter=None):
@@ -42,12 +44,13 @@ class ScenarioTests(unittest.TestCase):
                    notes_capacity=10000, name_capacity=10000)
 
     def make_leader(self):
-        return LeaderElection(self.store, str(uuid4()), LeaseTiming(1000, 1),
+        return LeaderElection(self.store, str(self.uuid_generator()), LeaseTiming(1000, 1),
                               clock=self.clock, statistics=self.stats)
 
     def make_gate(self, adapter=None):
         return ExecutorGate({42: self.make_store(ExecutorStore, adapter)}, clock=self.clock,
-                            delta=1, statistics=self.stats)
+                            delta=1, statistics=self.stats,
+                            uuid_factory=self.uuid_generator)
 
     def pending(self, gate=None, owner=None, seconds=60):
         with self.assertRaises(DeviceControlBusy):
@@ -90,7 +93,7 @@ class ScenarioTests(unittest.TestCase):
             self.gate.release(self.owner, session)
         deferred = self.server.requests[-1]
         self.adapter.write_mode = 'apply'
-        other, owner = self.make_gate(), uuid4()
+        other, owner = self.make_gate(), self.uuid_generator()
         self.pending(other, owner)
         self.coordinator.step()
         self.assertEqual(self.store.read_r2().owner, str(self.owner))
@@ -113,7 +116,8 @@ class ScenarioTests(unittest.TestCase):
         self.leader.release()
         other = self.make_leader()
         other.try_acquire()
-        coordinator = GrantCoordinator(self.store, other, clock=self.clock, statistics=self.stats)
+        coordinator = GrantCoordinator(self.store, other, clock=self.clock, statistics=self.stats,
+            uuid_factory=self.uuid_generator)
         coordinator.step()
         coordinator.step()
         self.assertEqual(self.store.read_r2(), old)
@@ -160,7 +164,7 @@ class ScenarioTests(unittest.TestCase):
             def emit(self, *args, **kwargs):
                 raise OSError('SECRET')
         self.gate._statistics = Broken()
-        executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        executor = CommandExecutor(gate=self.gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
         binding = executor.bind()
         with self.assertLogs('zontcontrol.coordination.statistics', level='WARNING') as logs:
             with self.assertRaises(DeviceControlBusy):
@@ -214,7 +218,8 @@ class ScenarioTests(unittest.TestCase):
 
         self.leader = self.make_leader()
         self.coordinator = GrantCoordinator(self.store, self.leader, clock=self.clock,
-                                             statistics=self.stats)
+                                             statistics=self.stats,
+                                             uuid_factory=self.uuid_generator)
         with patch.object(self.clock, 'wait', side_effect=replaying_barrier):
             self.assertTrue(self.leader.try_acquire())
             carry_source[0] = self.server.read_device(42)['notes']
@@ -222,11 +227,12 @@ class ScenarioTests(unittest.TestCase):
             second = self.make_leader()
             self.assertTrue(second.try_acquire())
         first_replay = carried[0]  # a fresh copy of A, ready to replay during B
-        gate_y, owner_y = self.make_gate(), uuid4()
+        gate_y, owner_y = self.make_gate(), self.uuid_generator()
         self.pending(gate_y, owner_y)
         second_header = self.store.read_r1()
         y_coordinator = GrantCoordinator(self.store, second, clock=self.clock,
-                                         statistics=self.stats)
+                                         statistics=self.stats,
+                                         uuid_factory=self.uuid_generator)
         ready_y, resume_y = Event(), Event()
         ready_x, resume_x = Event(), Event()
         original_write = self.store.write_r2

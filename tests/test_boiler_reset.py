@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 from threading import Event
 import unittest
 from unittest.mock import Mock, patch
-from uuid import uuid4
+from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.algorithms.boiler_reset import (
     BoilerReset, CONFIG_PATH, MINIMUM_SECONDS, PULSE_SECONDS, load_config, history_packet,
@@ -65,8 +65,9 @@ def history(data=None):
 
 class BoilerResetTests(unittest.TestCase):
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         self.clock = FakeClock(wall_start=history().end)
-        self.context = RunContext('boiler_reset', uuid4(), uuid4(), Event(), None)
+        self.context = RunContext('boiler_reset', self.uuid_generator(), self.uuid_generator(), Event(), None)
         self.events = []
         self.controller = Mock()
         self.controller.read_history.return_value = history()
@@ -79,7 +80,7 @@ class BoilerResetTests(unittest.TestCase):
         self.controller.read_current.return_value = Snapshot(42, self.clock.wall_now(), (
             ValueReading(self.reset, False, ValueType.BOOLEAN, None, 'virtual', None,
                          self.clock.wall_now(), Quality.UNKNOWN),))
-        self.session = ControlSession(42, uuid4(), 1000)
+        self.session = ControlSession(42, self.uuid_generator(), 1000)
         self.controller.acquire_control.side_effect = self.acquire_result
         self.controller.release_control.side_effect = lambda session: self.events.append('release')
         self.controller.prepare_command.side_effect = lambda device, key, action, arguments: (
@@ -97,7 +98,7 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(timeout, self.reader.return_value.get('grant_wait_seconds', 30))
         self.assertEqual(poll_seconds, self.reader.return_value.get('grant_poll_seconds', 1))
         self.assertIsInstance(cancelled, Event)
-        return ControlRequestResult(uuid4(), device, ControlRequestState.GRANTED,
+        return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.GRANTED,
                                     session=self.acquire(device, lease_seconds=lease_seconds))
 
     def test_acquire_uses_one_sync_request_with_module_budget(self):
@@ -116,7 +117,7 @@ class BoilerResetTests(unittest.TestCase):
                 self.events.clear()
                 self.controller.acquire_control.side_effect = None
                 self.controller.acquire_control.return_value = ControlRequestResult(
-                    uuid4(), 42, ControlRequestState.DENIED, reason=reason)
+                    self.uuid_generator(), 42, ControlRequestState.DENIED, reason=reason)
                 if reason in (ControlRequestReason.CANCELLED, ControlRequestReason.SHUTDOWN):
                     result = self.module().run_once(self.context)
                     self.assertFalse(result.value['reset_performed'])
@@ -133,7 +134,7 @@ class BoilerResetTests(unittest.TestCase):
         self.controller.try_acquire_control.assert_not_called()
 
     def test_controller_error_raises_fresh_typed_error_without_normal_or_command(self):
-        result = ControlRequestResult(uuid4(), 42, ControlRequestState.DENIED,
+        result = ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.DENIED,
             reason=ControlRequestReason.CONTROLLER_ERROR,
             error_code=ControlRequestErrorCode.RATE_LIMITED)
         self.controller.acquire_control.side_effect = None
@@ -325,7 +326,7 @@ class BoilerResetTests(unittest.TestCase):
         def stop(device, *, lease_seconds, timeout, poll_seconds, cancelled):
             self.assertIs(cancelled, self.context.cancelled)
             cancelled.set()
-            return ControlRequestResult(uuid4(), device, ControlRequestState.DENIED,
+            return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.DENIED,
                                         reason=ControlRequestReason.CANCELLED)
         self.controller.acquire_control.side_effect = stop
         self.module().run_once(self.context)
@@ -337,7 +338,7 @@ class BoilerResetTests(unittest.TestCase):
     def test_pending_grant_has_own_deadline_and_unchanged_requested_lease(self):
         def timeout(device, *, lease_seconds, timeout, poll_seconds, cancelled):
             self.clock.advance(timeout)
-            return ControlRequestResult(uuid4(), device, ControlRequestState.DENIED,
+            return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.DENIED,
                                         reason=ControlRequestReason.TIMEOUT)
         self.controller.acquire_control.side_effect = timeout
         with self.assertRaises(DeviceControlBusy):
@@ -360,9 +361,9 @@ class BoilerResetTests(unittest.TestCase):
 
     def test_pending_grant_timeout_is_not_retried_by_module(self):
         self.controller.acquire_control.side_effect = [
-            ControlRequestResult(uuid4(), 42, ControlRequestState.DENIED,
+            ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.DENIED,
                                  reason=ControlRequestReason.TIMEOUT),
-            ControlRequestResult(uuid4(), 42, ControlRequestState.GRANTED, session=self.session)]
+            ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.GRANTED, session=self.session)]
         with self.assertRaises(DeviceControlBusy):
             self.module().run_once(self.context)
         self.controller.acquire_control.assert_called_once()
@@ -371,7 +372,7 @@ class BoilerResetTests(unittest.TestCase):
     def test_stop_during_acquisition_releases_immediately_without_further_reads(self):
         def acquire(device, **kwargs):
             self.context.cancelled.set()
-            return ControlRequestResult(uuid4(), device, ControlRequestState.GRANTED,
+            return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.GRANTED,
                                         session=self.session)
         self.controller.acquire_control.side_effect = acquire
         self.module().run_once(self.context)
@@ -382,8 +383,8 @@ class BoilerResetTests(unittest.TestCase):
     def test_off_uses_real_executor_admission_and_expired_or_lost_grant_is_error(self):
         for cause in ('expiry', 'grant_lost'):
             with self.subTest(cause=cause):
-                gate = LocalTestGate(self.clock)
-                executor = CommandExecutor(gate=gate, clock=self.clock.now)
+                gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
+                executor = CommandExecutor(gate=gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
                 binding = executor.bind()
                 self.controller.acquire_control.side_effect = binding.acquire_control
                 self.controller.release_control.side_effect = binding.release_control
@@ -406,8 +407,8 @@ class BoilerResetTests(unittest.TestCase):
                 self.assertEqual(gate.sessions, {})
 
     def test_cancel_during_accepted_on_completes_it_and_off_uses_same_owned_session(self):
-        gate = LocalTestGate(self.clock)
-        executor = CommandExecutor(gate=gate, clock=self.clock.now)
+        gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
+        executor = CommandExecutor(gate=gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
         binding = executor.bind()
         self.controller.acquire_control.side_effect = binding.acquire_control
         self.controller.release_control.side_effect = binding.release_control
@@ -426,8 +427,8 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(gate.sessions, {})
 
     def test_new_reset_binding_after_unknown_release_waits_for_expiry(self):
-        gate = LocalTestGate(self.clock)
-        executor = CommandExecutor(gate=gate, clock=self.clock.now)
+        gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
+        executor = CommandExecutor(gate=gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
         gate.release = Mock(side_effect=[CommandOutcomeUnknown(), None])
         sends = []
         def bind():
@@ -451,10 +452,11 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(gate.release.call_count, 2)
 
     def test_finally_off_failure_is_observed_and_never_retried(self):
-        gate = LocalTestGate(self.clock)
+        gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
         rows = []
         executor = CommandExecutor(gate=gate, clock=self.clock.now,
-            statistics=Statistics(rows.append, protocol_version='1', profile='offline'))
+            statistics=Statistics(rows.append, protocol_version='1', profile='offline'),
+            uuid_factory=self.uuid_generator)
         binding = executor.bind()
         self.controller.acquire_control.side_effect = binding.acquire_control
         self.controller.release_control.side_effect = binding.release_control
@@ -513,7 +515,8 @@ class BoilerResetTests(unittest.TestCase):
         spec = replace(spec, factory=lambda controller: self.module(wait=wait))
         config = RegistryConfig(frozenset(), False, {'boiler_reset': OnceTimeout(
             MINIMUM_SECONDS, MINIMUM_SECONDS)})
-        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now)
+        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now,
+        uuid_factory=self.uuid_generator)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         registry.register_all([spec])
         handle = registry.start('boiler_reset')
@@ -529,7 +532,8 @@ class BoilerResetTests(unittest.TestCase):
         spec = replace(BUILTIN_SPECS[0], factory=lambda controller: self.module())
         config = RegistryConfig(frozenset(), False, {'boiler_reset': OnceTimeout(
             MINIMUM_SECONDS, MINIMUM_SECONDS)})
-        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now)
+        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now,
+        uuid_factory=self.uuid_generator)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         registry.register_all([spec])
         result = registry.run_once('boiler_reset')

@@ -8,19 +8,25 @@ internal writer capability: the coordinator must confirm its R1 term before
 each R2 write. The store itself does not elect or authorize a leader.
 """
 
-from ..controller.contracts import CommandOutcomeUnknown, ControllerError
-from .models import R1Record, RecordError, decode_r1, decode_r2, encode_r1, encode_r2
+from __future__ import annotations
+
+from ..control_types import CommandOutcomeUnknown, ControllerError
+from .models import (
+    GrantRecord, R1Record, RecordError, RequestRecord, decode_r1, decode_r2, encode_r1, encode_r2,
+)
+from .ports import MetadataPort
 
 
 class RecordCapacityError(RecordError):
-    def __init__(self):
+    def __init__(self) -> None:
         ValueError.__init__(self, "Complete coordination field exceeds configured capacity")
 
 
 class ExecutorStore:
     """Executors may publish R1 requests; R2 has no write method here."""
 
-    def __init__(self, adapter, device_id, *, original_name, notes_capacity, name_capacity):
+    def __init__(self, adapter: MetadataPort, device_id: int, *, original_name: str,
+                 notes_capacity: int, name_capacity: int) -> None:
         if (type(device_id) is not int or device_id <= 0 or not isinstance(original_name, str)
                 or any(type(size) is not int or size <= 0 for size in (notes_capacity, name_capacity))):
             raise RecordError()
@@ -29,13 +35,13 @@ class ExecutorStore:
         self.original_name = original_name
         self._capacities = {"notes": notes_capacity, "name": name_capacity}
 
-    def read_r1(self):
+    def read_r1(self) -> R1Record:
         return decode_r1(self._adapter.read_metadata_field(self.device_id, "notes"))
 
-    def read_r2(self):
+    def read_r2(self) -> GrantRecord | None:
         return decode_r2(self._adapter.read_metadata_field(self.device_id, "name"), self.original_name)
 
-    def _write(self, field, raw):
+    def _write(self, field: str, raw: str) -> None:
         try:
             size = len(raw.encode("utf-8"))
         except UnicodeError:
@@ -56,10 +62,10 @@ class ExecutorStore:
         if confirmed != raw:
             raise CommandOutcomeUnknown()
 
-    def write_r1(self, record):
+    def write_r1(self, record: R1Record) -> None:
         self._write("notes", encode_r1(record))
 
-    def publish_request(self, request):
+    def publish_request(self, request: RequestRecord) -> None:
         """Preserve the observed header; this bounded RMW is still not CAS."""
         record = self.read_r1()
         self.write_r1(R1Record(record.leader, request))
@@ -68,5 +74,5 @@ class ExecutorStore:
 class LeaderStore(ExecutorStore):
     """Internal coordinator capability; executors receive ExecutorStore only."""
 
-    def write_r2(self, grant):
+    def write_r2(self, grant: GrantRecord | None) -> None:
         self._write("name", encode_r2(self.original_name, grant))

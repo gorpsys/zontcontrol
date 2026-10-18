@@ -5,34 +5,47 @@ there is no background queue or automatic retry of an uncertain write. R1 RMW
 can replay stale leadership: these checks provide neither CAS nor fencing.
 """
 
+from __future__ import annotations
+
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 from threading import RLock
+from _thread import RLock as RLockType
+from typing import cast
 from uuid import UUID, uuid4
 
-from ..controller.contracts import (
+from ..control_types import (
     CommandOutcomeUnknown, ControllerError, ControlOwnershipRequired,
-    ControlSession, DeviceControlBusy, InvalidArguments,
+    ControlSession, DeviceControlBusy, InvalidArguments, UUIDFactory,
 )
 from .clock import BootClock, _duration, clock_factor, clock_rho
 from .models import GrantRecord, R1Record, RecordError, RequestRecord
-from .statistics import error_event, observe
+from .models import LeaderRecord
+from .leader import LeaderElection
+from .ports import Clock
+from .statistics import ObservationValue, Observer, error_event, observe
+from .store import ExecutorStore, LeaderStore
 
 
 class GrantCoordinator:
     """One leader's grant polling; independent of algorithm ownership/lifecycle."""
 
-    def __init__(self, store, leader, *, clock=None, window=None, statistics=None):
+    def __init__(self, store: LeaderStore, leader: LeaderElection, *,
+                 clock: Clock | None = None, window: float | None = None,
+                 statistics: Observer | None = None, uuid_factory: UUIDFactory | None = None) -> None:
         self._store = store
         self._leader = leader
         self._clock = clock if clock is not None else BootClock()
         self.window = _duration(leader.timing.delta if window is None else window, positive=True)
-        self._observation = None
+        self._observation: tuple[GrantRecord, float] | None = None
         self._statistics = statistics
-        self._changed_grant = None
+        self._uuid_factory = uuid4 if uuid_factory is None else uuid_factory
+        self._changed_grant: tuple[str, int, str] | None = None
 
-    def _observe(self, event, grant=None, **fields):
-        context = {'device_id': self._store.device_id}
+    def _observe(self, event: str, grant: GrantRecord | None = None,
+                 **fields: ObservationValue) -> None:
+        context: dict[str, ObservationValue] = {'device_id': self._store.device_id}
         if grant is not None:
             context.update(episode_id=grant.request_id, request_id=grant.request_id,
                            run_id=grant.owner, grant_id=grant.grant_id,
@@ -40,12 +53,12 @@ class GrantCoordinator:
         observe(self._statistics, event, **{**context, **fields})
 
     @staticmethod
-    def _matches(request, grant):
+    def _matches(request: RequestRecord, grant: GrantRecord) -> bool:
         return (request.owner == grant.owner and request.request_id == grant.request_id
                 and request.grant_id == grant.grant_id
                 and request.grant_revision == grant.revision)
 
-    def step(self, *, accepting=True):
+    def step(self, *, accepting: bool = True) -> GrantRecord | None:
         """Confirm R1 before R2 work; never replace an unexpired foreign grant.
 
         accepting=False only settles completion/expiry during host shutdown;
@@ -55,13 +68,15 @@ class GrantCoordinator:
         Expiry observation begins at the first R2 response and ends at the send
         of a final read of exactly the same full value. No remote clocks enter it.
         """
-        def coordinate(record):
+        def coordinate(record: R1Record) -> GrantRecord | None:
+            # LeaderElection.coordinate confirmed this immutable R1 projection.
+            leader = cast(LeaderRecord, record.leader)
             sent = self._clock.now()
             current = self._store.read_r2()
             received = self._clock.now()
             self._observe('poll')
-            if current is not None and current.leader_token != record.leader.token:
-                identity = current.grant_id, current.revision, record.leader.token
+            if current is not None and current.leader_token != leader.token:
+                identity = current.grant_id, current.revision, leader.token
                 if identity != self._changed_grant:
                     self._observe('leader_changed_active_grant', current)
                     self._changed_grant = identity
@@ -80,10 +95,10 @@ class GrantCoordinator:
                 desired = None
             elif (accepting and current is not None and request is not None
                     and request.state == "heartbeat" and self._matches(request, current)
-                    and current.leader_token == record.leader.token
+                    and current.leader_token == leader.token
                     and request.nonce != current.nonce and not expired):
                 desired = GrantRecord(current.owner, current.request_id, current.grant_id,
-                                      record.leader.token, current.revision + 1,
+                                      leader.token, current.revision + 1,
                                       request.lease_seconds * clock_factor(request.lease_seconds),
                                       clock_rho(request.lease_seconds), request.nonce)
             elif current is None or expired:
@@ -92,8 +107,8 @@ class GrantCoordinator:
                     # An expired request/nonce must not resurrect its old grant.
                     if current is None or (request.owner, request.request_id) != (
                             current.owner, current.request_id):
-                        desired = GrantRecord(request.owner, request.request_id, str(uuid4()),
-                                              record.leader.token, 0,
+                        desired = GrantRecord(request.owner, request.request_id, str(self._uuid_factory()),
+                                              leader.token, 0,
                                               request.lease_seconds * clock_factor(request.lease_seconds),
                                               clock_rho(request.lease_seconds), request.nonce)
             if desired != current:
@@ -144,17 +159,21 @@ class ExecutorGate:
     Ordinary reacquisition returns the original session without extending it.
     """
 
-    def __init__(self, stores, *, clock=None, delta, statistics=None):
+    def __init__(self, stores: Mapping[int, ExecutorStore], *, clock: Clock | None = None,
+                 delta: float, statistics: Observer | None = None,
+                 uuid_factory: UUIDFactory | None = None) -> None:
         self._stores = dict(stores)
         self._clock = clock if clock is not None else BootClock()
         self._delta = _duration(delta, positive=True)
         self._locks = {device: RLock() for device in self._stores}
-        self._pending = {}
-        self._held = {}
+        self._pending: dict[tuple[UUID, int], _Pending] = {}
+        self._held: dict[tuple[UUID, int], _Held] = {}
         self._statistics = statistics
+        self._uuid_factory = uuid4 if uuid_factory is None else uuid_factory
 
-    def _observe(self, event, store, request=None, **fields):
-        context = {'device_id': store.device_id}
+    def _observe(self, event: str, store: ExecutorStore, request: RequestRecord | None = None,
+                 **fields: ObservationValue) -> None:
+        context: dict[str, ObservationValue] = {'device_id': store.device_id}
         if request is not None:
             context.update(episode_id=request.request_id, request_id=request.request_id,
                            run_id=request.owner)
@@ -162,13 +181,13 @@ class ExecutorGate:
                 context['grant_id'] = request.grant_id
         observe(self._statistics, event, **{**context, **fields})
 
-    def _device(self, device_id):
+    def _device(self, device_id: int) -> tuple[ExecutorStore, RLockType]:
         if type(device_id) is not int or device_id not in self._stores:
             raise InvalidArguments()
         return self._stores[device_id], self._locks[device_id]
 
     @staticmethod
-    def _arguments(owner, lease_seconds):
+    def _arguments(owner: UUID, lease_seconds: float) -> None:
         if not isinstance(owner, UUID) or owner.int == 0:
             raise InvalidArguments()
         try:
@@ -176,7 +195,7 @@ class ExecutorGate:
         except (ValueError, OverflowError):
             raise InvalidArguments() from None
 
-    def _read(self, store):
+    def _read(self, store: ExecutorStore) -> tuple[GrantRecord | None, LeaderRecord | None]:
         start = self._clock.now()
         try:
             grant = store.read_r2()
@@ -191,7 +210,7 @@ class ExecutorGate:
             raise ControlOwnershipRequired()
         return grant, record.leader
 
-    def _ack(self, store, pending):
+    def _ack(self, store: ExecutorStore, pending: _Pending) -> tuple[GrantRecord, float] | None:
         self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
         grant, leader = self._read(store)
         self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
@@ -204,7 +223,7 @@ class ExecutorGate:
                     request.lease_seconds), rel_tol=1e-12)):
             return None
         if request.state == "heartbeat" and (grant.grant_id != request.grant_id
-                or grant.revision != request.grant_revision + 1):
+                or grant.revision != cast(int, request.grant_revision) + 1):
             return None
         if request.state == "request" and grant.revision != 0:
             return None
@@ -216,7 +235,7 @@ class ExecutorGate:
             return None
         return grant, deadline
 
-    def _publish(self, store, pending):
+    def _publish(self, store: ExecutorStore, pending: _Pending) -> None:
         start = self._clock.now()
         try:
             store.publish_request(pending.request)
@@ -236,13 +255,14 @@ class ExecutorGate:
             raise CommandOutcomeUnknown()
         self._observe(pending.request.state, store, pending.request, outcome='success')
 
-    def _check_deadlines(self, *deadlines):
+    def _check_deadlines(self, *deadlines: float | None) -> None:
         if any(deadline is not None and self._clock.now() >= deadline
                for deadline in deadlines):
             raise ControlOwnershipRequired()
 
-    def try_acquire(self, owner, device_id, *, lease_seconds, request_id=None,
-                    local_deadline=None, attempt_deadline=None):
+    def try_acquire(self, owner: UUID, device_id: int, *, lease_seconds: float,
+                    request_id: UUID | None = None, local_deadline: float | None = None,
+                    attempt_deadline: float | None = None) -> ControlSession:
         self._arguments(owner, lease_seconds)
         if request_id is not None and (not isinstance(request_id, UUID) or request_id.int == 0):
             raise InvalidArguments()
@@ -273,7 +293,8 @@ class ExecutorGate:
             if (pending is None or pending.request_id != request_id
                     or self._clock.now() >= pending.sent + pending.request.lease_seconds):
                 self._check_deadlines(local_deadline, attempt_deadline)
-                pending = _Pending(RequestRecord(str(owner), str(request_id or uuid4()), str(uuid4()),
+                pending = _Pending(RequestRecord(str(owner), str(request_id or self._uuid_factory()),
+                                                 str(self._uuid_factory()),
                                                  lease_seconds, "request"), self._clock.now(),
                                    request_id=request_id, local_deadline=local_deadline,
                                    attempt_deadline=attempt_deadline)
@@ -288,7 +309,7 @@ class ExecutorGate:
                 self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
                 if ack is not None:
                     grant, deadline = ack
-                    session = ControlSession(device_id, uuid4(), deadline)
+                    session = ControlSession(device_id, self._uuid_factory(), deadline)
                     # Observation is external code and can raise BaseException or
                     # consume the remaining attempt budget. Keep pending until it
                     # completes and the exact same deadlines still permit issue.
@@ -315,7 +336,7 @@ class ExecutorGate:
                         self._check_deadlines(pending.local_deadline, pending.attempt_deadline)
             raise DeviceControlBusy()
 
-    def abandon_request(self, owner, device_id, request_id):
+    def abandon_request(self, owner: UUID, device_id: int, request_id: UUID) -> None:
         """Discard only this local pending request, without remote completion."""
         _, lock = self._device(device_id)
         with lock:
@@ -324,7 +345,7 @@ class ExecutorGate:
             if pending is not None and pending.request.request_id == str(request_id):
                 del self._pending[key]
 
-    def _match(self, owner, session, *, allow_finished=False):
+    def _match(self, owner: UUID, session: ControlSession, *, allow_finished: bool = False) -> _Held:
         if not isinstance(session, ControlSession):
             raise ControlOwnershipRequired()
         held = self._held.get((owner, session.device_id))
@@ -333,7 +354,7 @@ class ExecutorGate:
             raise ControlOwnershipRequired()
         return held
 
-    def observation_context(self, owner, session):
+    def observation_context(self, owner: UUID, session: ControlSession) -> dict[str, ObservationValue]:
         _, lock = self._device(session.device_id)
         with lock:
             grant = self._match(owner, session, allow_finished=True).grant
@@ -341,7 +362,7 @@ class ExecutorGate:
                         run_id=grant.owner, grant_id=grant.grant_id,
                         revision=grant.revision, leader_term=grant.leader_token)
 
-    def validate(self, owner, session):
+    def validate(self, owner: UUID, session: ControlSession) -> None:
         if not isinstance(session, ControlSession):
             raise ControlOwnershipRequired()
         store, lock = self._device(session.device_id)
@@ -355,7 +376,7 @@ class ExecutorGate:
                     or not self._clock.now() < session.expires_at):
                 raise ControlOwnershipRequired()
 
-    def renew(self, owner, session, *, lease_seconds):
+    def renew(self, owner: UUID, session: ControlSession, *, lease_seconds: float) -> ControlSession:
         """Publish once, poll explicitly; an old ack cannot extend the deadline."""
         self._arguments(owner, lease_seconds)
         if not isinstance(session, ControlSession):
@@ -367,7 +388,7 @@ class ExecutorGate:
             if pending is None:
                 self.validate(owner, session)
                 grant = held.grant
-                pending = _Pending(RequestRecord(str(owner), grant.request_id, str(uuid4()),
+                pending = _Pending(RequestRecord(str(owner), grant.request_id, str(self._uuid_factory()),
                                                  lease_seconds, "heartbeat", grant.grant_id,
                                                  grant.revision), self._clock.now())
                 held.renewal = pending
@@ -376,7 +397,7 @@ class ExecutorGate:
                 ack = self._ack(store, pending)
                 if ack is not None:
                     held.grant, deadline = ack
-                    held.session = ControlSession(session.device_id, uuid4(), deadline)
+                    held.session = ControlSession(session.device_id, self._uuid_factory(), deadline)
                     held.renewal = None
                     return held.session
                 if not pending.uncertain and store.read_r1().request != pending.request:
@@ -385,7 +406,7 @@ class ExecutorGate:
                     self._publish(store, pending)
             raise DeviceControlBusy()
 
-    def release(self, owner, session):
+    def release(self, owner: UUID, session: ControlSession) -> None:
         """Completion may be explicitly republished after a lost R1 update.
 
         No current grant is required to announce completion of this exact grant.

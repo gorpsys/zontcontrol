@@ -1,6 +1,6 @@
 # Архитектура управляющего модуля и автономных алгоритмов
 
-Статус: локальная реализация 0.2.0 на 17.10.2026 по требованиям от 14.10.2026,
+Статус: локальная реализация 0.2.1 на 17.10.2026 по требованиям от 14.10.2026,
 уточнённая после [независимого ревью](../reviews/2026-10-14-autonomy-architecture.md).
 Здесь фиксируются реализованные границы и принятые ограничения;
 краткий текущий интерфейс описан в [контрактах приложения](contracts.md).
@@ -46,6 +46,57 @@ DI-фреймворк, глобальный service locator и произвол�
 Не вводить legacy-обёртки, deprecation-адаптеры и параллельный старый клиент.
 Стабильный API v1 — новый контракт, а не оболочка старого. Проверенные свойства
 данных и калибровка детектора переиспользуются через новые интерфейсы.
+
+### Изоляция межклиентской координации
+
+Пакет zontcontrol.coordination содержит распределённый протокол R1/R2,
+CoordinatorWorker и CoordinationRuntime. Направление зависимостей:
+application собирает runtime и передаёт его как gate в CommandExecutor;
+coordination зависит только от stdlib, собственных модулей и control_types.
+Импортов controller, application, autonomy, алгоритмов или загрузчика
+проектных конфигов внутри пакета нет. Локальный mutex, очередь запросов
+и cleanup request-workers остаются в controller/ownership и controller/requests.
+Это отдельные потоки и ответственность, они не объединены с coordinator worker.
+
+Нейтральный control_types содержит прежние ControllerError, InvalidArguments,
+CommandOutcomeUnknown, DeviceControlBusy, ControlOwnershipRequired, RateLimited,
+ControlSession и общие helpers валидации. controller.contracts реэкспортирует
+те же классы и helpers; session не копируется и не оборачивается. Публичная
+поверхность coordination — статические реэкспорты, перечисленные
+в [контрактах пакета](contracts.md#граница-пакета-coordination). LeaderElection,
+GrantCoordinator, ExecutorGate, stores и wire records остаются внутренними
+деталями. Потребители не обходят поверхность через внутренние submodules.
+
+Структурные Protocol в coordination/ports описывают MetadataPort,
+CoordinationSettings, Clock и CoordinationGate без runtime isinstance-проверок.
+Прежний ZontAdapter передаётся как metadata port, CoordinationConfig — как
+settings с delta_seconds и timing; отдельные wrappers и копии настроек не нужны.
+Gate сохраняет прежние четыре метода; observation_context — optional hook,
+close относится к runtime и не обязателен для gate. Файлы, токен, транспорт
+и sink принадлежат composition root. Импорт пакета и конструктор runtime
+не выполняют I/O и не запускают потоки: устройство и worker создаются лениво.
+
+В application остаётся поздняя фабрика _create_device_coordinator(*args, **kwargs),
+которая при вызове разрешает имя _DeviceCoordinator, импортированное как
+CoordinatorWorker. Она передаётся в CoordinationRuntime через worker_factory;
+default-фабрика самого runtime — CoordinatorWorker. Это сохраняет существующую
+подмену application._DeviceCoordinator, не дублируя цикл протокола. BootClock
+также создаётся через имя в application с прежней обработкой ошибки.
+Application._coordination содержит настоящий runtime с прежними _devices
+и locks. Завершение по-прежнему ждёт алгоритмы, executor и request cleanup,
+затем coordinator workers, транспорт и sink; create_read_controller
+не создаёт координацию. Порядок протокола, сроки, wire v1, наблюдения
+и принятые риски при этом структурном переносе не менялись.
+
+После ревью дополнены аннотации границ и внутренних методов. Нейтральный
+UUIDFactory задаёт источник UUID через обычный Callable без нового сервиса:
+create_application передаёт его в координацию, executor/очередь и регистратор
+с runtime алгоритмов. По умолчанию сохраняется uuid4; подменяется источник,
+а не порядок или условия создания идентификаторов. Требования уникальности,
+потокобезопасности и границы воспроизводимости — в
+[контракте пакета](contracts.md#граница-пакета-coordination).
+Observer описывает best-effort emit, ObservationSink — приём одной записи;
+эти зависимости также доступны через статическую поверхность coordination.
 
 ## 2. Управляющий модуль: API v1
 
@@ -756,10 +807,15 @@ API/недоступности устройства; такая ошибка д�
 | Путь | Ответственность |
 | --- | --- |
 | controller/contracts | Стабильные DTO/ошибки/API потребителя |
+| control_types | Общие ошибки, ControlSession и helpers; только stdlib |
 | controller/auth | Авторизация и выдача токена, без монолитного клиента |
 | controller/transport | Внутренний HTTP-транспорт с типизированными исходами |
 | controller/zont | Внутренний адаптер API ZONT и нормализации |
 | controller/service, controller/ownership | Фасад, монополия на устройство, проверка и отправка команд |
+| controller/requests | Локальные заявки монополии, очередь и cleanup request-workers |
+| coordination/ports, coordination/__init__ | Структурные зависимости и статическая поверхность пакета |
+| coordination/runtime | Ленивый многоприборный runtime и coordinator workers |
+| coordination/leader, grants, store, models, clock, statistics | Протокол R1/R2, часы и наблюдения |
 | autonomy/contracts | AlgorithmSpec, режимы, результаты и состояния |
 | autonomy/catalog | Единственная точка подключения алгоритмов |
 | autonomy/registry | Конфигурация, регистрация и DI |

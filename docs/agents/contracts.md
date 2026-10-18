@@ -1,16 +1,18 @@
 # Контракты приложения
 
-Описывает реализованное локальное приложение 0.2.0, API v1 на 17.10.2026.
+Описывает реализованное локальное приложение 0.2.1, API v1 на 17.10.2026.
 [Архитектура](architecture.md) раскрывает границы и решения; точные DTO и
-ошибки определены в zontcontrol/controller/contracts.py, алгоритмы —
-в zontcontrol/autonomy/contracts.py. Прототип удалён без обратной совместимости.
+ошибки доступны через zontcontrol/controller/contracts.py, общие типы определены
+в zontcontrol/control_types.py, алгоритмы — в zontcontrol/autonomy/contracts.py.
+Прототип удалён без обратной совместимости.
 
 ## Слои и входы
 
 controller/auth выполняет авторизацию, controller/transport — HTTP с явным
 таймаутом, controller/zont — вызовы ZONT и нормализацию через inventory/history.
 controller/service предоставляет потребительский API и ownership; coordination
-отвечает за R1/R2 и наблюдения. commands готовит и проверяет команды;
+отвечает за R1/R2, ленивый runtime, coordinator workers и наблюдения.
+commands готовит и проверяет команды;
 anomaly/monitor/detection_profile сохраняют чистую логику детектора.
 autonomy/runtime и registry управляют потоками и состоянием; application
 связывает зависимости. algorithms/boiler_reset и boiler_cli независимы.
@@ -18,7 +20,7 @@ autonomy/runtime и registry управляют потоками и состоя
 zontcontrol и python -m zontcontrol вызывают application.main; утилита токена —
 zontcontrol-get-token или python -m zontcontrol.get_token. Старых client.py,
 cli.py, control.py, ZontClient, apply_command и entrypoint zontcontrol-control нет.
-Legacy-адаптеры и re-export не вводить. Исследовательские скрипты используют
+Legacy-адаптеры и реэкспорты интерфейсов прототипа не вводить. Исследовательские скрипты используют
 create_read_controller без регистратора и координатора.
 
 create_application предоставляет controller(), list_algorithms(mode=None),
@@ -28,6 +30,43 @@ start(id), stop(id, wait_timeout=0), host(cancelled=None), close(wait_timeout=No
 once ID [--timeout SECONDS], all, start ID, host [--start ID]. stop работает
 только в том же процессе через Python API; host штатно завершается по
 SIGINT/SIGTERM. IPC нет.
+
+## Граница пакета coordination
+
+Production-потребители используют статические реэкспорты zontcontrol.coordination:
+CoordinationRuntime, CoordinatorWorker, CoordinationGate, MetadataPort,
+CoordinationSettings, Clock, BootClock, LeaseTiming, Statistics, JsonlSink,
+ObservationError, observe, error_event, analyze и read_jsonl; типы наблюдений —
+Observer, ObservationSink и ObservationValue. Leader/grants/store,
+wire records и алгоритм R1/R2 остаются внутренними деталями пакета.
+
+В control_types определены ControllerError, InvalidArguments,
+CommandOutcomeUnknown, DeviceControlBusy, ControlOwnershipRequired, RateLimited
+и ControlSession, а также общие helpers валидации и UUIDFactory = Callable[[], UUID]. controller.contracts
+реэкспортирует те же объекты, без копирования сессий или новых типов ошибок.
+Другие ошибки контроллера наследуются от того же ControllerError.
+
+CoordinationGate сохраняет try_acquire, abandon_request, validate и release.
+observation_context остаётся optional hook; close не является обязательным
+методом gate. MetadataPort содержит read_metadata, read_metadata_field и
+update_metadata; ZontAdapter реализует его структурно. CoordinationSettings
+передаёт delta_seconds и timing: LeaseTiming; Clock — now() и
+wait(cancelled, seconds). Runtime получает прежние adapter/config/clock/statistics
+и необязательные worker_factory и uuid_factory; пакет не читает конфиги и не открывает транспорт.
+Точная assembly seam и порядок закрытия — [архитектура, §1](architecture.md#1-состав-и-границы).
+Controller API_VERSION=1 и wire v1 сохранены.
+
+create_application(uuid_factory=...) передаёт один источник UUID в runtime
+координации, локальный исполнитель, менеджер запросов и runtime алгоритмов.
+Тот же аргумент доступен у CoordinationRuntime, GrantCoordinator, ExecutorGate,
+CommandExecutor, AlgorithmRegistry и AlgorithmRuntime для изолированных проверок.
+ControlRequestManager использует свой существующий uuid_factory.
+При отсутствии зависимости остаётся uuid4. Фабрика возвращает UUID, а не строку;
+она должна быть потокобезопасной и выдавать новые ненулевые значения, уникальные
+для участвующих клиентов. Фиксированные последовательности предназначены для
+изолированных офлайн-проверок, а не совместной работы с устройством. DI не меняет
+точки генерации ID и не делает порядок планирования потоков детерминированным.
+Токен срока лидерства сохраняет отдельный token_factory в LeaderElection.
 
 ## Чтение и время
 

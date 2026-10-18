@@ -7,7 +7,7 @@ boiler_reset выполняет настоящий 40-секундный сбр�
 [будущая работа](docs/plans/yandex-cloud.md).
 
 Это полная замена прототипа без совместимости прежних Python/CLI/JSON.
-Текущий подготовленный выпуск — 0.2.0; завершение реализации не означает
+Текущий подготовленный выпуск — 0.2.1; завершение реализации не означает
 слияния PR, публикации тега или деплоя.
 
 ## Установка и конфигурация
@@ -40,7 +40,7 @@ registry.json — disabled_modules, autostart_dual_mode и once_timeouts.
 
 ```sh
 python3 -m venv /tmp/zontcontrol-venv
-/tmp/zontcontrol-venv/bin/python -m pip install /absolute/path/zontcontrol-0.2.0-py3-none-any.whl
+/tmp/zontcontrol-venv/bin/python -m pip install /absolute/path/zontcontrol-0.2.1-py3-none-any.whl
 cd /absolute/path/zontcontrol-work
 /tmp/zontcontrol-venv/bin/zontcontrol list
 ```

@@ -9,7 +9,9 @@ import sys
 import unittest
 import weakref
 from datetime import datetime, timedelta, timezone
-from uuid import UUID, uuid4
+from uuid import UUID
+
+from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.controller import contracts as api
 from zontcontrol.autonomy.contracts import CAPABILITIES
@@ -41,6 +43,9 @@ def series(device_id=1, **overrides):
 
 
 class ControllerContractTests(unittest.TestCase):
+    def setUp(self):
+        self.uuid_generator = uuid_generator()
+
     def test_control_request_methods_have_fixed_signatures_and_capabilities(self):
         for name in ('request_control', 'acquire_control'):
             with self.subTest(method=name):
@@ -71,7 +76,7 @@ class ControllerContractTests(unittest.TestCase):
             self.assertTrue(all(isinstance(item, str) for item in enum_type))
 
     def test_control_request_is_an_immutable_identity_handle_with_weak_references(self):
-        request_id = uuid4()
+        request_id = self.uuid_generator()
         request = api.ControlRequest(request_id, 1)
         same_fields = api.ControlRequest(request_id, 1)
         self.assertEqual(request.initial_state, api.ControlRequestState.REQUESTED)
@@ -94,12 +99,12 @@ class ControllerContractTests(unittest.TestCase):
                 api.ControlRequestResult(bad, 1, api.ControlRequestState.REQUESTED)
         for bad in (True, 0, -1, 1.0, "1", None):
             with self.subTest(bad=bad), self.assertRaises(api.InvalidArguments):
-                api.ControlRequest(uuid4(), bad)
+                api.ControlRequest(self.uuid_generator(), bad)
             with self.subTest(bad=bad), self.assertRaises(api.InvalidArguments):
-                api.ControlRequestResult(uuid4(), bad, api.ControlRequestState.REQUESTED)
+                api.ControlRequestResult(self.uuid_generator(), bad, api.ControlRequestState.REQUESTED)
 
     def test_control_request_results_accept_only_consistent_state_combinations(self):
-        session = api.ControlSession(1, uuid4(), 100)
+        session = api.ControlSession(1, self.uuid_generator(), 100)
         for state in api.ControlRequestState:
             for candidate_session in (None, session):
                 for reason in (None, *api.ControlRequestReason):
@@ -116,21 +121,21 @@ class ControllerContractTests(unittest.TestCase):
                         with self.subTest(state=state, session=candidate_session,
                                           reason=reason, error_code=code):
                             if valid:
-                                result = api.ControlRequestResult(uuid4(), 1, state,
+                                result = api.ControlRequestResult(self.uuid_generator(), 1, state,
                                                                   candidate_session, reason, code)
                                 self.assertIs(result.session, candidate_session)
                                 self.assertIs(result.reason, reason)
                                 self.assertIs(result.error_code, code)
                             else:
                                 with self.assertRaises(api.InvalidArguments):
-                                    api.ControlRequestResult(uuid4(), 1, state,
+                                    api.ControlRequestResult(self.uuid_generator(), 1, state,
                                                              candidate_session, reason, code)
 
     def test_control_request_result_rejects_foreign_session_and_untyped_payloads(self):
-        request_id = uuid4()
+        request_id = self.uuid_generator()
         with self.assertRaises(api.InvalidArguments):
             api.ControlRequestResult(request_id, 1, api.ControlRequestState.GRANTED,
-                                     api.ControlSession(2, uuid4(), 100))
+                                     api.ControlSession(2, self.uuid_generator(), 100))
         for fields in (
             {"state": "requested"}, {"state": {}},
             {"state": api.ControlRequestState.GRANTED, "session": {"device_id": 1}},
@@ -166,7 +171,7 @@ class ControllerContractTests(unittest.TestCase):
                 self.assertIsInstance(code, str)
                 self.assertEqual(code.name, value.upper())
                 self.assertIs(api.ControlRequestErrorCode.from_error(error_type()), code)
-                result = api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.DENIED,
+                result = api.ControlRequestResult(self.uuid_generator(), 1, api.ControlRequestState.DENIED,
                                                   reason=api.ControlRequestReason.CONTROLLER_ERROR,
                                                   error_code=code)
                 first = result.make_error()
@@ -197,7 +202,7 @@ class ControllerContractTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__):
                 code = api.ControlRequestErrorCode.from_error(error)
                 self.assertIs(code, api.ControlRequestErrorCode.CONTROLLER_ERROR)
-                result = api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.DENIED,
+                result = api.ControlRequestResult(self.uuid_generator(), 1, api.ControlRequestState.DENIED,
                                                   reason=api.ControlRequestReason.CONTROLLER_ERROR,
                                                   error_code=code)
                 self.assertIs(type(result.make_error()), api.ControllerError)
@@ -205,11 +210,11 @@ class ControllerContractTests(unittest.TestCase):
                 self.assertNotIn("API body", repr(result))
 
     def test_results_without_error_code_make_no_exception(self):
-        session = api.ControlSession(1, uuid4(), 100)
+        session = api.ControlSession(1, self.uuid_generator(), 100)
         for result in (
-            api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.REQUESTED),
-            api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.GRANTED, session),
-            *(api.ControlRequestResult(uuid4(), 1, api.ControlRequestState.DENIED, reason=reason)
+            api.ControlRequestResult(self.uuid_generator(), 1, api.ControlRequestState.REQUESTED),
+            api.ControlRequestResult(self.uuid_generator(), 1, api.ControlRequestState.GRANTED, session),
+            *(api.ControlRequestResult(self.uuid_generator(), 1, api.ControlRequestState.DENIED, reason=reason)
               for reason in api.ControlRequestReason
               if reason is not api.ControlRequestReason.CONTROLLER_ERROR),
         ):
@@ -217,7 +222,7 @@ class ControllerContractTests(unittest.TestCase):
                 self.assertIsNone(result.make_error())
 
     def test_control_request_result_is_frozen_and_does_not_keep_handle_alive(self):
-        request = api.ControlRequest(uuid4(), 1)
+        request = api.ControlRequest(self.uuid_generator(), 1)
         result = api.ControlRequestResult(request.request_id, request.device_id,
                                           api.ControlRequestState.REQUESTED)
         registry = weakref.WeakKeyDictionary({request: result})
@@ -365,7 +370,7 @@ class ControllerContractTests(unittest.TestCase):
 
     def test_session_deadline_is_local_and_lease_is_explicit(self):
         clock = FakeClock(start=100)
-        session = api.ControlSession(1, uuid4(), clock.now() + 60)
+        session = api.ControlSession(1, self.uuid_generator(), clock.now() + 60)
         clock.advance(20)
         self.assertEqual(session.expires_at, 160)
         self.assertEqual(clock.now(), 120)
@@ -375,7 +380,7 @@ class ControllerContractTests(unittest.TestCase):
         self.assertEqual(api.API_VERSION, 1)
         for bad in (math.nan, math.inf, -1, True):
             with self.assertRaises(api.InvalidArguments):
-                api.ControlSession(1, uuid4(), bad)
+                api.ControlSession(1, self.uuid_generator(), bad)
 
     def test_command_success_does_not_claim_physical_recovery(self):
         command = api.ValidatedCommand(api.ControlKey(1, "switch", 7), "set-switch",

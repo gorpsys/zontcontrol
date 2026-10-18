@@ -9,7 +9,8 @@ from threading import Event, Lock, Thread, current_thread
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import urlsplit
-from uuid import uuid4
+from uuid import UUID
+from tests.fakes.uuid import uuid_generator
 
 from tests.test_application import settings
 from tests.test_inventory import inventory_device
@@ -94,6 +95,7 @@ class MemoryTransport:
 
 class ComposedCoordinationTests(unittest.TestCase):
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         self.clock = StepClock()
         self.transport = MemoryTransport()
         self.observations = []
@@ -113,7 +115,8 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.app = create_application(environ={'ZONT_TOKEN': 'fake-secret'},
             catalog=(spec,), reader=lambda path: data[str(path)], clock=self.clock,
             transport_factory=lambda **kw: self.transport,
-            statistics_sink=self.observe)
+            statistics_sink=self.observe,
+            uuid_factory=self.uuid_generator)
         self.owner = self.app.controller()
         self.other = self.app.controller()
         self.addCleanup(self.app.close)
@@ -123,6 +126,26 @@ class ComposedCoordinationTests(unittest.TestCase):
     def observe(self, row):
         self.observations.append(row)
         self.on_observation(row)
+
+    def test_injected_uuid_sequence_reaches_leader_grant_and_session(self):
+        before = self.uuid_generator.call_count
+        handle = self.request()
+        result = self.wait_result(handle, pump=True)
+        self.assertIs(result.state, State.GRANTED)
+        gate, _ = self.app._coordination._devices[42]
+        store = gate._stores[42]
+        leader, request = store.read_r1().leader, store.read_r1().request
+        grant = store.read_r2()
+        self.assertEqual(handle.request_id, UUID(int=before + 1))
+        self.assertEqual(leader.owner, str(UUID(int=before + 2)))
+        self.assertEqual(request.request_id, str(handle.request_id))
+        self.assertEqual(request.nonce, str(UUID(int=before + 3)))
+        self.assertEqual(grant.grant_id, str(UUID(int=before + 4)))
+        self.assertEqual(grant.request_id, str(handle.request_id))
+        self.assertEqual(result.session.session_id, UUID(int=before + 5))
+        self.owner.release_control(result.session)
+        self.assertEqual(self.uuid_generator.call_count, before + 5)
+        self.assertEqual(self.transport.commands, [])
 
     def request(self, controller=None, *, lease=60, timeout=10):
         return (controller or self.owner).request_control(
@@ -178,8 +201,8 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertIsNone(denied.session)
         # Replace R2 while accepted local work is still completing. Cleanup of
         # the old request must not announce completion of this foreign grant.
-        foreign = replace(old, owner=str(uuid4()), request_id=str(uuid4()),
-                          grant_id=str(uuid4()), nonce=str(uuid4()))
+        foreign = replace(old, owner=str(self.uuid_generator()), request_id=str(self.uuid_generator()),
+                          grant_id=str(self.uuid_generator()), nonce=str(self.uuid_generator()))
         with self.transport.lock:
             self.transport.raw['name'] = encode_r2('Дом', foreign)
         resume.set()
@@ -446,8 +469,8 @@ class ComposedCoordinationTests(unittest.TestCase):
                         runtime._device_locks[42] = WaitingLock()
                     def attempt():
                         try:
-                            runtime.try_acquire(uuid4(), 42, lease_seconds=10,
-                                request_id=uuid4(),
+                            runtime.try_acquire(self.uuid_generator(), 42, lease_seconds=10,
+                                request_id=self.uuid_generator(),
                                 local_deadline=deadline if reason == 'lease' else deadline + 10,
                                 attempt_deadline=deadline if reason == 'attempt' else deadline + 10)
                         except BaseException as error:
@@ -488,7 +511,7 @@ class ComposedCoordinationTests(unittest.TestCase):
     def test_runtime_abandon_never_initializes_missing_device(self):
         runtime = self.app._coordination
         with patch.object(runtime.adapter, 'read_metadata') as metadata:
-            runtime.abandon_request(uuid4(), 42, uuid4())
+            runtime.abandon_request(self.uuid_generator(), 42, self.uuid_generator())
             metadata.assert_not_called()
         self.assertEqual(runtime._devices, {})
 
@@ -499,8 +522,8 @@ class ComposedCoordinationTests(unittest.TestCase):
         deadline = self.clock.now()
         with patch.object(gate, 'try_acquire') as attempt:
             with self.assertRaises(ControlOwnershipRequired):
-                runtime.try_acquire(uuid4(), 42, lease_seconds=5,
-                    request_id=uuid4(), local_deadline=deadline + 5,
+                runtime.try_acquire(self.uuid_generator(), 42, lease_seconds=5,
+                    request_id=self.uuid_generator(), local_deadline=deadline + 5,
                     attempt_deadline=deadline)
             attempt.assert_not_called()
         self.assertIs(runtime._devices[42][1], worker)

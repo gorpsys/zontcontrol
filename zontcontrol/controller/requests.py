@@ -11,6 +11,7 @@ from threading import Event, Thread, current_thread
 from uuid import uuid4
 from weakref import WeakKeyDictionary, WeakSet
 
+from ..control_types import UUIDFactory
 from .contracts import (
     CommandOutcomeUnknown, ControlRequest, ControlRequestErrorCode,
     ControlRequestReason as Reason, ControlRequestResult, ControlRequestState as State,
@@ -36,7 +37,7 @@ class RequestState:
 
 class ControlRequestManager:
     def __init__(self, *, idle, clock, admission, attempt, decision, cleanup, abandon,
-                 uuid_factory=uuid4):
+                 uuid_factory: UUIDFactory = uuid4):
         self._idle = idle
         self._clock = clock
         self._admission = admission

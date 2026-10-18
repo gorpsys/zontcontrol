@@ -12,6 +12,7 @@ from threading import Event, Lock, Thread, TIMEOUT_MAX
 from time import monotonic
 from uuid import uuid4
 
+from ..control_types import UUIDFactory
 from .contracts import (
     AlgorithmBusy, AlgorithmCancelled, AlgorithmFailed, AlgorithmResult,
     AlgorithmSpec, AlgorithmState, AlgorithmTimeout, Mode, RunContext,
@@ -82,7 +83,7 @@ class AlgorithmRuntime:
     """
 
     def __init__(self, spec: AlgorithmSpec, controller_factory, *, clock=monotonic,
-                 close_controller=None):
+                 close_controller=None, uuid_factory: UUIDFactory | None = None):
         if (not isinstance(spec, AlgorithmSpec) or not callable(controller_factory)
                 or not callable(clock)
                 or close_controller is not None and not callable(close_controller)):
@@ -90,6 +91,7 @@ class AlgorithmRuntime:
         self.spec = spec
         self._controller_factory = controller_factory
         self._clock = clock
+        self._uuid_factory = uuid4 if uuid_factory is None else uuid_factory
         self._close_controller = close_controller
         self._lock = Lock()
         self._state = AlgorithmState.REGISTERED
@@ -127,7 +129,8 @@ class AlgorithmRuntime:
                 raise AlgorithmBusy(self.spec.algorithm_id, reason)
             # Admission starts the budget before thread creation or any DI.
             deadline = self._clock() + timeout if mode is Mode.ONCE else None
-            context = RunContext(self.spec.algorithm_id, uuid4(), uuid4(), Event(), deadline)
+            context = RunContext(self.spec.algorithm_id, self._uuid_factory(), self._uuid_factory(),
+                                 Event(), deadline)
             handle = RunHandle(self, mode, context)
             handle.worker = Thread(target=self._work, args=(handle,),
                                    name=f'{self.spec.algorithm_id}-worker', daemon=False)
