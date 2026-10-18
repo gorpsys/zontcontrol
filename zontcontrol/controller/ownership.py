@@ -6,22 +6,38 @@ There is deliberately no local permissive implementation in the application.
 Gate I/O and command HTTP never hold the account-wide state lock.
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable
 import math
 from dataclasses import dataclass, field
-from threading import Condition, Lock
+from threading import Condition, Event, Lock
+from typing import TypeVar, TypedDict, cast
 from uuid import UUID, uuid4
 
 from .contracts import (
-    CommandOutcomeUnknown, ControlOwnershipRequired, ControlSession, DeviceControlBusy,
+    CommandOutcomeUnknown, ControlOwnershipRequired, ControlRequest, ControlRequestResult,
+    ControlSession, DeviceControlBusy,
     InvalidArguments, ValidatedCommand,
 )
-from ..coordination import CoordinationGate, error_event, observe
+from ..control_types import UUIDFactory
+from ..coordination import CoordinationGate, ObservationValue, Observer, error_event, observe
 from .requests import ControlRequestManager
+
+
+_Prepared = TypeVar('_Prepared')
+_Result = TypeVar('_Result')
+
+
+class _AcquisitionOptions(TypedDict, total=False):
+    request_id: UUID
+    local_deadline: float | None
+    attempt_deadline: float | None
 
 
 @dataclass
 class _Ownership:
-    binding: object
+    binding: _ControlBinding
     request_id: UUID | None = None
     unclaimed: bool = False
     session: ControlSession | None = None
@@ -29,7 +45,7 @@ class _Ownership:
     closing: bool = False
     releasing: bool = False
     release_failed: bool = False
-    context: dict = field(default_factory=dict)
+    context: dict[str, ObservationValue] = field(default_factory=dict)
     outcome: str = 'success'
     cleanup_observed: bool = False
 
@@ -45,7 +61,8 @@ class CommandExecutor:
     discarding an expired reservation sends no metadata writes.
     """
 
-    def __init__(self, *, gate: CoordinationGate, clock, statistics=None):
+    def __init__(self, *, gate: CoordinationGate, clock: Callable[[], float],
+                 statistics: Observer | None = None, uuid_factory: UUIDFactory | None = None) -> None:
         if gate is None or not callable(clock):
             raise InvalidArguments()
         self._gate = gate
@@ -53,21 +70,23 @@ class CommandExecutor:
         self._lock = Lock()
         self._idle = Condition(self._lock)
         self._closed = False
-        self._devices = {}
+        self._devices: dict[int, _Ownership] = {}
         self._statistics = statistics
+        self._uuid_factory = uuid4 if uuid_factory is None else uuid_factory
         self._requests = ControlRequestManager(
             idle=self._idle, clock=clock, admission=self._request_admission_locked,
             attempt=self._acquire, decision=self._request_decision_locked,
-            cleanup=self._release_unclaimed, abandon=self._abandon_request)
+            cleanup=self._release_unclaimed, abandon=self._abandon_request,
+            uuid_factory=self._uuid_factory)
 
-    def _observe(self, held, event, **fields):
+    def _observe(self, held: _Ownership, event: str, **fields: ObservationValue) -> None:
         try:
-            observe(self._statistics, event, device_id=held.session.device_id,
+            observe(self._statistics, event, device_id=cast(ControlSession, held.session).device_id,
                     **held.context, **fields)
         except Exception:
             pass
 
-    def _command_observation(self, held, command, outcome):
+    def _command_observation(self, held: _Ownership, command: ValidatedCommand, outcome: str) -> None:
         self._observe(held, 'command', phase='command', outcome=outcome)
         if (isinstance(command, ValidatedCommand)
                 and command.control_key.kind == 'toggle_buttons' and command.action == 'trigger'
@@ -75,19 +94,19 @@ class CommandExecutor:
             self._observe(held, 'cleanup', phase='command', outcome=outcome,
                           coverage='partial')
 
-    def bind(self):
+    def bind(self) -> _ControlBinding:
         with self._lock:
             if self._closed:
                 raise ControlOwnershipRequired()
             return _ControlBinding(self)
 
-    def begin_close(self):
+    def begin_close(self) -> None:
         """Close admission without revoking issued sessions or doing I/O."""
         with self._lock:
             self._closed = True
             self._requests.begin_close_locked()
 
-    def _expiry_remaining(self, held):
+    def _expiry_remaining(self, held: _Ownership) -> float | None:
         """Lease time left for an idle reservation, or None while work owns it.
 
         Call under the state lock. A requested release must get its first
@@ -98,7 +117,7 @@ class CommandExecutor:
             return None
         return held.session.expires_at - self._clock()
 
-    def wait_idle(self):
+    def wait_idle(self) -> None:
         """Wait for reservations, including sessions held between commands."""
         with self._idle:
             while self._devices or self._requests._workers:
@@ -121,7 +140,8 @@ class CommandExecutor:
         for worker in workers:
             worker.join()
 
-    def _match(self, binding, session, device_id, *, allow_closing=False):
+    def _match(self, binding: _ControlBinding, session: ControlSession, device_id: int | None,
+               *, allow_closing: bool = False) -> _Ownership:
         if not isinstance(session, ControlSession) or session.device_id != device_id:
             raise ControlOwnershipRequired()
         held = self._devices.get(device_id)
@@ -132,7 +152,8 @@ class CommandExecutor:
             raise ControlOwnershipRequired()
         return held
 
-    def _request_admission_locked(self, binding, device_id, lease_deadline):
+    def _request_admission_locked(self, binding: _ControlBinding, device_id: int,
+                                  lease_deadline: float) -> None:
         if self._closed:
             raise ControlOwnershipRequired()
         if not isinstance(binding, _ControlBinding) or binding._executor is not self:
@@ -144,16 +165,18 @@ class CommandExecutor:
                 and held.session.expires_at > lease_deadline):
             raise InvalidArguments()
 
-    def _request_decision_locked(self, binding, request_id, session, lease_deadline, *, grant):
+    def _request_decision_locked(self, binding: _ControlBinding, request_id: UUID,
+                                 session: ControlSession | None, lease_deadline: float,
+                                 *, grant: bool) -> bool:
         if grant:
-            held = self._devices.get(session.device_id)
+            held = self._devices.get(cast(ControlSession, session).device_id)
             if (held is None or held.binding is not binding or held.session is not session
                     or held.closing or held.releasing
                     or held.unclaimed and held.request_id != request_id):
                 return False
-            if session.expires_at > lease_deadline:
+            if cast(ControlSession, session).expires_at > lease_deadline:
                 raise InvalidArguments()
-            if not self._clock() < session.expires_at:
+            if not self._clock() < cast(ControlSession, session).expires_at:
                 return False
             held.unclaimed = False
             return True
@@ -162,7 +185,8 @@ class CommandExecutor:
                 held.closing = True
         return False
 
-    def _release_unclaimed(self, binding, request_id, session=None):
+    def _release_unclaimed(self, binding: _ControlBinding, request_id: UUID,
+                           session: ControlSession | None = None) -> None:
         with self._idle:
             held = next((held for held in self._devices.values()
                          if held.binding is binding and held.request_id == request_id
@@ -178,7 +202,7 @@ class CommandExecutor:
         if release_now:
             self._release_remote(held)
 
-    def _abandon_request(self, binding, device_id, request_id):
+    def _abandon_request(self, binding: _ControlBinding, device_id: int, request_id: UUID) -> None:
         with self._idle:
             held = self._devices.get(device_id)
             if (held is not None and held.binding is binding and held.session is not None
@@ -187,8 +211,9 @@ class CommandExecutor:
                 return
         self._gate.abandon_request(binding._owner, device_id, request_id)
 
-    def _acquire(self, binding, device_id, lease_seconds, *, request_id=None,
-                 local_deadline=None, attempt_deadline=None):
+    def _acquire(self, binding: _ControlBinding, device_id: int, lease_seconds: float, *,
+                 request_id: UUID | None = None, local_deadline: float | None = None,
+                 attempt_deadline: float | None = None) -> ControlSession:
         if (type(device_id) is not int or device_id <= 0
                 or type(lease_seconds) not in (int, float)):
             raise InvalidArguments()
@@ -203,7 +228,8 @@ class CommandExecutor:
                 raise ControlOwnershipRequired()
             if request_id is not None:
                 if (not self._requests.live_locked(binding, device_id, request_id)
-                        or not self._clock() < min(local_deadline, attempt_deadline)):
+                        or not self._clock() < min(cast(float, local_deadline),
+                                                  cast(float, attempt_deadline))):
                     raise ControlOwnershipRequired()
             if self._requests.busy_locked(binding, device_id, request_id):
                 raise DeviceControlBusy()
@@ -223,7 +249,7 @@ class CommandExecutor:
             held = _Ownership(binding, request_id=request_id)
             self._devices[device_id] = held
         try:
-            arguments = {} if request_id is None else dict(
+            arguments: _AcquisitionOptions = {} if request_id is None else dict(
                 request_id=request_id, local_deadline=local_deadline,
                 attempt_deadline=attempt_deadline)
             session = self._gate.try_acquire(binding._owner, device_id,
@@ -271,11 +297,11 @@ class CommandExecutor:
             raise ControlOwnershipRequired()
         return session
 
-    def _release_remote(self, held):
+    def _release_remote(self, held: _Ownership) -> None:
         # Keep the closing reservation while completion is being published.
         # An unconfirmed release leaves it held, rather than risking an overtake.
         with self._lock:
-            if self._devices.get(held.session.device_id) is not held:
+            if self._devices.get(cast(ControlSession, held.session).device_id) is not held:
                 # A previous failed attempt expired and was discarded.
                 # Never publish/delete for its successor.
                 return
@@ -291,7 +317,7 @@ class CommandExecutor:
             if report_cleanup:
                 self._observe(held, 'cleanup', phase='session', outcome=held.outcome,
                               coverage='partial')
-            self._gate.release(held.binding._owner, held.session)
+            self._gate.release(held.binding._owner, cast(ControlSession, held.session))
         except BaseException:
             with self._lock:
                 held.releasing = False
@@ -302,11 +328,11 @@ class CommandExecutor:
                 self._idle.notify_all()
             raise
         with self._lock:
-            if self._devices.get(held.session.device_id) is held:
-                del self._devices[held.session.device_id]
+            if self._devices.get(cast(ControlSession, held.session).device_id) is held:
+                del self._devices[cast(ControlSession, held.session).device_id]
             self._idle.notify_all()
 
-    def _release(self, binding, session):
+    def _release(self, binding: _ControlBinding, session: ControlSession) -> None:
         with self._lock:
             device_id = session.device_id if isinstance(session, ControlSession) else None
             held = self._match(binding, session, device_id, allow_closing=True)
@@ -316,7 +342,8 @@ class CommandExecutor:
         if release_now:
             self._release_remote(held)
 
-    def _execute(self, binding, command, session, validate, send):
+    def _execute(self, binding: _ControlBinding, command: ValidatedCommand, session: ControlSession,
+                 validate: Callable[[], _Prepared], send: Callable[[_Prepared], _Result]) -> _Result:
         with self._lock:
             held = self._match(binding, session, command.device_id)
             # Reserve validation as well as accepted HTTP so release can never
@@ -353,31 +380,34 @@ class CommandExecutor:
 
 
 class _ControlBinding:
-    def __init__(self, executor):
+    def __init__(self, executor: CommandExecutor) -> None:
         self._executor = executor
-        self._owner = uuid4()
+        self._owner = executor._uuid_factory()
 
-    def try_acquire_control(self, device_id, *, lease_seconds):
+    def try_acquire_control(self, device_id: int, *, lease_seconds: float) -> ControlSession:
         return self._executor._acquire(self, device_id, lease_seconds)
 
-    def request_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
+    def request_control(self, device_id: int, *, lease_seconds: float, timeout: float,
+                        poll_seconds: float = 1, cancelled: Event | None = None) -> ControlRequest:
         return self._executor._requests.request(
             self, device_id, lease_seconds=lease_seconds, timeout=timeout,
             poll_seconds=poll_seconds, cancelled=cancelled)
 
-    def get_control_request(self, request):
+    def get_control_request(self, request: ControlRequest) -> ControlRequestResult:
         return self._executor._requests.get(self, request)
 
-    def cancel_control_request(self, request):
+    def cancel_control_request(self, request: ControlRequest) -> ControlRequestResult:
         return self._executor._requests.cancel(self, request)
 
-    def acquire_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
+    def acquire_control(self, device_id: int, *, lease_seconds: float, timeout: float,
+                        poll_seconds: float = 1, cancelled: Event | None = None) -> ControlRequestResult:
         return self._executor._requests.acquire(
             self, device_id, lease_seconds=lease_seconds, timeout=timeout,
             poll_seconds=poll_seconds, cancelled=cancelled)
 
-    def release_control(self, session):
+    def release_control(self, session: ControlSession) -> None:
         return self._executor._release(self, session)
 
-    def execute(self, command, session, validate, send):
+    def execute(self, command: ValidatedCommand, session: ControlSession,
+                validate: Callable[[], _Prepared], send: Callable[[_Prepared], _Result]) -> _Result:
         return self._executor._execute(self, command, session, validate, send)

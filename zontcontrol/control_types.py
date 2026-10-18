@@ -1,16 +1,23 @@
 """Shared control failures, session identity and scalar validation."""
 
+from __future__ import annotations
+
+from collections.abc import Callable
 import math
 from dataclasses import dataclass
+from typing import ClassVar, TypeAlias, cast
 from uuid import UUID
+
+
+UUIDFactory: TypeAlias = Callable[[], UUID]
 
 
 class ControllerError(Exception):
     """Safe public failure. Arbitrary upstream messages are never accepted."""
 
-    message = "Controller operation failed."
+    message: ClassVar[str] = "Controller operation failed."
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(self.message)
 
 
@@ -36,19 +43,19 @@ class ControlOwnershipRequired(ControllerError):
     message = "A current control session for this device is required."
 
 
-def _require(condition):
+def _require(condition: bool) -> None:
     if not condition:
         raise InvalidArguments()
 
 
-def _id(value):
+def _id(value: object) -> None:
     _require(type(value) is int and value > 0)
 
 
-def _number(value):
+def _number(value: object) -> None:
     _require(type(value) in (int, float))
     try:
-        _require(math.isfinite(value))
+        _require(math.isfinite(cast(float, value)))
     except OverflowError:
         raise InvalidArguments() from None
 
@@ -59,7 +66,7 @@ class ControlSession:
     session_id: UUID
     expires_at: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _id(self.device_id)
         _require(isinstance(self.session_id, UUID) and self.session_id.int != 0)
         _number(self.expires_at)

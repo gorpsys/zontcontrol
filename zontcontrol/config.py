@@ -5,37 +5,44 @@ Paths are relative to the working directory; root/reader are offline DI seams,
 not CLI overrides. Each algorithm reads and validates its own fixed file.
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any, NoReturn, TypeAlias, cast
 
-from .autonomy.contracts import Mode, valid_id
+from .autonomy.contracts import AlgorithmSpec, Mode, valid_id
 from .coordination import LeaseTiming
+
+
+JSONReader: TypeAlias = Callable[[Path], dict[str, Any]]
+PathInput: TypeAlias = str | Path
 
 
 class ConfigurationError(ValueError):
     """Never include raw JSON values or exception text that could contain secrets."""
 
-    def __init__(self, path, reason):
+    def __init__(self, path: PathInput, reason: str) -> None:
         self.path = Path(path)
         super().__init__(f'{self.path}: {reason}. Create or correct this file; see config/README.md')
 
 
-def _reject_constant(_value):
+def _reject_constant(_value: str) -> NoReturn:
     raise ValueError()
 
 
-def _finite_float(value):
+def _finite_float(value: str) -> float:
     number = float(value)
     if not math.isfinite(number):
         raise ValueError()
     return number
 
 
-def _object(pairs):
+def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result = {}
     for key, value in pairs:
         if key in result:
@@ -44,7 +51,7 @@ def _object(pairs):
     return result
 
 
-def read_json(path) -> dict:
+def read_json(path: PathInput) -> dict[str, Any]:
     """Read one UTF-8 JSON object; no duplicate keys or nonfinite constants."""
     path = Path(path)
     try:
@@ -57,13 +64,13 @@ def read_json(path) -> dict:
     return data
 
 
-def _keys(data, required, optional=()):
+def _keys(data: object, required: Iterable[str], optional: Iterable[str] = ()) -> None:
     if not isinstance(data, dict) or not set(required) <= data.keys() \
             or data.keys() - set(required) - set(optional):
         raise ValueError()
 
 
-def _number(value, *, maximum=None):
+def _number(value: Any, *, maximum: float | None = None) -> float:
     try:
         valid = (type(value) in (int, float) and math.isfinite(value) and value > 0
                  and (maximum is None or value <= maximum))
@@ -74,10 +81,10 @@ def _number(value, *, maximum=None):
     return value
 
 
-def _text(value):
+def _text(value: object) -> str:
     if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
         raise ValueError()
-    return value
+    return cast(str, value)
 
 
 @dataclass(frozen=True)
@@ -85,13 +92,13 @@ class OnceTimeout:
     minimum_seconds: float
     recommended_seconds: float
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         _number(self.minimum_seconds)
         _number(self.recommended_seconds)
         if self.recommended_seconds < self.minimum_seconds:
             raise ValueError()
 
-    def resolve(self, timeout=None) -> float:
+    def resolve(self, timeout: float | None = None) -> float:
         value = self.recommended_seconds if timeout is None else timeout
         try:
             _number(value)
@@ -108,7 +115,7 @@ class RegistryConfig:
     autostart_dual_mode: bool
     once_timeouts: Mapping[str, OnceTimeout]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if (not isinstance(self.disabled_modules, frozenset)
                 or not all(valid_id(item) for item in self.disabled_modules)
                 or type(self.autostart_dual_mode) is not bool
@@ -118,7 +125,7 @@ class RegistryConfig:
             raise ValueError('Invalid registrar settings')
         object.__setattr__(self, 'once_timeouts', MappingProxyType(dict(self.once_timeouts)))
 
-    def timeout_for(self, spec) -> OnceTimeout | None:
+    def timeout_for(self, spec: AlgorithmSpec) -> OnceTimeout | None:
         if Mode.ONCE not in spec.modes:
             return None
         try:
@@ -129,7 +136,7 @@ class RegistryConfig:
             raise ConfigurationError('config/registry.json',
                                      f'Missing or insufficient once timeout for {spec.algorithm_id}') from None
 
-    def should_autostart(self, spec) -> bool:
+    def should_autostart(self, spec: AlgorithmSpec) -> bool:
         return (spec.algorithm_id not in self.disabled_modules and Mode.CONTINUOUS in spec.modes
                 and (Mode.ONCE not in spec.modes or self.autostart_dual_mode))
 
@@ -159,7 +166,8 @@ class ControllerConfig:
     statistics: StatisticsConfig
 
 
-def load_registry_config(*, root=Path('.'), reader=read_json) -> RegistryConfig:
+def load_registry_config(*, root: PathInput = Path('.'), reader: JSONReader = read_json
+                         ) -> RegistryConfig:
     path = Path(root) / 'config/registry.json'
     data = reader(path)
     try:
@@ -182,7 +190,8 @@ def load_registry_config(*, root=Path('.'), reader=read_json) -> RegistryConfig:
         raise ConfigurationError(path, 'Invalid registrar settings') from None
 
 
-def load_controller_config(*, root=Path('.'), reader=read_json) -> ControllerConfig:
+def load_controller_config(*, root: PathInput = Path('.'), reader: JSONReader = read_json
+                           ) -> ControllerConfig:
     path = Path(root) / 'config/controller.json'
     data = reader(path)
     try:

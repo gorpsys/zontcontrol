@@ -36,12 +36,13 @@ SIGINT/SIGTERM. IPC нет.
 Production-потребители используют статические реэкспорты zontcontrol.coordination:
 CoordinationRuntime, CoordinatorWorker, CoordinationGate, MetadataPort,
 CoordinationSettings, Clock, BootClock, LeaseTiming, Statistics, JsonlSink,
-ObservationError, observe, error_event, analyze и read_jsonl. Leader/grants/store,
+ObservationError, observe, error_event, analyze и read_jsonl; типы наблюдений —
+Observer, ObservationSink и ObservationValue. Leader/grants/store,
 wire records и алгоритм R1/R2 остаются внутренними деталями пакета.
 
 В control_types определены ControllerError, InvalidArguments,
 CommandOutcomeUnknown, DeviceControlBusy, ControlOwnershipRequired, RateLimited
-и ControlSession, а также общие helpers валидации. controller.contracts
+и ControlSession, а также общие helpers валидации и UUIDFactory = Callable[[], UUID]. controller.contracts
 реэкспортирует те же объекты, без копирования сессий или новых типов ошибок.
 Другие ошибки контроллера наследуются от того же ControllerError.
 
@@ -51,9 +52,21 @@ observation_context остаётся optional hook; close не является 
 update_metadata; ZontAdapter реализует его структурно. CoordinationSettings
 передаёт delta_seconds и timing: LeaseTiming; Clock — now() и
 wait(cancelled, seconds). Runtime получает прежние adapter/config/clock/statistics
-и необязательную worker_factory; пакет не читает конфиги и не открывает транспорт.
+и необязательные worker_factory и uuid_factory; пакет не читает конфиги и не открывает транспорт.
 Точная assembly seam и порядок закрытия — [архитектура, §1](architecture.md#1-состав-и-границы).
 Controller API_VERSION=1 и wire v1 сохранены.
+
+create_application(uuid_factory=...) передаёт один источник UUID в runtime
+координации, локальный исполнитель, менеджер запросов и runtime алгоритмов.
+Тот же аргумент доступен у CoordinationRuntime, GrantCoordinator, ExecutorGate,
+CommandExecutor, AlgorithmRegistry и AlgorithmRuntime для изолированных проверок.
+ControlRequestManager использует свой существующий uuid_factory.
+При отсутствии зависимости остаётся uuid4. Фабрика возвращает UUID, а не строку;
+она должна быть потокобезопасной и выдавать новые ненулевые значения, уникальные
+для участвующих клиентов. Фиксированные последовательности предназначены для
+изолированных офлайн-проверок, а не совместной работы с устройством. DI не меняет
+точки генерации ID и не делает порядок планирования потоков детерминированным.
+Токен срока лидерства сохраняет отдельный token_factory в LeaderElection.
 
 ## Чтение и время
 

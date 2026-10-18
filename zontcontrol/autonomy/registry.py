@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 from threading import Event, Lock, Thread
 from time import monotonic
 
+from ..control_types import UUIDFactory
 from ..config import ConfigurationError, RegistryConfig
 from .contracts import (
     CAPABILITIES, AlgorithmBusy, AlgorithmError, AlgorithmFailed,
@@ -39,7 +40,8 @@ class AlgorithmRegistry:
     """
 
     def __init__(self, config, controller_factory, *, available_capabilities=CAPABILITIES,
-                 clock=monotonic, begin_close_controller=None, close_controller=None):
+                 clock=monotonic, begin_close_controller=None, close_controller=None,
+                 uuid_factory: UUIDFactory | None = None):
         if (not isinstance(config, RegistryConfig) or not callable(controller_factory)
                 or not callable(clock) or not isinstance(available_capabilities, frozenset)
                 or not available_capabilities <= CAPABILITIES
@@ -50,6 +52,7 @@ class AlgorithmRegistry:
         self._controller_factory = controller_factory
         self._capabilities = available_capabilities
         self._clock = clock
+        self._uuid_factory = uuid_factory
         self._begin_close_controller = begin_close_controller
         self._close_controller = close_controller
         self._lock = Lock()
@@ -93,7 +96,8 @@ class AlgorithmRegistry:
                     continue
                 construct = self._factory(slot.spec)
                 slot.runtime = AlgorithmRuntime(replace(slot.spec, factory=construct),
-                                                self._controller_factory, clock=self._clock)
+                                                self._controller_factory, clock=self._clock,
+                                                uuid_factory=self._uuid_factory)
                 try:
                     construct(self._controller_factory())
                 except Exception as error:

@@ -5,13 +5,28 @@ here imports a controller, contacts ZONT, retries a write or asserts reliability
 Whole episodes need explicit observation coverage; polls are only event counts.
 """
 
+from __future__ import annotations
+
 from collections import Counter
+from collections.abc import Callable, Iterable, Iterator
 import json
 import logging
 import math
 from pathlib import Path
 import re
 from threading import Lock
+from typing import Any, Protocol, TextIO, TypeAlias, cast
+
+
+ObservationValue: TypeAlias = str | int | float
+Observation: TypeAlias = dict[str, ObservationValue]
+ObservationSink: TypeAlias = Callable[[Observation], None]
+
+
+class Observer(Protocol):
+    """Best-effort instrumentation dependency, independent of protocol state."""
+
+    def emit(self, event: str, **fields: ObservationValue) -> None: ...
 
 
 _LOG = logging.getLogger(__name__)
@@ -33,16 +48,16 @@ MAX_LINE = 4096
 
 
 class ObservationError(ValueError):
-    def __init__(self, line=None):
+    def __init__(self, line: int | None = None) -> None:
         super().__init__('Invalid orchestration observation' +
                          (f' at line {line}' if line is not None else ''))
 
 
-def _label(value):
+def _label(value: object) -> bool:
     return type(value) is str and _LABEL.fullmatch(value) is not None
 
 
-def _validate(row):
+def _validate(row: Any) -> Observation:
     if (type(row) is not dict or not _BASE <= row.keys()
             or row.keys() - _BASE - _FIELDS
             or type(row['schema']) is not int or row['schema'] != 1
@@ -85,8 +100,9 @@ class Statistics:
     observe() so that even a misconfigured instrumentation callback is isolated.
     """
 
-    def __init__(self, sink, *, protocol_version, profile, source='runtime'):
-        self._base = {'schema': 1, 'event': 'poll', 'protocol_version': protocol_version,
+    def __init__(self, sink: ObservationSink, *, protocol_version: str, profile: str,
+                 source: str = 'runtime') -> None:
+        self._base: Observation = {'schema': 1, 'event': 'poll', 'protocol_version': protocol_version,
                       'profile': profile, 'source': source}
         _validate(self._base)
         if not callable(sink):
@@ -96,11 +112,11 @@ class Statistics:
         self._errors = 0
 
     @property
-    def errors(self):
+    def errors(self) -> int:
         with self._lock:
             return self._errors
 
-    def emit(self, event, **fields):
+    def emit(self, event: str, **fields: ObservationValue) -> None:
         if fields.keys() - _FIELDS:
             raise ObservationError()
         row = _validate({**self._base, 'event': event, **fields})
@@ -112,7 +128,7 @@ class Statistics:
             _LOG.warning('Orchestration statistics sink failed; observation missing')
 
 
-def observe(statistics, event, **fields):
+def observe(statistics: Observer | None, event: str, **fields: ObservationValue) -> None:
     """Best effort DI hook; observation failure cannot affect protocol results."""
     if statistics is not None:
         try:
@@ -121,7 +137,7 @@ def observe(statistics, event, **fields):
             _LOG.warning('Orchestration statistics callback failed; observation missing')
 
 
-def error_event(error):
+def error_event(error: BaseException) -> str:
     """Map safe exception types to categories without serializing any message."""
     from ..control_types import CommandOutcomeUnknown, RateLimited
     if isinstance(error, RateLimited):
@@ -139,19 +155,19 @@ class JsonlSink:
     processes should use separate files. No locking/ownership state is restored.
     """
 
-    def __init__(self, stream):
+    def __init__(self, stream: TextIO) -> None:
         self._stream = stream
         self._lock = Lock()
 
     @classmethod
-    def in_reports(cls, filename, *, directory='reports'):
+    def in_reports(cls, filename: str, *, directory: str | Path = 'reports') -> JsonlSink:
         if not _label(filename) or not filename.endswith('.jsonl'):
             raise ObservationError()
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
         return cls((directory / filename).open('a', encoding='utf-8'))
 
-    def __call__(self, row):
+    def __call__(self, row: Observation) -> None:
         _validate(row)
         line = json.dumps(row, ensure_ascii=True, allow_nan=False, separators=(',', ':')) + '\n'
         if len(line) > MAX_LINE:
@@ -160,12 +176,12 @@ class JsonlSink:
             self._stream.write(line)
             self._stream.flush()
 
-    def close(self):
+    def close(self) -> None:
         with self._lock:
             self._stream.close()
 
 
-def read_jsonl(stream):
+def read_jsonl(stream: TextIO) -> Iterator[Observation]:
     """Reject bad/truncated/oversize lines with a safe line number, never data."""
     line_number = 0
     while True:
@@ -182,7 +198,7 @@ def read_jsonl(stream):
             raise ObservationError(line_number) from None
 
 
-def analyze(rows):
+def analyze(rows: Iterable[Observation]) -> dict[str, object]:
     """Group protocol/profile/source; count episodes, never infer them from polls.
 
     Completeness must be explicitly asserted by the observer of the resource.
@@ -191,10 +207,11 @@ def analyze(rows):
     unknown. A detected overlap remains a conflict even with partial coverage.
     No reliability percentage or confidence bound is inferred from simulations.
     """
-    groups = {}
+    # Group accumulators contain counters, episode lists and metric samples.
+    groups: dict[tuple[str, ...], dict[str, Any]] = {}
     for row in rows:
         _validate(row)
-        key = tuple(row[field] for field in ('protocol_version', 'profile', 'source'))
+        key = tuple(cast(str, row[field]) for field in ('protocol_version', 'profile', 'source'))
         group = groups.setdefault(key, {'events': Counter(), 'episodes': {},
                                         'wait_s': [], 'rtt_s': []})
         group['events'][row['event']] += 1
@@ -226,7 +243,7 @@ def analyze(rows):
             else:
                 outcome = ends[0]['outcome']
             counts[outcome] += 1
-        report = dict(zip(('protocol_version', 'profile', 'source'), key))
+        report: dict[str, object] = dict(zip(('protocol_version', 'profile', 'source'), key))
         report.update(events=dict(sorted(group['events'].items())), episodes=counts)
         for metric in ('wait_s', 'rtt_s'):
             values = group[metric]
