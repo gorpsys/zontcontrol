@@ -69,12 +69,14 @@ class GrantCoordinator:
         of a final read of exactly the same full value. No remote clocks enter it.
         """
         def coordinate(record: R1Record) -> GrantRecord | None:
+            # LeaderElection.coordinate confirmed this immutable R1 projection.
+            leader = cast(LeaderRecord, record.leader)
             sent = self._clock.now()
             current = self._store.read_r2()
             received = self._clock.now()
             self._observe('poll')
-            if current is not None and current.leader_token != cast(LeaderRecord, record.leader).token:
-                identity = current.grant_id, current.revision, cast(LeaderRecord, record.leader).token
+            if current is not None and current.leader_token != leader.token:
+                identity = current.grant_id, current.revision, leader.token
                 if identity != self._changed_grant:
                     self._observe('leader_changed_active_grant', current)
                     self._changed_grant = identity
@@ -93,10 +95,10 @@ class GrantCoordinator:
                 desired = None
             elif (accepting and current is not None and request is not None
                     and request.state == "heartbeat" and self._matches(request, current)
-                    and current.leader_token == cast(LeaderRecord, record.leader).token
+                    and current.leader_token == leader.token
                     and request.nonce != current.nonce and not expired):
                 desired = GrantRecord(current.owner, current.request_id, current.grant_id,
-                                      cast(LeaderRecord, record.leader).token, current.revision + 1,
+                                      leader.token, current.revision + 1,
                                       request.lease_seconds * clock_factor(request.lease_seconds),
                                       clock_rho(request.lease_seconds), request.nonce)
             elif current is None or expired:
@@ -106,7 +108,7 @@ class GrantCoordinator:
                     if current is None or (request.owner, request.request_id) != (
                             current.owner, current.request_id):
                         desired = GrantRecord(request.owner, request.request_id, str(self._uuid_factory()),
-                                              cast(LeaderRecord, record.leader).token, 0,
+                                              leader.token, 0,
                                               request.lease_seconds * clock_factor(request.lease_seconds),
                                               clock_rho(request.lease_seconds), request.nonce)
             if desired != current:

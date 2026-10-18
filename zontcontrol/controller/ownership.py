@@ -301,7 +301,9 @@ class CommandExecutor:
         # Keep the closing reservation while completion is being published.
         # An unconfirmed release leaves it held, rather than risking an overtake.
         with self._lock:
-            if self._devices.get(cast(ControlSession, held.session).device_id) is not held:
+            # A committed reservation keeps this session through completion.
+            session = cast(ControlSession, held.session)
+            if self._devices.get(session.device_id) is not held:
                 # A previous failed attempt expired and was discarded.
                 # Never publish/delete for its successor.
                 return
@@ -317,7 +319,7 @@ class CommandExecutor:
             if report_cleanup:
                 self._observe(held, 'cleanup', phase='session', outcome=held.outcome,
                               coverage='partial')
-            self._gate.release(held.binding._owner, cast(ControlSession, held.session))
+            self._gate.release(held.binding._owner, session)
         except BaseException:
             with self._lock:
                 held.releasing = False
@@ -328,8 +330,8 @@ class CommandExecutor:
                 self._idle.notify_all()
             raise
         with self._lock:
-            if self._devices.get(cast(ControlSession, held.session).device_id) is held:
-                del self._devices[cast(ControlSession, held.session).device_id]
+            if self._devices.get(session.device_id) is held:
+                del self._devices[session.device_id]
             self._idle.notify_all()
 
     def _release(self, binding: _ControlBinding, session: ControlSession) -> None:
