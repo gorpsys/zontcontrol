@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import unittest
 from unittest.mock import Mock, patch
-from uuid import uuid4
+from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.algorithms.boiler_cli import BoilerCLI, Terminal as RealTerminal, load_config, UPDATE_SECONDS
 from zontcontrol.autonomy.catalog import BUILTIN_SPECS
@@ -37,8 +37,10 @@ SETTINGS = dict(devices=[42], controls=[dict(device_id=42, kind=CONTROL.kind,
 
 
 class Terminal:
-    def __init__(self, identity=None):
-        self.identity = identity or uuid4()
+    def __init__(self, identity=None, *, uuid_factory=None):
+        self.uuid_generator = (uuid_generator() if uuid_factory is None
+                               else uuid_factory)
+        self.identity = identity or self.uuid_generator()
         self.active = True
         self.lines = Queue()
         self.output = []
@@ -60,8 +62,9 @@ class Terminal:
 
 class BoilerCLITests(unittest.TestCase):
     def setUp(self):
-        self.terminal = Terminal()
-        self.context = RunContext('boiler_cli', uuid4(), uuid4(), Event(), None)
+        self.uuid_generator = uuid_generator()
+        self.terminal = Terminal(uuid_factory=self.uuid_generator)
+        self.context = RunContext('boiler_cli', self.uuid_generator(), self.uuid_generator(), Event(), None)
         self.controller = Mock()
         self.controller.list_devices.return_value = (DeviceInfo(42, 'House', 'SMART', True),)
         self.descriptor = ValueDescriptor(KEY, 'Air', '°C', 'virtual', 'air', ValueType.NUMBER,
@@ -74,8 +77,8 @@ class BoilerCLITests(unittest.TestCase):
         self.controller.read_current.return_value = self.snapshot
         self.controller.prepare_command.side_effect = lambda device, key, action, args: (
             ValidatedCommand(key, action, tuple(args.items())))
-        self.session = ControlSession(42, uuid4(), 200)
-        self.granted = ControlRequestResult(uuid4(), 42, ControlRequestState.GRANTED,
+        self.session = ControlSession(42, self.uuid_generator(), 200)
+        self.granted = ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.GRANTED,
                                             session=self.session)
         self.controller.acquire_control.return_value = self.granted
         self.reader = Mock(side_effect=lambda _: json.loads(json.dumps(SETTINGS)))
@@ -173,7 +176,7 @@ class BoilerCLITests(unittest.TestCase):
             with self.subTest(reason=reason):
                 self.controller.reset_mock()
                 self.controller.acquire_control.return_value = ControlRequestResult(
-                    uuid4(), 42, ControlRequestState.DENIED, reason=reason,
+                    self.uuid_generator(), 42, ControlRequestState.DENIED, reason=reason,
                     error_code=ControlRequestErrorCode.AUTHENTICATION_ERROR
                     if reason is ControlRequestReason.CONTROLLER_ERROR else None)
                 self.command('--execute')
@@ -189,7 +192,7 @@ class BoilerCLITests(unittest.TestCase):
         def acquire(device, *, lease_seconds, timeout, poll_seconds, cancelled):
             entered.set()
             self.assertTrue(cancelled.wait(2))
-            return ControlRequestResult(uuid4(), device, ControlRequestState.DENIED,
+            return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.DENIED,
                                         reason=ControlRequestReason.CANCELLED)
         self.controller.acquire_control.side_effect = acquire
         self.terminal.lines.put('command 42 circuit 8 target-temp \'{"target_temp":20}\' --execute')
@@ -203,7 +206,7 @@ class BoilerCLITests(unittest.TestCase):
         self.controller.release_control.assert_not_called()
 
     def test_controller_error_uses_new_safe_exception_for_each_attempt(self):
-        result = ControlRequestResult(uuid4(), 42, ControlRequestState.DENIED,
+        result = ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.DENIED,
             reason=ControlRequestReason.CONTROLLER_ERROR,
             error_code=ControlRequestErrorCode.DEVICE_UNAVAILABLE)
         self.controller.acquire_control.return_value = result
@@ -227,14 +230,16 @@ class BoilerCLITests(unittest.TestCase):
         spec = next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_cli')
         self.assertEqual(spec.modes, frozenset({Mode.CONTINUOUS}))
         self.assertTrue(RegistryConfig(frozenset(), False, {}).should_autostart(spec))
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller)
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller,
+        uuid_factory=self.uuid_generator)
         self.addCleanup(lambda: registry.close(wait_timeout=1))
         report = registry.register_all((replace(spec, factory=lambda c: self.module()),))
         self.assertIs(report[0].state, AlgorithmState.FAILED)
         self.controller.execute_command.assert_not_called()
         self.reader.reset_mock()
         disabled = AlgorithmRegistry(RegistryConfig(frozenset({'boiler_cli'}), False, {}),
-                                     lambda: self.controller)
+                                     lambda: self.controller,
+                                     uuid_factory=self.uuid_generator)
         self.addCleanup(lambda: disabled.close(wait_timeout=1))
         report = disabled.register_all((replace(spec, factory=lambda c: self.module()),))
         self.assertTrue(report[0].disabled)
@@ -247,7 +252,8 @@ class BoilerCLITests(unittest.TestCase):
             module = self.module()
             made.append(module)
             return module
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller)
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller,
+        uuid_factory=self.uuid_generator)
         self.addCleanup(lambda: registry.close(wait_timeout=1))
         registry.register_all((replace(spec, factory=factory),))
         self.assertTrue(self.terminal.written.wait(1))
@@ -284,7 +290,8 @@ class BoilerCLITests(unittest.TestCase):
         self.controller.read_current.side_effect = slow
         spec = replace(next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_cli'),
                        factory=lambda c: self.module())
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller)
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller,
+        uuid_factory=self.uuid_generator)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         self.addCleanup(release.set)
         registry.register_all((spec,))
@@ -329,7 +336,7 @@ class BoilerCLITests(unittest.TestCase):
             with self.subTest(error=error):
                 self.controller.reset_mock()
                 self.controller.acquire_control.return_value = (
-                    ControlRequestResult(uuid4(), 42, ControlRequestState.DENIED,
+                    ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.DENIED,
                                          reason=ControlRequestReason.TIMEOUT)
                     if isinstance(error, DeviceControlBusy) else self.granted)
                 self.controller.execute_command.side_effect = error

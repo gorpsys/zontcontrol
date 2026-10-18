@@ -4,7 +4,8 @@ from dataclasses import replace
 from threading import Event, Thread
 import unittest
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID
+from tests.fakes.uuid import uuid_generator
 
 from tests.fakes.clock import FakeClock
 from tests.fakes.zont import FakeMetadataAdapter, FakeZontServer
@@ -23,6 +24,7 @@ from zontcontrol.coordination.store import ExecutorStore, LeaderStore
 
 class GrantTests(unittest.TestCase):
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         self.clock = FakeClock(start=100)
         self.server = FakeZontServer({42: {'name': PREFIX, 'notes': None},
                                       43: {'name': PREFIX, 'notes': None}}, clock=self.clock)
@@ -30,8 +32,9 @@ class GrantTests(unittest.TestCase):
         self.store = self.make_store(LeaderStore)
         self.leader = LeaderElection(self.store, OWNER, LeaseTiming(1000, 1), clock=self.clock)
         self.assertTrue(self.leader.try_acquire())
-        self.coordinator = GrantCoordinator(self.store, self.leader, clock=self.clock)
-        self.owner = uuid4()
+        self.coordinator = GrantCoordinator(self.store, self.leader, clock=self.clock,
+            uuid_factory=self.uuid_generator)
+        self.owner = self.uuid_generator()
         self.gate = self.make_gate()
 
     def make_store(self, cls, adapter=None, device_id=42):
@@ -40,7 +43,8 @@ class GrantTests(unittest.TestCase):
 
     def make_gate(self, clock=None, adapter=None):
         return ExecutorGate({42: self.make_store(ExecutorStore, adapter)},
-                            clock=clock or self.clock, delta=1)
+                            clock=clock or self.clock, delta=1,
+                            uuid_factory=self.uuid_generator)
 
     def pending(self, gate=None, owner=None, seconds=60):
         with self.assertRaises(DeviceControlBusy):
@@ -61,10 +65,42 @@ class GrantTests(unittest.TestCase):
 
     def start_request(self, **options):
         self.request_start = self.clock.now()
-        request_id = uuid4()
+        request_id = self.uuid_generator()
         with self.assertRaises(DeviceControlBusy):
             self.request_attempt(request_id, **options)
         return request_id
+
+    def test_injected_uuid_sequence_covers_request_grant_session_and_renewal(self):
+        self.assertEqual(self.owner, UUID(int=1))
+        self.pending()
+        request = self.store.read_r1().request
+        self.assertEqual((request.request_id, request.nonce),
+                         (str(UUID(int=2)), str(UUID(int=3))))
+        self.pending()  # Polling the same request must not generate new IDs.
+        self.assertEqual(self.uuid_generator.call_count, 3)
+
+        grant = self.coordinator.step()
+        self.assertEqual(grant.grant_id, str(UUID(int=4)))
+        session = self.gate.try_acquire(self.owner, 42, lease_seconds=60)
+        self.assertEqual(session.session_id, UUID(int=5))
+        self.assertIs(self.gate.try_acquire(self.owner, 42, lease_seconds=60), session)
+        self.assertEqual(self.uuid_generator.call_count, 5)
+
+        with self.assertRaises(DeviceControlBusy):
+            self.gate.renew(self.owner, session, lease_seconds=60)
+        self.assertEqual(self.store.read_r1().request.nonce, str(UUID(int=6)))
+        with self.assertRaises(DeviceControlBusy):
+            self.gate.renew(self.owner, session, lease_seconds=60)
+        self.assertEqual(self.uuid_generator.call_count, 6)
+        renewed_grant = self.coordinator.step()
+        self.assertEqual(renewed_grant.grant_id, grant.grant_id)
+        renewed = self.gate.renew(self.owner, session, lease_seconds=60)
+        self.assertEqual(renewed.session_id, UUID(int=7))
+
+        self.gate.release(self.owner, renewed)
+        self.coordinator.step()
+        self.assertIsNone(self.store.read_r2())
+        self.assertEqual(self.uuid_generator.call_count, 7)
 
     def test_request_identity_deadlines_survive_lost_request_and_retries(self):
         request_id = self.start_request()
@@ -88,7 +124,7 @@ class GrantTests(unittest.TestCase):
 
     def test_uncertain_request_only_polls_original_identity(self):
         self.request_start = self.clock.now()
-        request_id = uuid4()
+        request_id = self.uuid_generator()
         self.adapter.write_mode = 'lose_response'
         with self.assertRaises(CommandOutcomeUnknown):
             self.request_attempt(request_id)
@@ -169,7 +205,7 @@ class GrantTests(unittest.TestCase):
 
     def test_started_publication_finishes_late_without_session(self):
         self.request_start = self.clock.now()
-        request_id = uuid4()
+        request_id = self.uuid_generator()
         entered, resume = Event(), Event()
         store = self.gate._stores[42]
         publish = store.publish_request
@@ -205,7 +241,7 @@ class GrantTests(unittest.TestCase):
         self.request_start = self.clock.now()
         before = len(self.adapter.writes)
         with self.assertRaises(DeviceControlBusy):
-            self.request_attempt(uuid4(), lease_seconds=5,
+            self.request_attempt(self.uuid_generator(), lease_seconds=5,
                                  local_deadline=self.clock.now() + 5,
                                  attempt_deadline=self.clock.now() + 5)
         self.assertIs(self.gate._held[self.owner, 42].session, old)
@@ -226,7 +262,7 @@ class GrantTests(unittest.TestCase):
 
     def test_queue_delay_and_late_ack_preserve_original_local_lease(self):
         self.request_start = self.clock.now()
-        request_id = uuid4()
+        request_id = self.uuid_generator()
         self.clock.advance(10)  # the public lease also covers time before first send
         with self.assertRaises(DeviceControlBusy):
             self.request_attempt(request_id)
@@ -238,7 +274,7 @@ class GrantTests(unittest.TestCase):
         self.assertLess(session.expires_at, sent + 60)
 
     def test_interrupted_ack_leaves_no_lower_or_executor_session(self):
-        executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        executor = CommandExecutor(gate=self.gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
         binding = executor.bind()
         with self.assertRaises(DeviceControlBusy):
             binding.try_acquire_control(42, lease_seconds=60)
@@ -259,7 +295,7 @@ class GrantTests(unittest.TestCase):
         self.assertEqual(len(self.adapter.writes), before)
 
     def test_gate_and_executor_issue_exact_same_session(self):
-        executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        executor = CommandExecutor(gate=self.gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
         binding = executor.bind()
         with self.assertRaises(DeviceControlBusy):
             binding.try_acquire_control(42, lease_seconds=60)
@@ -274,15 +310,15 @@ class GrantTests(unittest.TestCase):
         old = self.store.read_r1().request
         self.coordinator.step()
         self.request_start = self.clock.now()
-        request_id = uuid4()
+        request_id = self.uuid_generator()
         with self.assertRaises(DeviceControlBusy):
             self.request_attempt(request_id)
         pending = self.gate._pending[self.owner, 42]
         self.assertNotEqual(pending.request.request_id, old.request_id)
         self.assertNotEqual(pending.request.nonce, old.nonce)
         before = len(self.adapter.writes)
-        self.gate.abandon_request(uuid4(), 42, request_id)
-        self.gate.abandon_request(self.owner, 42, uuid4())
+        self.gate.abandon_request(self.uuid_generator(), 42, request_id)
+        self.gate.abandon_request(self.owner, 42, self.uuid_generator())
         self.assertIs(self.gate._pending[self.owner, 42], pending)
         with self.assertRaises(DeviceControlBusy):
             self.request_attempt(request_id)
@@ -343,23 +379,23 @@ class GrantTests(unittest.TestCase):
 
     def test_old_owner_records_are_pruned_without_losing_active_or_uncertain_release(self):
         session = self.acquire()
-        self.pending(owner=uuid4(), seconds=10)
+        self.pending(owner=self.uuid_generator(), seconds=10)
         self.assertIn((self.owner, 42), self.gate._held)
         self.adapter.write_mode = 'lose_response'
         with self.assertRaises(CommandOutcomeUnknown):
             self.gate.release(self.owner, session)
         self.adapter.write_mode = 'apply'
-        abandoned = uuid4()
+        abandoned = self.uuid_generator()
         self.pending(owner=abandoned, seconds=10)
         self.assertIn((self.owner, 42), self.gate._held)
         self.clock.advance(61)
-        self.pending(owner=uuid4())
+        self.pending(owner=self.uuid_generator())
         self.assertNotIn((self.owner, 42), self.gate._held)
         self.assertNotIn((abandoned, 42), self.gate._pending)
 
     def test_independent_applications_busy_explicit_pending_retry_no_queue(self):
         session = self.acquire()
-        other, owner = self.make_gate(), uuid4()
+        other, owner = self.make_gate(), self.uuid_generator()
         self.pending(other, owner)
         waiting = self.store.read_r1().request
         self.coordinator.step()
@@ -394,16 +430,17 @@ class GrantTests(unittest.TestCase):
             self.gate.validate(self.owner, previous)
 
     def test_unknown_nonce_or_wrong_owner_request_grant_token_revision_never_authorizes(self):
-        for changes in ({'owner': str(uuid4())}, {'request_id': str(uuid4())},
-                        {'grant_id': str(uuid4())}, {'leader_token': 'd' * 32},
-                        {'nonce': str(uuid4())}, {'revision': 2}):
+        for field in ('owner', 'request_id', 'grant_id', 'leader_token', 'nonce', 'revision'):
             self.setUp()
             session = self.acquire()
+            value = ('d' * 32 if field == 'leader_token' else
+                     2 if field == 'revision' else str(self.uuid_generator()))
+            changes = {field: value}
             self.store.write_r2(replace(self.store.read_r2(), **changes))
             with self.subTest(changes=changes), self.assertRaises(ControlOwnershipRequired):
                 self.gate.validate(self.owner, session)
         with self.assertRaises(ControlOwnershipRequired):
-            self.gate.validate(uuid4(), session)
+            self.gate.validate(self.uuid_generator(), session)
 
     def test_missing_heartbeat_does_not_revoke_or_replace_grant(self):
         session = self.acquire()
@@ -419,7 +456,7 @@ class GrantTests(unittest.TestCase):
         self.clock.advance(60)
         self.pending()
         restarted = self.make_gate()
-        self.pending(restarted, uuid4())
+        self.pending(restarted, self.uuid_generator())
         self.assertEqual(self.store.read_r2().owner, str(self.owner))
 
     def test_all_drift_boundaries_use_original_period_not_scaled_lease(self):
@@ -442,9 +479,10 @@ class GrantTests(unittest.TestCase):
                 observer = FakeClock(start=20, rate=1 - sign * rho)
                 gate = self.make_gate(holder)
                 session = self.acquire(gate, seconds=period)
-                coordinator = GrantCoordinator(self.store, self.leader, clock=observer)
+                coordinator = GrantCoordinator(self.store, self.leader, clock=observer,
+                    uuid_factory=self.uuid_generator)
                 coordinator.step()
-                other, owner = self.make_gate(), uuid4()
+                other, owner = self.make_gate(), self.uuid_generator()
                 self.pending(other, owner, seconds=900)
                 elapsed = period * clock_factor(period) / (1 - sign * rho)
                 holder.advance(elapsed)
@@ -462,7 +500,7 @@ class GrantTests(unittest.TestCase):
         self.coordinator.step()  # begin observation of the whole grant
         first = self.clock.now()
         lease = self.store.read_r2().lease_s
-        other, owner = self.make_gate(), uuid4()
+        other, owner = self.make_gate(), self.uuid_generator()
         self.pending(other, owner, seconds=30)
         self.clock.advance(lease - .05)
         read_r2 = self.store.read_r2
@@ -488,8 +526,8 @@ class GrantTests(unittest.TestCase):
         self.gate.release(self.owner, session)
         finished = self.store.read_r1().request
         granted = self.store.read_r2()
-        for changes in ({'grant_id': str(uuid4())}, {'request_id': str(uuid4())},
-                        {'grant_revision': 123}, {'nonce': str(uuid4())}):
+        for changes in ({'grant_id': str(self.uuid_generator())}, {'request_id': str(self.uuid_generator())},
+                        {'grant_revision': 123}, {'nonce': str(self.uuid_generator())}):
             self.store.write_r1(R1Record(self.leader.record, replace(finished, **changes)))
             self.coordinator.step()
             self.assertEqual(self.store.read_r2(), granted)
@@ -501,10 +539,10 @@ class GrantTests(unittest.TestCase):
         session = self.acquire()
         granted = self.store.read_r2()
         self.leader.release()
-        other = LeaderElection(self.store, str(uuid4()), LeaseTiming(1000, 1), clock=self.clock)
+        other = LeaderElection(self.store, str(self.uuid_generator()), LeaseTiming(1000, 1), clock=self.clock)
         self.assertTrue(other.try_acquire())
-        new = GrantCoordinator(self.store, other, clock=self.clock)
-        self.pending(self.make_gate(), uuid4())
+        new = GrantCoordinator(self.store, other, clock=self.clock, uuid_factory=self.uuid_generator)
+        self.pending(self.make_gate(), self.uuid_generator())
         new.step()
         self.assertEqual(self.store.read_r2(), granted)
         with self.assertRaises(ControlOwnershipRequired):
@@ -563,7 +601,7 @@ class GrantTests(unittest.TestCase):
         self.gate.release(self.owner, session)
         self.assertEqual(len(self.adapter.writes), before)  # fresh R1 confirms finished
         self.coordinator.step()
-        other, owner = self.make_gate(), uuid4()
+        other, owner = self.make_gate(), self.uuid_generator()
         other_session = self.acquire(other, owner)
         new_request = self.store.read_r1().request
         new_grant = self.store.read_r2()
@@ -582,7 +620,7 @@ class GrantTests(unittest.TestCase):
         delayed = self.server.requests[-1]
         self.adapter.write_mode = 'apply'
         self.coordinator.step()
-        other, owner = self.make_gate(), uuid4()
+        other, owner = self.make_gate(), self.uuid_generator()
         self.pending(other, owner)
         self.clock.advance(self.store.read_r2().lease_s)
         self.coordinator.step()
@@ -617,13 +655,14 @@ class GrantTests(unittest.TestCase):
             self.gate.renew(self.owner, session, lease_seconds=10)
 
     def test_failed_off_after_grant_change_has_no_bypass_and_release_is_local_only(self):
-        executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        executor = CommandExecutor(gate=self.gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
         binding = executor.bind()
         with self.assertRaises(DeviceControlBusy):
             binding.try_acquire_control(42, lease_seconds=60)
         self.coordinator.step()
         session = binding.try_acquire_control(42, lease_seconds=60)
-        changed = replace(self.store.read_r2(), grant_id=str(uuid4()), owner=str(uuid4()))
+        changed = replace(self.store.read_r2(), grant_id=str(self.uuid_generator()),
+                          owner=str(self.uuid_generator()))
         self.store.write_r2(changed)
         command = type('Command', (), {'device_id': 42})()
         sent = []
@@ -660,7 +699,7 @@ class GrantTests(unittest.TestCase):
             self.gate.validate(self.owner, session)
         # Full coordinator window includes every metadata read and write.
         self.adapter.read_delay = .3
-        other, owner = self.make_gate(), uuid4()
+        other, owner = self.make_gate(), self.uuid_generator()
         self.pending(other, owner)
         self.clock.advance(self.store.read_r2().lease_s)
         self.coordinator.step()  # first unchanged response begins observation
@@ -669,7 +708,7 @@ class GrantTests(unittest.TestCase):
             self.coordinator.step()
 
     def test_executor_release_unknown_can_be_explicitly_retried_without_overtake(self):
-        executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        executor = CommandExecutor(gate=self.gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
         binding, other = executor.bind(), executor.bind()
         with self.assertRaises(DeviceControlBusy):
             binding.try_acquire_control(42, lease_seconds=60)
@@ -709,7 +748,7 @@ class GrantTests(unittest.TestCase):
     def test_admission_just_before_at_after_deadline_and_no_finally_bypass(self):
         for offset, accepted in ((-.001, True), (0, False), (.001, False)):
             self.setUp()
-            executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+            executor = CommandExecutor(gate=self.gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
             binding = executor.bind()
             with self.assertRaises(DeviceControlBusy):
                 binding.try_acquire_control(42, lease_seconds=10)

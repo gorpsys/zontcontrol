@@ -6,7 +6,7 @@ import unittest
 from queue import Queue
 from dataclasses import replace
 from unittest.mock import Mock
-from uuid import uuid4
+from tests.fakes.uuid import uuid_generator
 
 from tests.fakes.clock import FakeClock
 from tests.test_inventory import inventory_device
@@ -23,7 +23,9 @@ from zontcontrol.coordination.statistics import Statistics
 class LocalTestGate:
     """Permission for offline tests only; real applications must check R1/R2."""
 
-    def __init__(self, clock):
+    def __init__(self, clock, *, uuid_factory=None):
+        self.uuid_generator = (uuid_generator() if uuid_factory is None
+                               else uuid_factory)
         self.clock = clock
         self.allowed = True
         self.sessions = {}
@@ -36,7 +38,7 @@ class LocalTestGate:
         expires_at = self.clock.now() + lease_seconds
         if local_deadline is not None:
             expires_at = min(expires_at, local_deadline)
-        session = ControlSession(device_id, uuid4(), expires_at)
+        session = ControlSession(device_id, self.uuid_generator(), expires_at)
         self.sessions[owner, session.session_id] = session
         return session
 
@@ -54,14 +56,16 @@ class LocalTestGate:
 
 class OwnershipFixture:
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         self.clock = FakeClock(start=100)
-        self.gate = LocalTestGate(self.clock)
+        self.gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
         self.adapter = Mock()
         self.raw = inventory_device()
         self.adapter.devices.side_effect = lambda device_id=None: [
             copy.deepcopy({**self.raw, 'id': device_id or 42})]
         self.adapter.full_device.return_value = {'id': 42, 'io': {}}
-        self.executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        self.executor = CommandExecutor(gate=self.gate, clock=self.clock.now,
+            uuid_factory=self.uuid_generator)
         self.service = ControllerService(self.adapter, executor=self.executor,
                                          clock=self.clock.wall_now)
         self.owner = self.service.for_consumer()
@@ -378,7 +382,7 @@ class OwnershipTests(OwnershipFixture, unittest.TestCase):
         with self.assertRaises(ControlOwnershipRequired):
             service.for_consumer()
         with self.assertRaises(TypeError):
-            CommandExecutor(clock=self.clock.now)
+            CommandExecutor(clock=self.clock.now, uuid_factory=self.uuid_generator)
         self.adapter.send_command.assert_not_called()
 
     def test_invalid_lease_and_previews_rejected_without_gate_or_send(self):

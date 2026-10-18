@@ -3,7 +3,8 @@
 import unittest
 from threading import Event, Thread
 from unittest.mock import Mock, patch
-from uuid import uuid4
+from uuid import UUID
+from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.application import create_application, create_read_controller
 from zontcontrol.autonomy.contracts import AlgorithmResult, AlgorithmSpec, Mode, ResultStatus
@@ -28,7 +29,11 @@ def settings(disabled=()):
 
 
 class ApplicationTests(unittest.TestCase):
+    def setUp(self):
+        self.uuid_generator = uuid_generator()
+
     def build(self, *, catalog=(), config=None, **kwargs):
+        kwargs.setdefault('uuid_factory', self.uuid_generator)
         data = settings() if config is None else config
         if not catalog:
             data['config/registry.json']['once_timeouts'] = {}
@@ -36,14 +41,53 @@ class ApplicationTests(unittest.TestCase):
             reader=lambda path: data[str(path)], catalog=catalog,
             statistics_sink=lambda row: None, **kwargs)
 
+    def test_uuid_generator_reaches_algorithm_bindings_and_control_requests(self):
+        contexts, owners = [], []
+
+        class Sample:
+            def __init__(self, controller):
+                owners.append(controller._control._owner)
+
+            def run_once(self, context):
+                contexts.append(context)
+                return AlgorithmResult(ResultStatus.SUCCESS)
+
+        spec = AlgorithmSpec('sample', 'Offline UUID propagation', frozenset({Mode.ONCE}), Sample)
+        transport = Mock()
+        app = self.build(catalog=(spec,), transport_factory=lambda **kwargs: transport)
+        self.addCleanup(app.close)
+        self.assertEqual(owners, [UUID(int=1)])
+        consumer = app.controller()
+        self.assertEqual(consumer._control._owner, UUID(int=2))
+        app.run_once('sample')
+        context, = contexts
+        self.assertEqual((context.instance_id, context.run_id), (UUID(int=3), UUID(int=4)))
+        self.assertEqual(owners, [UUID(int=1), UUID(int=5)])
+
+        session = ControlSession(42, UUID(int=100), consumer._control._executor._clock() + 60)
+        with patch.object(app._coordination, 'try_acquire', return_value=session) as acquire, \
+                patch.object(app._coordination, 'observation_context', return_value={}), \
+                patch.object(app._coordination, 'release'):
+            result = consumer.acquire_control(42, lease_seconds=60, timeout=5)
+            self.assertIs(result.state, ControlRequestState.GRANTED)
+            self.assertEqual(result.request_id, UUID(int=6))
+            self.assertIs(result.session, session)
+            self.assertEqual(acquire.call_args.args, (UUID(int=2), 42))
+            self.assertEqual(acquire.call_args.kwargs['request_id'], UUID(int=6))
+            consumer.release_control(session)
+        self.assertEqual(self.uuid_generator.call_count, 6)
+        transport.request.assert_not_called()
+
     def test_config_errors_before_transport_and_no_token_diagnostics(self):
         with patch('zontcontrol.application.HttpTransport') as transport:
             with self.assertRaises(ConfigurationError):
-                create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=lambda p: {})
+                create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=lambda p: {},
+                uuid_factory=self.uuid_generator)
             transport.assert_not_called()
         for value in (None, '', '   '):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'ZONT_TOKEN') as caught:
-                create_application(environ={} if value is None else {'ZONT_TOKEN': value})
+                create_application(environ={} if value is None else {'ZONT_TOKEN': value},
+                uuid_factory=self.uuid_generator)
             self.assertIn('zontcontrol.get_token', str(caught.exception))
 
     def test_unknown_catalog_id_and_bad_statistics_profile_fail_before_transport(self):
@@ -57,7 +101,8 @@ class ApplicationTests(unittest.TestCase):
             with self.subTest(kind=kind), patch('zontcontrol.application.HttpTransport') as transport:
                 with self.assertRaises(ConfigurationError):
                     create_application(environ={'ZONT_TOKEN': 'fake-secret'}, catalog=(),
-                        reader=lambda path: data[str(path)])
+                        reader=lambda path: data[str(path)],
+                        uuid_factory=self.uuid_generator)
                 transport.assert_not_called()
 
     def test_disabled_builtins_read_no_module_files_and_perform_no_requests(self):
@@ -71,7 +116,8 @@ class ApplicationTests(unittest.TestCase):
                 patch('zontcontrol.algorithms.boiler_reset.read_json') as reset_config, \
                 patch('zontcontrol.application.HttpTransport') as transport:
             with create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=read,
-                                    statistics_sink=lambda row: None) as app:
+                                    statistics_sink=lambda row: None,
+                                    uuid_factory=self.uuid_generator) as app:
                 self.assertEqual(app.list_algorithms(), ())
                 self.assertEqual(app.run_all_once(), {})
             cli_config.assert_not_called()
@@ -87,7 +133,8 @@ class ApplicationTests(unittest.TestCase):
                 patch('zontcontrol.algorithms.boiler_cli.Terminal.available', return_value=False), \
                 patch('zontcontrol.application.HttpTransport') as transport:
             with create_application(environ={'ZONT_TOKEN': 'fake-secret'},
-                    reader=lambda path: data[str(path)], statistics_sink=lambda row: None) as app:
+                    reader=lambda path: data[str(path)], statistics_sink=lambda row: None,
+                    uuid_factory=self.uuid_generator) as app:
                 row, = app.list_algorithms()
                 self.assertIs(row.state, AlgorithmState.FAILED)
                 self.assertNotIn('fake-secret', str(row.error))
@@ -150,7 +197,8 @@ class ApplicationTests(unittest.TestCase):
         with patch('zontcontrol.application.BootClock', side_effect=RuntimeError('clock unavailable')):
             with self.assertRaises(RuntimeError):
                 create_application(environ={'ZONT_TOKEN': 'fake-secret'}, catalog=(),
-                    reader=lambda path: data[str(path)], transport_factory=lambda **kw: transport)
+                    reader=lambda path: data[str(path)], transport_factory=lambda **kw: transport,
+                    uuid_factory=self.uuid_generator)
         transport.close.assert_called_once_with()
         transport.request.assert_not_called()
 
@@ -206,7 +254,7 @@ class ApplicationTests(unittest.TestCase):
         app = self.build(transport_factory=lambda **kw: transport)
         self.addCleanup(app.close)
         consumer = app.controller()
-        session = ControlSession(42, uuid4(), consumer._control._executor._clock() + 60)
+        session = ControlSession(42, self.uuid_generator(), consumer._control._executor._clock() + 60)
         with patch.object(app._coordination, 'try_acquire', return_value=session) as gate, \
                 patch.object(app._coordination, 'observation_context', return_value={}), \
                 patch.object(app._coordination, 'release') as release:

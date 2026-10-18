@@ -5,7 +5,7 @@ import threading
 import unittest
 import weakref
 from unittest.mock import patch
-from uuid import uuid4
+from tests.fakes.uuid import uuid_generator
 
 from tests.fakes.clock import FakeClock
 from zontcontrol.controller.contracts import (
@@ -19,7 +19,9 @@ from zontcontrol.controller.service import ControllerService
 
 
 class RequestGate:
-    def __init__(self, clock):
+    def __init__(self, clock, *, uuid_factory=None):
+        self.uuid_generator = (uuid_generator() if uuid_factory is None
+                               else uuid_factory)
         self.clock = clock
         self.calls = []
         self.releases = []
@@ -35,7 +37,7 @@ class RequestGate:
             self.action(device_id)
         deadline = min(self.clock.now() + lease_seconds,
                        kwargs.get('local_deadline', float('inf')))
-        return ControlSession(device_id, uuid4(), deadline)
+        return ControlSession(device_id, self.uuid_generator(), deadline)
 
     def observation_context(self, owner, session):
         if self.context:
@@ -58,9 +60,11 @@ class RequestGate:
 
 class RequestTests(unittest.TestCase):
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         self.clock = FakeClock(start=100)
-        self.gate = RequestGate(self.clock)
-        self.executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        self.gate = RequestGate(self.clock, uuid_factory=self.uuid_generator)
+        self.executor = CommandExecutor(gate=self.gate, clock=self.clock.now,
+            uuid_factory=self.uuid_generator)
         self.manager = self.executor._requests
         self.service = ControllerService(None, executor=self.executor)
         self.consumer = self.service.for_consumer()
@@ -137,7 +141,8 @@ class RequestTests(unittest.TestCase):
         self.assertIs(consumer.request_control(42, lease_seconds=60, timeout=30), handle)
         self.assertIs(consumer.get_control_request(handle).state, State.REQUESTED)
         foreign = self.service.for_consumer()
-        other_executor = CommandExecutor(gate=self.gate, clock=self.clock.now)
+        other_executor = CommandExecutor(gate=self.gate, clock=self.clock.now,
+            uuid_factory=self.uuid_generator)
         other = ControllerService(None, executor=other_executor).for_consumer()
         forged = ControlRequest(handle.request_id, handle.device_id)
         for owner, request in ((consumer, forged), (foreign, handle), (other, handle),
@@ -841,7 +846,7 @@ class RequestTests(unittest.TestCase):
         self.assertTrue(entered.wait(1))
         session = self.executor._devices[42].session
         self.executor._release_unclaimed(self.other, handle.request_id)
-        self.executor._release_unclaimed(self.binding, uuid4())
+        self.executor._release_unclaimed(self.binding, self.uuid_generator())
         self.executor._release_unclaimed(self.binding, handle.request_id,
                                          ControlSession(42, session.session_id, session.expires_at))
         self.assertEqual(self.gate.releases, [])

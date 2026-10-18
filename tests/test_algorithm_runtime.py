@@ -4,6 +4,7 @@ from threading import Barrier, Event, Thread, current_thread
 from time import monotonic
 import unittest
 from unittest.mock import Mock
+from uuid import UUID
 
 from zontcontrol.autonomy.contracts import (
     AlgorithmBusy, AlgorithmCancelled, AlgorithmFailed, AlgorithmResult,
@@ -13,6 +14,7 @@ from zontcontrol.autonomy.runtime import AlgorithmRuntime
 from zontcontrol.controller.contracts import ControlKey, DeviceControlBusy, ValidatedCommand
 from zontcontrol.controller.ownership import CommandExecutor
 from zontcontrol.config import OnceTimeout
+from tests.fakes.uuid import uuid_generator
 from tests.fakes.clock import FakeClock
 from tests.test_control_ownership import LocalTestGate
 
@@ -22,6 +24,7 @@ SUCCESS = AlgorithmResult(ResultStatus.SUCCESS, {'value': 1})
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
+        self.uuid_generator = uuid_generator()
         self.gates = []
 
     def tearDown(self):
@@ -34,7 +37,8 @@ class RuntimeTests(unittest.TestCase):
         spec = AlgorithmSpec(algorithm_id, 'Test algorithm', frozenset(Mode),
                              factory or Mock(return_value=module))
         runtime = AlgorithmRuntime(spec, controller_factory or Mock(return_value=object()),
-                                   close_controller=close_controller, clock=clock)
+                                   close_controller=close_controller, clock=clock,
+                                   uuid_factory=self.uuid_generator)
         self.addCleanup(runtime.close)
         return runtime
 
@@ -66,9 +70,23 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all(thread is not current_thread() for thread in threads))
         context = contexts[0]
         self.assertEqual(context.algorithm_id, 'test')
+        self.assertEqual((context.instance_id, context.run_id), (UUID(int=1), UUID(int=2)))
+        self.assertEqual(self.uuid_generator.call_count, 2)
         self.assertLessEqual(before + 1, context.deadline)
         self.assertFalse(context.cancelled.is_set())
         self.assertEqual(runtime.state, AlgorithmState.STOPPED)
+
+    def test_restart_consumes_fresh_injected_instance_and_run_ids(self):
+        module = Mock()
+        module.run_once.return_value = SUCCESS
+        runtime = self.runtime(module)
+        for expected in ((1, 2), (3, 4)):
+            self.assertIs(runtime.run_once(1), SUCCESS)
+            self.assertTrue(runtime.wait(2))
+            context = module.run_once.call_args.args[0]
+            self.assertEqual((context.instance_id, context.run_id),
+                             tuple(UUID(int=value) for value in expected))
+        self.assertEqual(self.uuid_generator.call_count, 4)
 
     def test_exception_and_invalid_result_are_failed_without_raw_error_text(self):
         for effect in (ValueError('private-value'), None):
@@ -364,8 +382,8 @@ class RuntimeTests(unittest.TestCase):
 
     def check_executor_cleanup(self, *, inflight):
         clock = FakeClock(start=100)
-        gate = LocalTestGate(clock)
-        executor = CommandExecutor(gate=gate, clock=clock.now)
+        gate = LocalTestGate(clock, uuid_factory=self.uuid_generator)
+        executor = CommandExecutor(gate=gate, clock=clock.now, uuid_factory=self.uuid_generator)
         owner, competitor = executor.bind(), executor.bind()
         entered, send_entered, release = Event(), Event(), self.gate()
         effects = []
