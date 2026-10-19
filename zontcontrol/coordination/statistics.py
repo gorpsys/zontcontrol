@@ -434,7 +434,11 @@ def analyze_command_effects(rows: Iterable[Observation]) -> dict[str, object]:
         for kind, durations in sorted(values.items()):
             report[kind] = sample_summary(durations, unknown=unknown[kind],
                     limits=residual_limits if kind == 'residual_effect' else None)
-        report['delta_cmd_recommendation_s'] = _recommend(cast(dict, report['residual_effect']))
+        residual = cast(dict, report['residual_effect'])
+        report['delta_cmd_recommendation_s'] = _recommend(residual)
+        report['delta_cmd_recommendation_status'] = (
+            'unknown' if not residual['count'] else
+            'incomplete' if residual['unknown'] else 'observed')
         result.append(report)
     return {'schema': 1, 'groups': result,
             'limitation': 'Descriptive samples only; API RTT is not physical completion. '

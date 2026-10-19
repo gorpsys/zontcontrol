@@ -11,7 +11,7 @@ from tests.fakes.zont import FakeMetadataAdapter, FakeZontServer
 from zontcontrol.controller.contracts import CommandOutcomeUnknown, DeviceUnavailable
 from zontcontrol.coordination.models import (
     GrantRecord, HandledRequest, LeaderRecord, ProtocolProfile, R1Record, R2Record,
-    RecordError, RequestRecord, decode_r1, decode_r2, encode_r1, encode_r2, original_name,
+    RecordError, ReplyRecord, RequestRecord, decode_r1, decode_r2, encode_r1, encode_r2, original_name,
 )
 from zontcontrol.coordination.clock import clock_factor, clock_rho
 from zontcontrol.coordination.store import ExecutorStore, LeaderStore, RecordCapacityError
@@ -40,6 +40,20 @@ def grant(**changes):
 
 def r1(**changes):
     return replace(R1Record(PROFILE, REQUEST, leader(), (grant(),)), **changes)
+
+
+def missing_default_wire_fields():
+    record = r1(reply=ReplyRecord(OWNER, REQUEST, NONCE, 'busy'))
+    prefix, _, payload = encode_r1(PREFIX, record).partition(' [zc:v2 управление занято ')
+    for nested, field in (('profile', 'rho_version'), ('leader', 'revision'),
+                          ('reply', 'status')):
+        data = json.loads(payload[:-1])
+        del data[nested][field]
+        yield 'name', prefix + ' [zc:v2 управление занято ' + json.dumps(data) + ']'
+    for field in ('grant_id', 'grant_revision'):
+        data = json.loads(encode_r2(R2Record(PROFILE.profile_id, request())))
+        del data['request'][field]
+        yield 'notes', json.dumps(data)
 
 
 class CodecTests(unittest.TestCase):
@@ -120,6 +134,12 @@ class CodecTests(unittest.TestCase):
                     '{"v":2,"profile_id":"' + PROFILE.profile_id + '","request":[]}'):
             with self.assertRaises(RecordError):
                 decode_r2(raw)
+        for field, raw in missing_default_wire_fields():
+            with self.subTest(field=field, raw=raw), self.assertRaises(RecordError):
+                decode_r1(raw, PREFIX) if field == 'name' else decode_r2(raw)
+            if field == 'name':
+                with self.assertRaises(RecordError):
+                    original_name(raw)
 
     def test_two_ordered_slots_and_leader_horizon(self):
         a = grant()
@@ -282,7 +302,7 @@ class StoreTests(unittest.TestCase):
             ('notes', encode_r2(R2Record(foreign.profile_id))),
             ('name', encode_r1(PREFIX, r1(profile=mismatched_parameters))),
         )
-        for field, raw in cases:
+        for field, raw in (*cases, *missing_default_wire_fields()):
             for role in ('leader', 'executor'):
                 with self.subTest(field=field, raw=raw, role=role):
                     self.setUp()
@@ -294,6 +314,23 @@ class StoreTests(unittest.TestCase):
                     self.assertEqual(self.adapter.writes, [])
                     self.assertEqual(len(self.server.requests), requests)
                     self.assertEqual(self.server.read_device(42), before)
+
+    def test_takeover_never_overwrites_nested_wire_with_missing_defaults(self):
+        from tests.fakes.protocol import Scenario
+        from zontcontrol.coordination.leader import LeaseLost
+
+        for field, raw in missing_default_wire_fields():
+            with self.subTest(field=field, raw=raw):
+                scenario = Scenario(ready=False)
+                scenario.server.apply(scenario.server.send_update(
+                    42, {field: raw.replace(PREFIX, scenario.prefix)}))
+                before = scenario.server.read_device(42)
+                for _ in range(2):
+                    with self.assertRaises(LeaseLost):
+                        scenario.leader.try_acquire()
+                    scenario.clock.advance(3600)
+                self.assertEqual(scenario.adapter.writes, [])
+                self.assertEqual(scenario.server.read_device(42), before)
 
     def test_missing_other_register_never_gives_a_writer_the_other_capability(self):
         for role in ('leader', 'executor'):

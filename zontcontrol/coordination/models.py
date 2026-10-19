@@ -238,7 +238,7 @@ def _load(raw, keys):
 
 
 def _record(cls, data):
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or data.keys() != set(cls.__dataclass_fields__):
         raise RecordError()
     try:
         return cls(**data)

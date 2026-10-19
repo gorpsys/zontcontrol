@@ -199,8 +199,9 @@ handle терминален, поздняя session остаётся cleanup и�
 Пример — [controller.example.json](../../config/controller.example.json),
 [точная схема](../../config/README.md). Начальные **unmeasured** параметры:
 Delta=5 с, Delta_cmd=5 с, P=300 с. Provisional pacing — poll 20/retry 60 с,
-jitter 0.25/renewal 0.25. Симуляционный победитель poll 1/retry 5 отличается:
-на настоящем API наблюдались 429. Ни один результат не доказывает жёстких
+jitter 0.25/renewal 0.25. Симуляционный победитель revision 3 —
+poll 1/retry 0.5/jitter 0.25/renewal 0.25. В первом натурном прогоне
+с poll 1/retry 5 наблюдались 429. Ни один результат не доказывает жёстких
 границ. [Полный отчёт](../reports/2026-10-19-coordination-v2-calibration.md).
 
 Для старой неизменной записи с горизонтом 300 с наблюдение занимает около

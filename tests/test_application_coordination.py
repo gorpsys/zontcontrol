@@ -202,13 +202,29 @@ class ComposedCoordinationTests(unittest.TestCase):
     def test_future_grant_remains_requested_until_usable_without_status_io(self):
         first = self.acquire()
         self.owner.release_control(first)
+        published = Event()
+        def observe_request(row):
+            if row['event'] == 'request' and row.get('run_id') == str(self.other._control._owner):
+                published.set()
+        self.on_observation = observe_request
         handle = self.request(self.other, lease=60, timeout=30)
-        for _ in range(20):
-            if len(decode_r1(self.transport.raw['name'], 'Дом').grants) == 2:
-                break
-            self.clock.advance_wait()
-            scheduled = self.clock.waits.get(timeout=1)
-            self.clock.waits.put(scheduled)
+        executor = self.app._controller._executor
+        def wait_request_poll():
+            # The request worker uses its own Condition, not StepClock.wait.
+            # Finish its due attempt before advancing the coordinator again.
+            with executor._idle:
+                executor._idle.notify_all()
+                self.assertTrue(executor._idle.wait_for(lambda:
+                    handle in executor._requests._terminal or (
+                        not executor._requests._active[handle].in_flight
+                        and executor._requests._active[handle].next_poll > self.clock.now()),
+                    timeout=1))
+        self.assertTrue(published.wait(1))
+        wait_request_poll()
+        self.clock.advance_wait()
+        scheduled = self.clock.waits.get(timeout=1)
+        self.clock.waits.put(scheduled)
+        wait_request_poll()
         grants = decode_r1(self.transport.raw['name'], 'Дом').grants
         self.assertEqual(len(grants), 2)
         self.assertGreater(grants[1].valid_from, grants[0].valid_until)
@@ -219,13 +235,14 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertIs(self.other.get_control_request(handle), pending)
         self.assertEqual(len(self.transport.requests), before)
         for _ in range(200):
-            with self.app._controller._executor._idle:
-                done = handle in self.app._controller._executor._requests._terminal
+            with executor._idle:
+                done = handle in executor._requests._terminal
             if done:
                 break
             self.clock.advance_wait()
             scheduled = self.clock.waits.get(timeout=1)
             self.clock.waits.put(scheduled)
+            wait_request_poll()
         granted = self.other.get_control_request(handle)
         self.assertIs(granted.state, State.GRANTED)
         try:

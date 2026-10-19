@@ -134,7 +134,7 @@ class LiveCalibrationTests(unittest.TestCase):
         controller.list_controls.return_value = controls
         self.target, self.current_mode = 20., 21
         self.calls = []
-        now = datetime.now(timezone.utc)
+        now = datetime(2026, 10, 19, tzinfo=timezone.utc)
         def read(device, keys=None):
             values = tuple(ValueReading(ValueKey(42, 'circuit', 11, field), value,
                 ValueType.NUMBER if field == 'target_temp' else ValueType.INTEGER,

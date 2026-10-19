@@ -64,6 +64,7 @@ class CommandEffectStatisticsTests(unittest.TestCase):
         self.assertEqual(report['command']['count'], 1)
         self.assertEqual(report['residual_effect']['status'], 'unknown')
         self.assertIsNone(report['delta_cmd_recommendation_s'])
+        self.assertEqual(report['delta_cmd_recommendation_status'], 'unknown')
 
     def test_algorithm_section_never_becomes_command_tail(self):
         self.execute()
@@ -92,6 +93,16 @@ class CommandEffectStatisticsTests(unittest.TestCase):
         self.assertEqual(report['residual_effect']['max'], 6)
         self.assertEqual(report['network_to_effect']['max'], 3)
         self.assertEqual(report['delta_cmd_recommendation_s'], 60)
+        self.assertEqual(report['delta_cmd_recommendation_status'], 'observed')
+        self.effect('residual_effect', command_observation_id=start['command_observation_id'],
+                    clock_id='incomparable', admitted_at=start['admitted_at'],
+                    effect_completed_at=106, completion_basis='physical_upper_bound',
+                    coverage='complete', outcome='success')
+        mixed = analyze_command_effects(self.rows)['groups'][0]
+        self.assertEqual(mixed['residual_effect']['count'], 1)
+        self.assertEqual(mixed['residual_effect']['unknown'], 1)
+        self.assertEqual(mixed['delta_cmd_recommendation_s'], 60)
+        self.assertEqual(mixed['delta_cmd_recommendation_status'], 'incomplete')
 
     def test_incomparable_missing_and_api_only_completion_remain_unknown(self):
         for changes in ({'clock_id': 'other-clock'}, {'admitted_at': 101},
@@ -111,6 +122,7 @@ class CommandEffectStatisticsTests(unittest.TestCase):
                 report = analyze_command_effects(self.rows)['groups'][0]
                 self.assertEqual(report['residual_effect']['unknown'], 1)
                 self.assertIsNone(report['delta_cmd_recommendation_s'])
+                self.assertEqual(report['delta_cmd_recommendation_status'], 'unknown')
 
     def test_residual_exceedances_use_its_own_profile_bound(self):
         self.execute()
