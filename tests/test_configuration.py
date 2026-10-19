@@ -23,7 +23,7 @@ def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
 
 
 class ConfigurationTests(unittest.TestCase):
-    def test_example_pacing_is_a_feasible_calibration_grid_member(self):
+    def test_example_pacing_is_provisional_live_profile_with_renewal_margin(self):
         from scripts.calibrate_coordination import Safety, Pacing, candidates
         project = Path(__file__).resolve().parents[1]
         config = load_controller_config(reader=lambda path: read_json(
@@ -33,7 +33,13 @@ class ConfigurationTests(unittest.TestCase):
                         settings.jitter_fraction, settings.renewal_fraction)
         safety = Safety(delta=settings.delta_seconds, delta_cmd=settings.delta_cmd_seconds,
                         period=settings.leader_period_seconds)
-        self.assertIn(pacing, list(candidates(safety)))
+        self.assertEqual(pacing, Pacing(20, 60, .25, .25))
+        # The live recommendation is separate from the fixed simulation grid.
+        self.assertNotIn(pacing, list(candidates(safety)))
+        self.assertLess(settings.leader_period_seconds * settings.renewal_fraction
+                        + settings.poll_seconds * (1 + settings.jitter_fraction)
+                        + 2 * settings.delta_seconds,
+                        settings.leader_period_seconds - safety.timing.stop_margin)
         self.assertIn('unmeasured', config.statistics.profile)
 
     def test_cli_existing_json_uses_default_and_new_wait_is_module_owned(self):

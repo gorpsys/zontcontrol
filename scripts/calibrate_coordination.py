@@ -510,7 +510,8 @@ def live_series(controller, device, *, count=4, lease_seconds=180, timeout=90,
             raise ValueError('Unique heating circuit and Schedule mode required')
         # The public API exposes this circuit's target_temp; boiler/setpoint
         # channels are deliberately never selected. prepare_command revalidates
-        # capabilities/step/bounds against the current device inventory.
+        # capabilities/bounds; its general API does not enforce the UI step.
+        report['air_target_step'] = circuits[0].step
         return circuits[0].key, modes[0].key
     def read(field):
         key = ValueKey(device, 'circuit', circuit.element_id, field)
@@ -527,6 +528,12 @@ def live_series(controller, device, *, count=4, lease_seconds=180, timeout=90,
             action=action, critical_section_s=now()-started, arguments=args))
     try:
         circuit, mode = selected()
+        step = report['air_target_step']
+        if count and step is not None and Decimal('.1') % Decimal(str(step)) != 0:
+            # A float request schema is not evidence that a smaller step than
+            # the current inventory advertises is permitted for this series.
+            report['preflight_error'] = 'unsupported_air_target_step'
+            raise ValueError('The advertised temperature step does not permit 0.1')
         session = acquire()
         for index in range(count):
             if stop.is_set():

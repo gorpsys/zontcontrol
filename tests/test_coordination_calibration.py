@@ -198,6 +198,31 @@ class LiveCalibrationTests(unittest.TestCase):
         self.current_mode = 0
         self.assertFalse(live_series(controller, 42, count=0)['schedule_confirmed'])
 
+    def test_reported_device_step_blocks_smaller_temperature_change(self):
+        for step in (1., .3):
+            with self.subTest(step=step):
+                controller = self.controller()
+                controls = controller.list_controls.return_value
+                controller.list_controls.return_value = (
+                    replace(controls[0], step=step), *controls[1:])
+                report = live_series(controller, 42, count=4)
+                self.assertEqual(report['preflight_error'], 'unsupported_air_target_step')
+                self.assertEqual(report['air_target_step'], step)
+                self.assertEqual(self.calls, [(self.mode, 'activate', {})])
+                self.assertTrue(report['schedule_confirmed'])
+
+    def test_step_guard_accepts_exact_substeps_and_schedule_only(self):
+        for step, count in ((.1, 2), (.05, 2), (1., 0)):
+            with self.subTest(step=step, count=count):
+                controller = self.controller()
+                controls = controller.list_controls.return_value
+                controller.list_controls.return_value = (
+                    replace(controls[0], step=step), *controls[1:])
+                report = live_series(controller, 42, count=count)
+                self.assertIsNone(report['error'])
+                self.assertTrue(report['schedule_confirmed'])
+                self.assertEqual(sum(c[0] == self.circuit for c in self.calls), count)
+
     def test_grant_denial_is_bounded_and_sends_no_commands(self):
         from zontcontrol.controller.contracts import ControlRequestReason
         controller = self.controller()
