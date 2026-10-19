@@ -19,7 +19,7 @@ from tests.fakes.zont import FakeMetadataAdapter, FakeZontServer
 from tests.test_coordination_store import PREFIX, r1
 from zontcontrol.coordination.store import LeaderStore
 from zontcontrol.coordination.timing import FreezeGuard, OperationWindow, TimingViolation
-from zontcontrol.control_types import CommandOutcomeUnknown
+from zontcontrol.control_types import CommandOutcomeUnknown, ControllerError
 
 
 class StatisticsTests(unittest.TestCase):
@@ -225,6 +225,161 @@ class SynchronizationMeasurementsTests(unittest.TestCase):
                             name_capacity=10000, profile=PROFILE,
                             statistics=self.stats if statistics is None else statistics)
         return store, adapter
+
+    def assert_window_pairs(self, expected):
+        starts = [row for row in self.rows if row['event'] == 'sync_started']
+        ends = [row for row in self.rows if row['event'] == 'sync_window']
+        self.assertEqual(len(starts), expected)
+        self.assertEqual(len(ends), expected)
+        self.assertCountEqual([row['window_id'] for row in starts],
+                              [row['window_id'] for row in ends])
+        return ends
+
+    def test_first_read_timeout_after_success_is_censored_and_incomplete(self):
+        from zontcontrol.coordination.grants import ExecutorGate
+        store, adapter = self.store()
+        gate = ExecutorGate({42: store}, clock=self.clock, delta=5, statistics=self.stats)
+        self.assertIsNone(gate._read(store))
+        adapter.read_delay = 6
+        with self.assertRaises(ControllerError):
+            gate._read(store)
+        ends = self.assert_window_pairs(2)
+        self.assertEqual(ends[-1]['sync_window_s'], 5)
+        self.assertEqual(adapter.writes, [])
+        group = analyze(self.rows)['groups'][0]
+        self.assertEqual(group['windows']['unknown'], 1)
+        self.assertEqual(group['delta_recommendation_status'], 'incomplete')
+        metric = next(row for row in group['timings'] if row['metric'] == 'sync_window_s')
+        self.assertEqual(metric['count'], 1)
+        self.assertEqual(metric['censored_elapsed']['max'], 5)
+
+    def test_late_first_read_is_closed_without_completion_sample(self):
+        store, adapter = self.store()
+        read = adapter.read_metadata_field
+        def late(*args, **kwargs):
+            raw = read(*args, **kwargs)
+            self.clock.advance(6)
+            return raw
+        adapter.read_metadata_field = late
+        with self.assertRaises(TimingViolation):
+            store.read_r1(window=OperationWindow(self.clock, 5))
+        self.assertEqual(self.assert_window_pairs(1)[0]['sync_window_s'], 6)
+        group = analyze(self.rows)['groups'][0]
+        metric = next(row for row in group['timings'] if row['metric'] == 'sync_window_s')
+        self.assertEqual(metric['count'], 0)
+        self.assertEqual(metric['censored_elapsed']['max'], 6)
+
+    def test_historical_first_read_without_boundaries_remains_incomplete(self):
+        store, _ = self.store()
+        store.write_r1(r1(record_id=str(self.uid())),
+                       window=OperationWindow(self.clock, 5), role_deadline=200)
+        self.stats.emit('freeze', device_id=42, role='leader', window_id='old-read',
+                        stage='freeze', freeze_gap_s=0, delta_s=5)
+        self.stats.emit('error', device_id=42, outcome='unknown')
+        group = analyze(self.rows)['groups'][0]
+        self.assertEqual(group['windows']['total'], 2)
+        self.assertEqual(group['windows']['unknown'], 1)
+        self.assertEqual(group['windows']['incomplete'], 1)
+        self.assertEqual(group['delta_recommendation_status'], 'incomplete')
+        metric = next(row for row in group['timings'] if row['metric'] == 'sync_window_s')
+        self.assertEqual(metric['count'], 1)
+        self.assertEqual(metric['censored_elapsed']['count'], 0)  # Old elapsed is unavailable.
+
+    def test_leader_windows_enclose_nested_store_operations_once(self):
+        from tests.fakes.protocol import Scenario
+        from zontcontrol.coordination.leader import LeaseLost
+        scenario = Scenario(ready=False)
+        scenario.store._statistics = self.stats
+        scenario.leader._statistics = self.stats
+        self.assertTrue(scenario.leader.try_acquire())
+        self.assert_window_pairs(2)  # READ-to-WRITE then post-W confirmation.
+        scenario.leader.renew()
+        self.assert_window_pairs(3)  # confirm, publication and readback share one window.
+        scenario.leader.confirm(1)
+        self.assert_window_pairs(4)
+        scenario.adapter.read_delay = 2
+        with self.assertRaises(LeaseLost):
+            scenario.leader.coordinate(lambda *_: self.fail('must not run'), 1)
+        self.assert_window_pairs(5)
+        self.assertEqual(analyze(self.rows)['groups'][0]['windows']['unknown'], 1)
+
+    def test_candidate_first_read_and_post_barrier_confirmation_failures_are_closed(self):
+        from tests.fakes.protocol import Scenario
+        from zontcontrol.coordination.leader import LeaseLost
+        for first_read in (True, False):
+            with self.subTest(first_read=first_read):
+                self.rows.clear()
+                scenario = Scenario(ready=False)
+                scenario.store._statistics = self.stats
+                read = scenario.adapter.read_metadata_field
+                def failure(*args, **kwargs):
+                    if first_read or len(scenario.adapter.writes) and not scenario.adapter._confirmation_pending:
+                        scenario.clock.advance(.2)
+                        raise ControllerError()
+                    return read(*args, **kwargs)
+                scenario.adapter.read_metadata_field = failure
+                with self.assertRaises(LeaseLost):
+                    scenario.leader.try_acquire()
+                ends = self.assert_window_pairs(1 if first_read else 2)
+                self.assertAlmostEqual(ends[-1]['sync_window_s'], .2)
+                self.assertEqual(ends[-1]['outcome'], 'unknown')
+
+    def test_coordinate_finishes_after_nested_write_and_callback_error(self):
+        from dataclasses import replace
+        from tests.fakes.protocol import Scenario
+        scenario = Scenario()
+        scenario.store._statistics = self.stats
+        def callback(record, window):
+            scenario.leader.publish(replace(record, record_id=str(scenario.uid())), window)
+            scenario.clock.advance(.2)
+            raise RuntimeError('callback failure')
+        with self.assertRaisesRegex(RuntimeError, 'callback failure'):
+            scenario.leader.coordinate(callback, 1)
+        ends = self.assert_window_pairs(1)
+        self.assertAlmostEqual(ends[0]['sync_window_s'], .2)
+        self.assertEqual(ends[0]['outcome'], 'failure')
+
+    def test_confirm_first_read_failure_and_candidate_readonly_return_are_closed(self):
+        from tests.fakes.protocol import Scenario
+        from zontcontrol.coordination.leader import LeaseLost
+        scenario = Scenario()
+        other = scenario.candidate()
+        scenario.store._statistics = self.stats
+        self.assertFalse(other.try_acquire())  # Current live leader: no write.
+        self.assert_window_pairs(1)
+        scenario.adapter.read_delay = 2
+        with self.assertRaises(LeaseLost):
+            scenario.leader.confirm(1)
+        self.assert_window_pairs(2)
+
+    def test_bootstrap_first_read_failure_and_success_are_complete_windows(self):
+        from unittest.mock import Mock
+        from zontcontrol.config import CoordinationConfig
+        from zontcontrol.coordination.runtime import CoordinationRuntime
+        for failure in (True, False):
+            with self.subTest(failure=failure):
+                self.rows.clear()
+                store, adapter = self.store()
+                def metadata(*args, **kwargs):
+                    self.clock.advance(.1)
+                    if failure:
+                        raise ControllerError()
+                    return {'name': PREFIX, 'notes': None}
+                adapter.read_metadata = metadata
+                config = CoordinationConfig(1, 60, 1, PROFILE.profile_id, 1, 1, 0, .25)
+                runtime = CoordinationRuntime(adapter, config, self.clock, self.stats,
+                    worker_factory=Mock(), epoch_sampler=self.clock.epoch_now)
+                try:
+                    if failure:
+                        with self.assertRaises(ControllerError):
+                            runtime._device(42)
+                    else:
+                        runtime._device(42)
+                    ends = self.assert_window_pairs(1)
+                    self.assertAlmostEqual(ends[0]['sync_window_s'], .1)
+                    self.assertEqual(ends[0]['started_at'], self.clock.now() - .1)
+                finally:
+                    runtime.close()
 
     def test_real_store_observes_original_window_and_read_write_confirmation(self):
         store, adapter = self.store()

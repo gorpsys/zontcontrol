@@ -9,6 +9,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_production_consumers_use_static_coordination_surface(self):
+        for path in (ROOT / 'zontcontrol').rglob('*.py'):
+            relative = path.relative_to(ROOT).with_suffix('')
+            if relative.parts[1] == 'coordination':
+                continue
+            package = '.'.join(relative.parts[:-1])
+            for node in ast.walk(ast.parse(path.read_text())):
+                modules = []
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    module = '.' * node.level + (node.module or '')
+                    module = importlib.util.resolve_name(module, package)
+                    modules = [module]
+                    if module == 'zontcontrol.coordination':
+                        from zontcontrol.coordination import __all__
+                        self.assertTrue(all(alias.name in __all__ for alias in node.names),
+                                        f'{path}:{node.lineno}')
+                for module in modules:
+                    self.assertFalse(module.startswith('zontcontrol.coordination.'),
+                                     f'{path}:{node.lineno}: {module}')
+
     def test_removed_prototype_modules_and_entrypoint(self):
         for module in ('client', 'cli', 'control'):
             self.assertIsNone(importlib.util.find_spec('zontcontrol.' + module))
@@ -28,4 +50,3 @@ class BoundaryTests(unittest.TestCase):
                                                       'zontcontrol.control'}, str(path))
         for path in (ROOT / 'zontcontrol/algorithms').glob('*.py'):
             self.assertNotIn('environ', path.read_text())
-

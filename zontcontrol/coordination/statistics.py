@@ -261,7 +261,9 @@ def _synchronization(rows: list[Observation]) -> dict[str, object]:
                         # outcome. Keep that elapsed lower bound, never present
                         # it as a completed READ-to-WRITE percentile.
                         or metric == 'read_write_s' and row.get('outcome') != 'success'))
-        if 'window_id' in row and row['event'] in {'sync_started', 'sync_window'}:
+        # Older first-READ failures may have only a freeze/read record. Retain
+        # their missing boundaries as incomplete instead of losing the window.
+        if 'window_id' in row:
             key = (row.get('device_id'), row['window_id'])
             windows.setdefault(key, []).append(row)
     reports = []

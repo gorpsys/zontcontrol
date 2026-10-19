@@ -121,23 +121,25 @@ class CoordinationRuntime:
                 self._check_attempt(local_deadline, attempt_deadline)
             if device_id not in self._devices:
                 window = OperationWindow(self.clock, self.config.delta_seconds)
-                metadata = self.adapter.read_metadata(device_id, timeout_seconds=window.before_io())
-                window.complete()
-                name = original_name(metadata['name'])
-                options: _StoreOptions = dict(original_name=name, notes_capacity=65536, name_capacity=16384)
-                executor_store = ExecutorStore(self.adapter, device_id, **options,
-                    profile=self.config.profile, previous_profile=self.config.previous_profile,
-                    statistics=self.statistics)
-                leader_store = LeaderStore(self.adapter, device_id, **options,
-                    profile=self.config.profile, previous_profile=self.config.previous_profile,
-                    statistics=self.statistics)
-                with self._lock:
-                    self._check_attempt(local_deadline, attempt_deadline)
-                r1 = executor_store.read_r1(window=window)
-                with self._lock:
-                    self._check_attempt(local_deadline, attempt_deadline)
-                r2 = executor_store.read_r2(window=window)
-                executor_store.validate_pair(r1, r2)
+                window.observe_with(self.statistics, device_id=device_id, role='executor')
+                with window.observation():
+                    metadata = self.adapter.read_metadata(device_id, timeout_seconds=window.before_io())
+                    window.complete()
+                    name = original_name(metadata['name'])
+                    options: _StoreOptions = dict(original_name=name, notes_capacity=65536, name_capacity=16384)
+                    executor_store = ExecutorStore(self.adapter, device_id, **options,
+                        profile=self.config.profile, previous_profile=self.config.previous_profile,
+                        statistics=self.statistics)
+                    leader_store = LeaderStore(self.adapter, device_id, **options,
+                        profile=self.config.profile, previous_profile=self.config.previous_profile,
+                        statistics=self.statistics)
+                    with self._lock:
+                        self._check_attempt(local_deadline, attempt_deadline)
+                    r1 = executor_store.read_r1(window=window)
+                    with self._lock:
+                        self._check_attempt(local_deadline, attempt_deadline)
+                    r2 = executor_store.read_r2(window=window)
+                    executor_store.validate_pair(r1, r2)
                 leader = LeaderElection(leader_store, str(self._uuid_factory()), self.config.timing,
                                         clock=self.clock, statistics=self.statistics,
                                         timeline=self._timeline, uuid_factory=self._uuid_factory,

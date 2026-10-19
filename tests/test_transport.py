@@ -112,6 +112,22 @@ class TransportTests(unittest.TestCase):
                 self.transport.request(self.request, timeout_seconds=timeout)
         self.opener.open.assert_not_called()
 
+    def test_open_and_body_share_one_fixed_deadline(self):
+        clock = FakeClock()
+        transport = HttpTransport(timeout=3, opener=self.opener, clock=clock)
+        class Body(io.BytesIO):
+            def read(self, *args):
+                clock.advance(.3)
+                return super().read(*args)
+        def opened(*args, **kwargs):
+            clock.advance(.75)
+            return Body(b'{"ok":true}')
+        self.opener.open.side_effect = opened
+        with self.assertRaises(TransportError) as caught:
+            transport.request(self.request, timeout_seconds=1)
+        self.assertIs(caught.exception.kind, FailureKind.UNCONFIRMED)
+        self.opener.open.assert_called_once_with(self.request, timeout=1)
+
     def test_no_body_io_starts_when_open_has_consumed_the_window(self):
         clock = FakeClock()
         transport = HttpTransport(timeout=3, opener=self.opener, clock=clock)

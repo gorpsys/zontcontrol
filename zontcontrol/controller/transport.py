@@ -17,8 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from ..coordination.clock import BootClock
-from ..coordination.timing import OperationWindow, TimingViolation
+from ..coordination import BootClock
 
 
 API_URL = "https://my.zont.online/api/widget/v3"
@@ -82,7 +81,8 @@ class HttpTransport:
             trusted = False
         if not trusted:
             raise TransportError(FailureKind.NOT_SENT)
-        window = OperationWindow(self._clock, timeout)
+        # HTTP owns its per-call deadline; protocol windows remain in coordination.
+        deadline = self._clock.now() + timeout
         try:
             response = self._opener.open(request, timeout=timeout)
         except HTTPError as error:
@@ -104,9 +104,10 @@ class HttpTransport:
             raise TransportError(FailureKind.NOT_SENT) from None
         try:
             with response:
-                window.before_io()
+                if self._clock.now() >= deadline:
+                    raise TransportError(FailureKind.UNCONFIRMED)
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
-        except (OSError, HTTPException, TimingViolation):
+        except (OSError, HTTPException):
             raise TransportError(FailureKind.UNCONFIRMED) from None
         if len(raw) > MAX_RESPONSE_BYTES:
             raise TransportError(FailureKind.INVALID_RESPONSE)
@@ -118,9 +119,7 @@ class HttpTransport:
             raise TransportError(FailureKind.INVALID_RESPONSE)
         if data["ok"] is False:
             raise TransportError(FailureKind.REJECTED)
-        try:
-            window.complete()
-        except TimingViolation:
+        if self._clock.now() > deadline:
             # Even an ok response is unusable after the local operation bound.
             # This does not imply cancellation of a previously sent write.
             raise TransportError(FailureKind.UNCONFIRMED) from None

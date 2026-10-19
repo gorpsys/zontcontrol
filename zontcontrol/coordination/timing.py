@@ -4,6 +4,7 @@ These checks detect violations of the assumed timing model. They cannot cancel
 an already sent write or prove server deadlines, linearizability or clock bounds.
 """
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from itertools import count
 from os import getpid
@@ -71,6 +72,31 @@ class OperationWindow:
         self._statistics = None
         self._observation_context = {}
         self._observation_started = False
+        self._observation_finished = False
+        self._observation_depth = 0
+
+    @contextmanager
+    def observation(self):
+        """Only the outer owner closes a whole window, including failed first READs.
+
+        Nested stores may attach to the same window, but cannot finish the
+        caller's multi-operation measurement early. No timing checks are added.
+        """
+        owner = self._observation_depth == 0 and not self._observation_finished
+        self._observation_depth += 1
+        if owner:
+            self.begin_observation()
+        try:
+            yield
+        except BaseException as error:
+            if owner:
+                self.finish_observation(error)
+            raise
+        else:
+            if owner:
+                self.finish_observation()
+        finally:
+            self._observation_depth -= 1
 
     def observe_with(self, statistics, *, device_id, role):
         """Attach optional output only; retain the original operation start."""
@@ -99,6 +125,9 @@ class OperationWindow:
                 delta_s=self._deadline - self._started_at, stage=stage, **fields)
 
     def finish_observation(self, error=None):
+        if self._observation_finished:
+            return
+        self._observation_finished = True
         if error is not None:
             try:
                 self._last_at = _duration(self._clock.now())
@@ -106,8 +135,8 @@ class OperationWindow:
                 return  # Missing data, never replace the operation's exception.
         unknown = isinstance(error, TimingViolation)
         if error is not None:
-            from ..control_types import CommandOutcomeUnknown
-            unknown = unknown or isinstance(error, CommandOutcomeUnknown)
+            from ..control_types import ControllerError
+            unknown = unknown or isinstance(error, ControllerError)
         elapsed = max(0, self._last_at - self._started_at)
         self.record('sync_window', stage='confirmation', sync_window_s=elapsed,
                     exceeded=int(elapsed > self._deadline - self._started_at),

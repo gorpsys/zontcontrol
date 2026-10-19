@@ -120,34 +120,35 @@ class LeaderElection:
             self._wake_guard = self._new_wake_guard()
             try:
                 window = self._window()
-                observed = self._read(window)
-                received = self._clock.now()
-                if observed is not None and observed.leader is not None:
-                    if self._observation is None or self._observation[0] != observed:
-                        self._observation = (observed, received)
-                        return False
-                    old = observed.leader
-                    wait = (old.leader_until - old.sampled_at) * clock_factor(old.period_s)
-                    if observed.profile != self._store.profile:
-                        wait += (observed.profile.delta_cmd_seconds
-                                 * clock_factor(observed.profile.delta_cmd_seconds))
-                    # Use READ send, never its response, as the final endpoint.
-                    if window.started_at - self._observation[1] < wait:
-                        return False
-                term_id = str(self._uuid_factory())
-                record_id = str(self._uuid_factory())
-                sent = self._clock.now()
-                self._term_started = sent
-                self.term_expires_at = sent + self.timing.term_budget
-                self.expires_at = self.timing.lease_deadline(sent, term_started_at=sent)
-                tau = self.timeline.now()
-                own = LeaderRecord(self._owner, term_id, str(self.timeline.clock_id),
-                                   self.timing.period, self.timing.clock_rho, tau,
-                                   tau + self.expires_at - sent, tau)
-                record = R1Record(self._store.profile, record_id, own,
-                    handled_request=observed.handled_request if observed is not None else None)
-                self.record = own
-                self._write(record, window, deadline=self.expires_at, candidate=True)
+                with self._store.observe_window(window):
+                    observed = self._read(window)
+                    received = self._clock.now()
+                    if observed is not None and observed.leader is not None:
+                        if self._observation is None or self._observation[0] != observed:
+                            self._observation = (observed, received)
+                            return False
+                        old = observed.leader
+                        wait = (old.leader_until - old.sampled_at) * clock_factor(old.period_s)
+                        if observed.profile != self._store.profile:
+                            wait += (observed.profile.delta_cmd_seconds
+                                     * clock_factor(observed.profile.delta_cmd_seconds))
+                        # Use READ send, never its response, as the final endpoint.
+                        if window.started_at - self._observation[1] < wait:
+                            return False
+                    term_id = str(self._uuid_factory())
+                    record_id = str(self._uuid_factory())
+                    sent = self._clock.now()
+                    self._term_started = sent
+                    self.term_expires_at = sent + self.timing.term_budget
+                    self.expires_at = self.timing.lease_deadline(sent, term_started_at=sent)
+                    tau = self.timeline.now()
+                    own = LeaderRecord(self._owner, term_id, str(self.timeline.clock_id),
+                                       self.timing.period, self.timing.clock_rho, tau,
+                                       tau + self.expires_at - sent, tau)
+                    record = R1Record(self._store.profile, record_id, own,
+                        handled_request=observed.handled_request if observed is not None else None)
+                    self.record = own
+                    self._write(record, window, deadline=self.expires_at, candidate=True)
                 target = self._clock.now() + self.timing.barrier
                 self.expect_resume(target)
                 if self._clock.wait(cancelled if cancelled is not None else self.role_cancelled,
@@ -157,10 +158,11 @@ class LeaderElection:
                 if self._clock.now() < target:
                     self._lose()
                 confirmation = self._window()
-                if (self._read(confirmation) != record or self.role_cancelled.is_set()
-                        or cancelled is not None and cancelled.is_set()
-                        or self._clock.now() >= self.expires_at - self.timing.stop_margin):
-                    self._lose()
+                with self._store.observe_window(confirmation):
+                    if (self._read(confirmation) != record or self.role_cancelled.is_set()
+                            or cancelled is not None and cancelled.is_set()
+                            or self._clock.now() >= self.expires_at - self.timing.stop_margin):
+                        self._lose()
                 self._active = True
                 self._renewed_at = sent
                 self.quarantine_until = self.timeline.now() + self.timing.quarantine
@@ -183,9 +185,10 @@ class LeaderElection:
         with self._lock:
             try:
                 window = self._window(min(duration, self.timing.delta))
-                record = self._confirm(window)
-                self._wake_guard.expect_resume(self._clock.now())
-                return record
+                with self._store.observe_window(window):
+                    record = self._confirm(window)
+                    self._wake_guard.expect_resume(self._clock.now())
+                    return record
             except (ControllerError, RecordError, TimingViolation):
                 self._lose()
 
@@ -194,11 +197,12 @@ class LeaderElection:
         with self._lock:
             try:
                 window = self._window(min(duration, self.timing.delta))
-                record = self._confirm(window)
-                result = operation(record, window)
-                window.complete(role_deadline=self.expires_at, stop_margin=self.timing.stop_margin)
-                self._wake_guard.expect_resume(self._clock.now())
-                return result
+                with self._store.observe_window(window):
+                    record = self._confirm(window)
+                    result = operation(record, window)
+                    window.complete(role_deadline=self.expires_at, stop_margin=self.timing.stop_margin)
+                    self._wake_guard.expect_resume(self._clock.now())
+                    return result
             except (ControllerError, RecordError, TimingViolation):
                 self._lose()
 

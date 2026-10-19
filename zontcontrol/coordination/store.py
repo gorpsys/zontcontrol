@@ -1,5 +1,7 @@
 """Role-specific v2 capabilities, bounded I/O and exact metadata readback."""
 
+from contextlib import nullcontext
+
 from ..control_types import CommandOutcomeUnknown, ControllerError
 from .models import (ProtocolProfile, R2Record, RecordError,
                      decode_r1, decode_r2, encode_r1, encode_r2)
@@ -36,6 +38,10 @@ class _Reader:
             window.observe_with(self._statistics, device_id=self.device_id,
                                 role='executor' if isinstance(self, ExecutorStore) else 'leader')
 
+    def observe_window(self, window):
+        self._observe_with(window)
+        return nullcontext() if window is None else window.observation()
+
     def _read(self, field, window, *, confirmation=False):
         self._observe_with(window)
         timeout = window.before_io() if window is not None else None
@@ -50,18 +56,20 @@ class _Reader:
         return raw
 
     def read_r1(self, *, window=None):
-        record = decode_r1(self._read('name', window), self.original_name)
-        if record is not None and record.profile not in (self.profile, self.previous_profile):
-            raise RecordError()
-        return record
+        with self.observe_window(window):
+            record = decode_r1(self._read('name', window), self.original_name)
+            if record is not None and record.profile not in (self.profile, self.previous_profile):
+                raise RecordError()
+            return record
 
     def read_r2(self, *, window=None):
-        record = decode_r2(self._read('notes', window))
-        ids = (self.profile.profile_id,
-               self.previous_profile.profile_id if self.previous_profile else None)
-        if record is not None and record.profile_id not in ids:
-            raise RecordError()
-        return record
+        with self.observe_window(window):
+            record = decode_r2(self._read('notes', window))
+            ids = (self.profile.profile_id,
+                   self.previous_profile.profile_id if self.previous_profile else None)
+            if record is not None and record.profile_id not in ids:
+                raise RecordError()
+            return record
 
     def validate_pair(self, r1, r2):
         if (r1 is not None and r1.profile != self.profile and r2 is not None
@@ -108,14 +116,8 @@ class ExecutorStore(_Reader):
     """Only notes/R2 may be written by an executor."""
 
     def publish_request(self, request, *, window):
-        self._observe_with(window)
-        window.begin_observation()
-        try:
+        with self.observe_window(window):
             self._publish_request(request, window=window)
-        except BaseException as error:
-            window.finish_observation(error)
-            raise
-        window.finish_observation()
 
     def _publish_request(self, request, *, window):
         raw = encode_r2(R2Record(self.profile.profile_id, request))
@@ -134,15 +136,9 @@ class LeaderStore(_Reader):
     """Only name/R1 may be written; every send requires the original guard."""
 
     def write_r1(self, record, *, window, role_deadline, stop_margin=0):
-        self._observe_with(window)
-        window.begin_observation()
-        try:
+        with self.observe_window(window):
             self._write_r1(record, window=window, role_deadline=role_deadline,
                            stop_margin=stop_margin)
-        except BaseException as error:
-            window.finish_observation(error)
-            raise
-        window.finish_observation()
 
     def _write_r1(self, record, *, window, role_deadline, stop_margin=0):
         if record.profile != self.profile:
