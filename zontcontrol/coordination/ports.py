@@ -31,13 +31,20 @@ class CoordinationGate(Protocol):
 
 
 class MetadataPort(Protocol):
-    """Read and update only the device metadata used by coordination."""
+    """Read/update metadata; per-call timeout caps the configured HTTP timeout.
 
-    def read_metadata(self, device_id: int) -> dict[str, str | None]: ...
+    The v2 caller passes OperationWindow.before_io() and checks completion on
+    the same original window. A socket timeout does not cancel a server write.
+    """
 
-    def read_metadata_field(self, device_id: int, field: str) -> str | None: ...
+    def read_metadata(self, device_id: int, *, timeout_seconds: float | None = None
+                      ) -> dict[str, str | None]: ...
 
-    def update_metadata(self, device_id: int, field: str, value: str) -> None: ...
+    def read_metadata_field(self, device_id: int, field: str, *,
+                            timeout_seconds: float | None = None) -> str | None: ...
+
+    def update_metadata(self, device_id: int, field: str, value: str, *,
+                        timeout_seconds: float | None = None) -> None: ...
 
 
 class CoordinationSettings(Protocol):

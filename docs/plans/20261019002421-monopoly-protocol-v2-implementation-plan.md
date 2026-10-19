@@ -625,15 +625,24 @@ EpochSampler отделён от Clock, чтобы существующие v1-�
 изменить `tests/test_zont_adapter.py`,
 `tests/test_transport.py`, `tests/fakes/zont.py`.
 
-- [ ] Протянуть per-call timeout_seconds через adapter/_request/transport;
+- [x] Протянуть per-call timeout_seconds через adapter/_request/transport;
   общий timeout транспорта оставить неизменяемым для параллельных потоков.
-- [ ] Подключить остаток OperationWindow и измерение полного ответа.
+- [x] Подключить остаток OperationWindow и измерение полного ответа.
   Unknown write не повторять автоматически; late apply не моделировать как
   допустимое поведение гарантированной модели v2.
-- [ ] тесты остатка бюджета, отсутствия следующего запроса
+- [x] тесты остатка бюджета, отсутствия следующего запроса
   после expiry, отсутствия гонки timeout между потоками и ошибок ответа.
-- [ ] отдельный fault-injection с late apply показать как
+- [x] отдельный fault-injection с late apply показать как
   выход за модель, не превратить его в successful acquire; выполнить make check.
+
+Переход после задачи 2: HTTP измеряет собственное окно BOOTTIME от открытия
+запроса до получения и разбора тела. MetadataPort принимает остаток исходного
+OperationWindow через timeout_seconds; проверка before_io и завершения общего
+READ→WRITE окна остаётся обязанностью caller. В задаче 2 эта связка проверена
+офлайн на синтетическом caller. Production-store v1 сохраняется до атомарной
+замены wire/store/потребителей в задаче 3, где общее окно подключается к ролям.
+Socket timeout не доказывает отмены или своевременного применения серверной
+записи; fake отмечает позднее применение как отдельный out_of_model fault.
 
 ### 3. Единый интеграционный переход на wire v2
 

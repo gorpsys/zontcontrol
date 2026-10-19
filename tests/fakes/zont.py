@@ -40,6 +40,13 @@ class FakeZontServer:
         self._lock = RLock()
         self.fail_before_send = False
         self._control_intervals = []
+        self._out_of_model_faults = []
+
+    @property
+    def out_of_model_faults(self):
+        """Fault injection oracle; a late apply violates v2's server assumption."""
+        with self._lock:
+            return tuple(self._out_of_model_faults)
 
     def begin_control(self, device_id, owner):
         """Independent resource oracle: record actual effects, not permissions."""
@@ -85,7 +92,7 @@ class FakeZontServer:
                 raise DeviceUnavailable()
             return deepcopy(self._devices[device_id])
 
-    def send_update(self, device_id, changes):
+    def send_update(self, device_id, changes, *, timeout_seconds=None):
         with self._lock:
             if self.fail_before_send or device_id not in self._devices:
                 raise DeviceUnavailable()
@@ -93,6 +100,8 @@ class FakeZontServer:
             self._requests.append(request)
             self._pending[request.request_id] = {
                 "request": request, "changes": deepcopy(changes), "state": "sent", "error": None,
+                "deadline": (None if timeout_seconds is None
+                             else self.clock.now() + timeout_seconds),
             }
             return request
 
@@ -107,6 +116,8 @@ class FakeZontServer:
             entry = self._entry(request)
             if entry["state"] != "sent":
                 raise AssertionError("request already resolved")
+            if entry["deadline"] is not None and self.clock.now() > entry["deadline"]:
+                self._out_of_model_faults.append((request, "late_apply"))
             self._devices[request.device_id].update(deepcopy(entry["changes"]))
             entry["state"] = "applied"
 
@@ -143,7 +154,12 @@ class FakeMetadataAdapter:
         self.write_error = None
         self._confirmation_pending = False
 
-    def read_metadata_field(self, device_id, field):
+    def read_metadata_field(self, device_id, field, *, timeout_seconds=None):
+        if timeout_seconds == 0:
+            raise DeviceUnavailable()
+        if timeout_seconds is not None and self.read_delay > timeout_seconds:
+            self.server.clock.advance(timeout_seconds)
+            raise DeviceUnavailable()
         self.server.clock.advance(self.read_delay)
         if self._confirmation_pending:
             self._confirmation_pending = False
@@ -151,10 +167,16 @@ class FakeMetadataAdapter:
                 raise DeviceUnavailable()
         return self.server.read_device(device_id)[field]
 
-    def update_metadata(self, device_id, field, value):
+    def update_metadata(self, device_id, field, value, *, timeout_seconds=None):
+        if timeout_seconds == 0:
+            raise DeviceUnavailable()
         self.writes.append((device_id, field, value))
         normalized = self.normalize.get(field, lambda raw: raw)(value)
-        request = self.server.send_update(device_id, {field: normalized})
+        request = self.server.send_update(device_id, {field: normalized},
+                                          timeout_seconds=timeout_seconds)
+        if timeout_seconds is not None and self.write_delay > timeout_seconds:
+            self.server.clock.advance(timeout_seconds)
+            self.server.respond(request, lose_response=True)
         self.server.clock.advance(self.write_delay)
         if self.write_error is not None:
             self.server.reject(request, self.write_error)

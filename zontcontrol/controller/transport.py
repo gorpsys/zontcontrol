@@ -3,6 +3,8 @@
 urllib does not expose an HTTP-send acknowledgement. Only known connection
 failures are classified NOT_SENT; timeouts and other ambiguous failures remain
 UNCONFIRMED. A failure while reading is always after the request was opened.
+Per-call bounds include reading the response body and suspend time. urllib's
+socket timeout cannot cancel a server write or establish its application time.
 """
 
 import json
@@ -14,6 +16,9 @@ from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from ..coordination.clock import BootClock
+from ..coordination.timing import OperationWindow, TimingViolation
 
 
 API_URL = "https://my.zont.online/api/widget/v3"
@@ -52,13 +57,22 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class HttpTransport:
-    def __init__(self, *, timeout=15, opener=None):
+    def __init__(self, *, timeout=15, opener=None, clock=None):
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
             raise ValueError("timeout must be between 0 and 120 seconds")
         self._timeout = timeout
         self._opener = opener if opener is not None else build_opener(NoRedirect())
+        self._clock = clock if clock is not None else BootClock()
 
-    def request(self, request: Request) -> dict:
+    def request(self, request: Request, *, timeout_seconds=None) -> dict:
+        timeout = self._timeout
+        if timeout_seconds is not None:
+            if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
+                    or timeout_seconds < 0):
+                raise ValueError("timeout_seconds must be a finite nonnegative duration")
+            if timeout_seconds == 0:
+                raise TransportError(FailureKind.NOT_SENT)
+            timeout = min(timeout, timeout_seconds)
         # Fixed origin: credentials must never be sent to an arbitrary URL.
         try:
             url = urlsplit(request.full_url)
@@ -68,8 +82,9 @@ class HttpTransport:
             trusted = False
         if not trusted:
             raise TransportError(FailureKind.NOT_SENT)
+        window = OperationWindow(self._clock, timeout)
         try:
-            response = self._opener.open(request, timeout=self._timeout)
+            response = self._opener.open(request, timeout=timeout)
         except HTTPError as error:
             status = error.code
             error.close()
@@ -89,8 +104,9 @@ class HttpTransport:
             raise TransportError(FailureKind.NOT_SENT) from None
         try:
             with response:
+                window.before_io()
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
-        except (OSError, HTTPException):
+        except (OSError, HTTPException, TimingViolation):
             raise TransportError(FailureKind.UNCONFIRMED) from None
         if len(raw) > MAX_RESPONSE_BYTES:
             raise TransportError(FailureKind.INVALID_RESPONSE)
@@ -102,4 +118,10 @@ class HttpTransport:
             raise TransportError(FailureKind.INVALID_RESPONSE)
         if data["ok"] is False:
             raise TransportError(FailureKind.REJECTED)
+        try:
+            window.complete()
+        except TimingViolation:
+            # Even an ok response is unusable after the local operation bound.
+            # This does not imply cancellation of a previously sent write.
+            raise TransportError(FailureKind.UNCONFIRMED) from None
         return data

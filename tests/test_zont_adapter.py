@@ -16,6 +16,9 @@ from zontcontrol.controller.contracts import (
 )
 from zontcontrol.controller.transport import HttpTransport
 from zontcontrol.controller.zont import ZontAdapter
+from zontcontrol.coordination.timing import OperationWindow, TimingViolation
+from tests.fakes.clock import FakeClock
+from tests.fakes.zont import FakeMetadataAdapter, FakeZontServer
 
 
 class ZontAdapterTests(unittest.TestCase):
@@ -54,6 +57,63 @@ class ZontAdapterTests(unittest.TestCase):
             self.assertEqual(request.full_url, "https://my.zont.online/api/update_device")
             self.assertEqual(json.loads(request.data), {"device_id": 42, field: "Дом [zc:тест]"})
             self.opener.open.assert_called_once()
+
+    def test_metadata_operations_forward_individual_remaining_timeouts(self):
+        clock = FakeClock()
+        window = OperationWindow(clock, 2)
+        clock.advance(.5)
+        self.answer(devices=[{"id": 42, "name": "Дом", "notes": None}])
+        self.assertEqual(self.adapter.read_metadata_field(
+            42, "name", timeout_seconds=window.before_io()), "Дом")
+        self.assertEqual(self.opener.open.call_args.kwargs["timeout"], 1.5)
+        clock.advance(.5)
+        self.answer()
+        self.adapter.update_metadata(42, "notes", "request", timeout_seconds=window.before_io())
+        self.assertEqual(self.opener.open.call_args.kwargs["timeout"], 1)
+        self.opener.open.reset_mock()
+        clock.advance(1)
+        with self.assertRaises(TimingViolation):
+            self.adapter.read_metadata_field(42, "name", timeout_seconds=window.before_io())
+        self.opener.open.assert_not_called()
+
+    def test_metadata_body_arriving_after_budget_is_unknown_without_retry(self):
+        clock = FakeClock()
+        adapter = ZontAdapter(HttpTransport(timeout=2, opener=self.opener, clock=clock), {})
+
+        class LateBody(io.BytesIO):
+            def read(self, size):
+                clock.advance(1.1)
+                return super().read(size)
+
+        self.opener.open.return_value = LateBody(b'{"ok":true}')
+        with self.assertRaises(CommandOutcomeUnknown):
+            adapter.update_metadata(42, "notes", "request", timeout_seconds=1)
+        self.opener.open.assert_called_once()
+
+    def test_late_server_apply_is_explicit_out_of_model_fault_without_success(self):
+        server = FakeZontServer({42: {"name": "Дом", "notes": "old"}})
+        adapter = FakeMetadataAdapter(server)
+        adapter.write_delay = 2
+        with self.assertRaises(CommandOutcomeUnknown):
+            adapter.update_metadata(42, "notes", "request", timeout_seconds=1)
+        self.assertEqual(server.read_device(42)["notes"], "old")
+        self.assertEqual(len(server.requests), 1)
+        server.clock.advance(.1)
+        server.apply(server.requests[0])
+        self.assertEqual(server.read_device(42)["notes"], "request")
+        self.assertEqual(server.out_of_model_faults, ((server.requests[0], "late_apply"),))
+        self.assertEqual(adapter.writes, [(42, "notes", "request")])
+
+    def test_fake_metadata_read_timeout_has_no_following_write(self):
+        server = FakeZontServer({42: {"name": "Дом", "notes": "old"}})
+        adapter = FakeMetadataAdapter(server)
+        adapter.read_delay = 2
+        window = OperationWindow(server.clock, 1)
+        with self.assertRaises(DeviceUnavailable):
+            adapter.read_metadata_field(42, "name", timeout_seconds=window.before_io())
+        with self.assertRaises(TimingViolation):
+            adapter.update_metadata(42, "notes", "request", timeout_seconds=window.before_io())
+        self.assertEqual(server.requests, ())
 
     def test_metadata_field_read_preserves_exact_value_and_rejects_other_fields(self):
         self.answer(devices=[{"id": 42, "name": " Дом  ", "notes": None}])

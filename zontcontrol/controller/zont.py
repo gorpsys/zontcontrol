@@ -59,7 +59,7 @@ class ZontAdapter:
         self._transport = transport
         self._headers = dict(headers)
 
-    def _request(self, url, *, body=None, write=False):
+    def _request(self, url, *, body=None, write=False, timeout_seconds=None):
         try:
             payload = None if body is None else json.dumps(body, allow_nan=False).encode("utf-8")
         except (ValueError, TypeError, UnicodeError):
@@ -67,7 +67,9 @@ class ZontAdapter:
         headers = self._headers if body is None else {**self._headers, "Content-Type": "application/json"}
         request = Request(url, data=payload, headers=headers, method="GET" if body is None else "POST")
         try:
-            return self._transport.request(request)
+            if timeout_seconds is None:
+                return self._transport.request(request)
+            return self._transport.request(request, timeout_seconds=timeout_seconds)
         except TransportError as error:
             raise_controller_error(error, write=write)
 
@@ -83,32 +85,35 @@ class ZontAdapter:
         suffix = "?" + urlencode(query) if query else ""
         return _devices(self._request(f"{API_URL}/devices{suffix}"), device_id)
 
-    def full_device(self, device_id, *, load_io=True):
+    def full_device(self, device_id, *, load_io=True, timeout_seconds=None):
         _device_id(device_id)
         if type(load_io) is not bool:
             raise InvalidArguments()
-        data = self._request(f"{FULL_API_URL}/devices", body={"load_io": load_io})
+        data = self._request(f"{FULL_API_URL}/devices", body={"load_io": load_io},
+                             timeout_seconds=timeout_seconds)
         return _devices(data, device_id)[0]
 
-    def read_metadata(self, device_id):
-        device = self.full_device(device_id, load_io=False)
+    def read_metadata(self, device_id, *, timeout_seconds=None):
+        device = self.full_device(device_id, load_io=False, timeout_seconds=timeout_seconds)
         if (not isinstance(device.get("name"), str) or "notes" not in device
                 or device["notes"] is not None and not isinstance(device["notes"], str)):
             raise InvalidArguments()
         return {"name": device["name"], "notes": device["notes"]}
 
-    def update_metadata(self, device_id, field, value):
+    def update_metadata(self, device_id, field, value, *, timeout_seconds=None):
         _device_id(device_id)
         if field not in ("notes", "name") or not isinstance(value, str):
             raise InvalidArguments()
         self._request(f"{FULL_API_URL}/update_device", body={"device_id": device_id, field: value},
-                      write=True)
+                      write=True, timeout_seconds=timeout_seconds)
 
-    def read_metadata_field(self, device_id, field):
+    def read_metadata_field(self, device_id, field, *, timeout_seconds=None):
         """Project a single coordination register without interpreting its content."""
         if field not in ("notes", "name"):
             raise InvalidArguments()
-        return self.read_metadata(device_id)[field]
+        if timeout_seconds is None:
+            return self.read_metadata(device_id)[field]
+        return self.read_metadata(device_id, timeout_seconds=timeout_seconds)[field]
 
     def send_command(self, command: PreparedCommand):
         """Internal send primitive; the executor must enforce ownership first."""
