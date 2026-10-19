@@ -22,15 +22,15 @@
 Номера ниже соответствуют
 [первому отчёту](2026-10-19-monopoly-protocol-v2-plan-review.md).
 Ссылки `план:строка` относятся к
-[проверенному плану](../plans/20261019002421-monopoly-protocol-v2-implementation-plan.md).
+[проверенному плану](../plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md).
 
 | Пункт | Статус | Основание в текущем плане |
 | --- | --- | --- |
-| 1. P2 — смена профиля A→B | Закрыт | `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:536` — полный previous_profile, остановка A, ожидание по A, порядок R1 B→R2 B и продолжение после прерывания |
-| 2. P2 — повтор обслуженного nonce | Закрыт | `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:246` и `:352` — привязка к term_id, память всех обработанных ключей срока и сохраняемый handled_request |
-| 3. P2 — expiry→guard | Закрыт | `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:380` — reserved_until, сохранение хвоста после естественного expiry и порядок продвижения двух слотов |
-| 4. P2 — зелёные границы TDD | Закрыт | `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:577`, `:608`, `:634` и `:750` — независимые первые задачи и единый полный green после 3.1–3.5 |
-| 5. P3 — отказы при калибровке | Выполнен | `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:462` — нормальная/fault-матрицы, полный знаменатель, success_rate перед p99, unknown и цензурирование timeout |
+| 1. P2 — смена профиля A→B | Закрыт | `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:536` — полный previous_profile, остановка A, ожидание по A, порядок R1 B→R2 B и продолжение после прерывания |
+| 2. P2 — повтор обслуженного nonce | Закрыт | `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:246` и `:352` — привязка к term_id, память всех обработанных ключей срока и сохраняемый handled_request |
+| 3. P2 — expiry→guard | Закрыт | `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:380` — reserved_until, сохранение хвоста после естественного expiry и порядок продвижения двух слотов |
+| 4. P2 — зелёные границы TDD | Закрыт | `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:577`, `:608`, `:634` и `:750` — независимые первые задачи и единый полный green после 3.1–3.5 |
+| 5. P3 — отказы при калибровке | Выполнен | `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:462` — нормальная/fault-матрицы, полный знаменатель, success_rate перед p99, unknown и цензурирование timeout |
 
 ### 1. Переход профиля
 

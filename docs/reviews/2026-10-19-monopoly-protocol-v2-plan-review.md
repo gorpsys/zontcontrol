@@ -17,7 +17,7 @@
 
 ### 1. P2 — смена общего профиля после калибровки заблокирована самим протоколом
 
-**Место:** `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:210`
+**Место:** `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:210`
 и `:388`; также `:407` и `:720`.
 
 В profile входят UUID и параметры Delta/Delta_cmd; несовпадение запрещает
@@ -56,7 +56,7 @@ profile_id. Перехода между этими состояниями нет
 
 ### 2. P2 — не определено сохранение использованного nonce после удаления grant и смены лидера
 
-**Место:** `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:319`,
+**Место:** `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:319`,
 также `:189`, `:233` и `:331`.
 
 Повтор того же nonce должен возвращать прежнее назначение, не создавая нового
@@ -94,7 +94,7 @@ DTO и переходами; возможны повторные бессмыс�
 
 ### 3. P2 — формула паузы между владельцами не доведена до состояния после expiry
 
-**Место:** `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:299`,
+**Место:** `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:299`,
 также `:308`, `:323` и `:504`.
 
 Задан guard после предыдущего valid_until, но отсутствует переход для
@@ -131,7 +131,7 @@ grant. Сохранение резерва до срока плюс guard явн
 
 ### 4. P2 — границы задач 3–7 не позволяют выполнить требование зелёного полного набора после каждой задачи
 
-**Место:** `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:415`,
+**Место:** `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:415`,
 также `:463`, `:481`, `:496`, `:513` и `:532`.
 
 После каждой задачи предписан полный зелёный make check и запрещён переход к
@@ -173,7 +173,7 @@ AGENTS.md, последнее — самим планом. Согласован�
 
 ### 5. P3 — критерий выбора калиброванного профиля стоит дополнить обработкой отказов
 
-**Место:** `docs/plans/20261019002421-monopoly-protocol-v2-implementation-plan.md:589`
+**Место:** `docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md:589`
 и `:593`.
 
 План предлагает измерять timeouts/конфликты/renewal, но ранжировать допустимые

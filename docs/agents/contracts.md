@@ -1,6 +1,7 @@
 # Контракты приложения
 
-Описывает реализованное локальное приложение 0.2.1, API v1 на 17.10.2026.
+Описывает реализованное локальное приложение 0.3.0, Controller API v1 и
+wire v2 на 19.10.2026.
 [Архитектура](architecture.md) раскрывает границы и решения; точные DTO и
 ошибки доступны через zontcontrol/controller/contracts.py, общие типы определены
 в zontcontrol/control_types.py, алгоритмы — в zontcontrol/autonomy/contracts.py.
@@ -35,7 +36,8 @@ SIGINT/SIGTERM. IPC нет.
 
 Production-потребители используют статические реэкспорты zontcontrol.coordination:
 CoordinationRuntime, CoordinatorWorker, CoordinationGate, MetadataPort,
-CoordinationSettings, Clock, BootClock, LeaseTiming, Statistics, JsonlSink,
+CoordinationSettings, Clock, EpochSampler, BootClock, LeaseTiming, ProtocolProfile,
+Statistics, JsonlSink,
 ObservationError, observe, error_event, analyze и read_jsonl; типы наблюдений —
 Observer, ObservationSink и ObservationValue. Leader/grants/store,
 wire records и алгоритм R1/R2 остаются внутренними деталями пакета.
@@ -49,12 +51,13 @@ CommandOutcomeUnknown, DeviceControlBusy, ControlOwnershipRequired, RateLimited
 CoordinationGate сохраняет try_acquire, abandon_request, validate и release.
 observation_context остаётся optional hook; close не является обязательным
 методом gate. MetadataPort содержит read_metadata, read_metadata_field и
-update_metadata; ZontAdapter реализует его структурно. CoordinationSettings
-передаёт delta_seconds и timing: LeaseTiming; Clock — now() и
+update_metadata с optional per-call timeout_seconds; ZontAdapter реализует его
+структурно. CoordinationSettings передаёт delta_seconds, timing: LeaseTiming,
+profile/previous_profile и poll/retry/jitter/renewal; Clock — now() и
 wait(cancelled, seconds). Runtime получает прежние adapter/config/clock/statistics
 и необязательные worker_factory и uuid_factory; пакет не читает конфиги и не открывает транспорт.
 Точная assembly seam и порядок закрытия — [архитектура, §1](architecture.md#1-состав-и-границы).
-Controller API_VERSION=1 и wire v1 сохранены.
+Controller API_VERSION=1 сохранён; внутренний wire заменён несовместимым v2.
 
 create_application(uuid_factory=...) передаёт один источник UUID в runtime
 координации, локальный исполнитель, менеджер запросов и runtime алгоритмов.
@@ -66,7 +69,16 @@ ControlRequestManager использует свой существующий uui
 для участвующих клиентов. Фиксированные последовательности предназначены для
 изолированных офлайн-проверок, а не совместной работы с устройством. DI не меняет
 точки генерации ID и не делает порядок планирования потоков детерминированным.
-Токен срока лидерства сохраняет отдельный token_factory в LeaderElection.
+Term_id, clock_id и record_id также получают UUID из того же источника;
+отдельной фабрики старого token нет.
+
+R1=name содержит лидера, текущий+один будущий grant, отказ и handled_request;
+пишут только лидер/кандидаты. R2=notes содержит один acquire/heartbeat/finish/cancel;
+пишут только исполнители, лидер только читает. Даже локальные роли общаются
+через регистры. Без лидера выдачи нет. Неизвестные/v1/повреждённые данные и
+профили отклоняются без очистки; новый запуск на исходном name/пустых notes
+не требует миграции. Точные поля UUID/сроков, A→B и условные гарантии —
+[контракт протокола](../reference/leader-election.md).
 
 ## Чтение и время
 
@@ -113,7 +125,7 @@ execute_command
 
 Принятая команда завершается независимо от последующего stop/timeout once.
 Это относится и к finally. Монополия удерживается до завершения finally и
-принятых команд. Новые команды при локальном истечении R2 отклоняются,
+принятых команд. Новые команды при локальном истечении grant отклоняются,
 включая finally; локальный mutex не продлевает аренду. LeaseLost останавливает
 координатора, не отзывает сессию алгоритма. Межклиентская схема и принятый риск —
 [лидерство](../reference/leader-election.md), [статистика](../reference/orchestration-risk.md).
@@ -135,7 +147,7 @@ continuous владеет внутренним циклом и таймаута�
 try_acquire_control, request_control и acquire_control, в том числе на уже выданном фасаде, получают
 ControlOwnershipRequired без gate/HTTP. Существующая действующая сессия,
 для которой ещё не запрошен release, сохраняет обычное право execute_command
-и finally до истечения R2. Shutdown не продлевает аренду и не отменяет уже
+и finally до истечения grant. Shutdown не продлевает аренду и не отменяет уже
 принятые команды. Начавшийся до shutdown acquisition учитывается в ожидании;
 сессия, не зафиксированная до закрытия входа, потребителю не выдаётся и проходит
 cleanup разрешения внутри исполнителя.
@@ -172,9 +184,20 @@ Shutdown-поток и завершающий hook не запускаются, 
 для cleanup действующих владельцев в пределах аренды. Повторный close не
 повторяет hook; событие результата с ошибкой не доказывает закрытия ресурсов.
 
-Прямой ЛК остаётся с принятым человеком риском. Занятость видна в name/R2
+Прямой ЛК остаётся с принятым человеком риском. Занятость видна по grants в name/R1
 с исходным префиксом, но это не техническая блокировка ЛК и не доказательство
 авторства команды. Ручной on во время импульса не отменяет его finally off.
+
+Уже подтверждённый grant хранится с причинным ClockSample и исходным локальным
+интервалом `[usable_from, expires_at)`. Время wire — UNIX epoch по фиксированной
+BOOTTIME-шкале лидера, не wall-clock исполнителя. Смена текущего лидера не
+отзывает grant и не обновляет его проекцию; после restart права без исходной
+привязки не восстанавливаются. Перед каждым grant отдельно подтверждается
+renewal лидера и horizon `leader_until >= valid_until+Delta`. Между grants
+резерв до `valid_until+K(Delta_cmd)*Delta_cmd`; finish/cancel его не сокращают.
+Память nonce всего срока и handled_request предотвращают повторную выдачу
+старой попытки после expiry/вытеснения/takeover. Лидер при остановке не пишет
+ранний FREE; старые сроки истекают естественно.
 
 ## Запрос монополии API v1
 
@@ -218,6 +241,15 @@ session, reason, error_code:
 | GRANTED | Точный объект ControlSession своего прибора | None / None |
 | DENIED | None | Обязательная reason; error_code только при CONTROLLER_ERROR |
 
+Заранее опубликованный будущий grant остаётся REQUESTED с session=None до
+usable_from, без нового публичного типа. Если исходный timeout/lease наступил
+раньше, handle становится DENIED и поздний grant caller не раскрывается.
+Вытеснение R2 или смена срока до получения grant допускает повтор с исходным
+request_id; новый срок требует свежего nonce, не новых локальных бюджетов.
+Get/cancel локальны; cancel не отзывает уже опубликованную бронь и не меняет
+победивший terminal GRANTED. Подтверждённый future grant не переиздаётся
+из-за смены текущего лидера.
+
 ControlRequestReason: TIMEOUT='timeout', CANCELLED='cancelled',
 SHUTDOWN='shutdown', LEASE_EXPIRED='lease_expired',
 CONTROLLER_ERROR='controller_error'. ControlRequestErrorCode задаёт безопасное
@@ -252,11 +284,11 @@ lease_deadline=created_at+lease_seconds и attempt_deadline=min(wait_deadline,
 lease_deadline). Очередь, polling, повторная публикация и ack их не переносят.
 poll_seconds — интервал gate-попыток, а не timeout и не новый срок аренды;
 timeout короче poll_seconds допустим. Session.expires_at — минимум нижнего
-срока подтверждённого R2 и исходного lease_deadline; это тот же объект у gate
+срока подтверждённого grant R1 и исходного lease_deadline; это тот же объект у gate
 и исполнителя. Аренду на grant, всю секцию, finally и запас выбирает потребитель.
 
 Busy, DeviceUnavailable и RateLimited оставляют REQUESTED до следующего poll;
-CommandOutcomeUnknown при публикации R1 оставляет gate в uncertain и допускает
+CommandOutcomeUnknown при публикации запроса R2 оставляет gate в uncertain и допускает
 чтение ack без слепого повтора записи. Иная ошибка даёт DENIED/CONTROLLER_ERROR.
 При одновременных причинах приоритет SHUTDOWN, CANCELLED, LEASE_EXPIRED, TIMEOUT.
 Равенство deadline уже означает отказ. Просроченная полученная session даёт
@@ -308,6 +340,15 @@ C03 запрещает новому запросу наследовать отк
 config/\<algorithm_id\>.json. Последний читает и проверяет сама фабрика модуля;
 регистратор не знает module_configs. Общих --config/ZONT_CONFIG нет.
 Примеры и рабочие конфиги не включаются в wheel. [Схемы](../../config/README.md).
+
+Controller требует v2 поля delta_cmd_seconds/profile_id и pacing. Пример
+5/5/300 с — unmeasured безопасность; poll 20/retry 60/jitter 0.25/renewal 0.25 —
+provisional runtime, отдельно от симуляционного победителя 1/5. Профиль
+безопасности меняется согласованным перезапуском с полным previous_profile A
+и новым UUID B: дождаться A, записать R1 B, затем обычный запрос R2 B.
+При горизонте старой аренды 300 с наблюдение ≈331.58 с плюс накладные расходы;
+один request 90 с takeover не обеспечивает. Уже запущенный coordinator живёт
+независимо от terminal bootstrap; новый запрос имеет новые фиксированные сроки.
 
 ZONT_TOKEN — только окружение; контакт приложения — controller.json.
 Интерактивная утилита токена имеет закрытый ввод пароля. Не выводить секреты

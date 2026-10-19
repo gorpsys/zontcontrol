@@ -5,7 +5,7 @@
 | Управляющий фасад, регистратор/DI, once/continuous и автономные модули | [Целевая архитектура](architecture.md), [текущие контракты](contracts.md) |
 | API, датчики, история, команды и CLI | [Контракты](contracts.md), [справочник API](../reference/zont-api.md) |
 | Монополия управления устройством и общие флаги ZONT | [Архитектура, §3](architecture.md#3-независимость-команды-и-полномочия), [исследование API](../reports/2026-10-14-zont-control-lock-api.md) |
-| Условный выбор лидера, сроки аренды и координация исполнителей | [Контракт лидерства](../reference/leader-election.md), [проверка формул](../reports/2026-10-14-fischer-lease-review.md) |
+| Выбор лидера и grants v2: R1=name, R2=notes, сроки и профили | [Текущий контракт](../reference/leader-election.md), [решения v2](../history/2026-10-19-monopoly-protocol-v2.md), [калибровка](../reports/2026-10-19-coordination-v2-calibration.md) |
 | Граница coordination, общие типы, порты и сборка runtime | [Архитектура, §1](architecture.md#1-состав-и-границы), [контракты пакета](contracts.md#граница-пакета-coordination) |
 | Допустимый риск и проверка надёжности оркестрации | [Реестр сценариев и запрещённых регрессий](../reference/coordination-failure-scenarios.md), [учёт риска и статистика](../reference/orchestration-risk.md), [модель R1/R2](../reports/2026-10-14-two-register-coordination-review.md) |
 | Детектор, калибровка и модуль сброса | [Контракты](contracts.md), [детектор](../reference/anomaly-detection.md), [сброс котла](../reference/boiler-reset.md), [отчёт](../reports/2026-10-13-anomaly-calibration.md) |
@@ -22,10 +22,13 @@
 Прототип заменяется без обратной совместимости —
 [решение и итог разбора четырёх замечаний плана](../history/2026-10-15-prototype-replacement.md).
 
-architecture.md описывает реализованную локальную конструкцию 0.2.1 на 17.10.2026;
+architecture.md описывает реализованную локальную конструкцию 0.3.0 на 19.10.2026;
 [итог и границы проверки](../history/2026-10-16-architecture-implementation.md).
 Структурная изоляция координации —
 [выполненный план](../plans/completed/20261017220801-coordination-isolation-implementation-plan.md).
+Замена внутреннего wire на v2 с сохранением статической границы —
+[выполненный план](../plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md).
+Исторические отчёты v1 не заменяют текущие роли регистров и формулы.
 Запрос монополии API v1 — [текущий договор](contracts.md#запрос-монополии-api-v1),
 [выполненный план issue #4](../plans/completed/20261016204209-control-request-api-implementation-plan.md).
 [Независимое ревью первоначального проекта](../reviews/2026-10-14-autonomy-architecture.md)

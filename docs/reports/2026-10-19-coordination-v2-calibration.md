@@ -8,7 +8,7 @@
 ## Входы и воспроизведение
 
 Исходная методика —
-[план, статистика и калибровка](../plans/20261019002421-monopoly-protocol-v2-implementation-plan.md#статистика-и-калибровка).
+[план, статистика и калибровка](../plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md#статистика-и-калибровка).
 Исполняются настоящие LeaderElection, GrantCoordinator, ExecutorGate,
 LeaderStore/ExecutorStore и wire v2. UUID генерируются через DI. Управляемые
 часы и fake metadata port не обращаются к устройству.
