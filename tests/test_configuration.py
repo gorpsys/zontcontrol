@@ -23,6 +23,19 @@ def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_example_pacing_is_a_feasible_calibration_grid_member(self):
+        from scripts.calibrate_coordination import Safety, Pacing, candidates
+        project = Path(__file__).resolve().parents[1]
+        config = load_controller_config(reader=lambda path: read_json(
+            project/'config/controller.example.json'))
+        settings = config.coordination
+        pacing = Pacing(settings.poll_seconds, settings.retry_seconds,
+                        settings.jitter_fraction, settings.renewal_fraction)
+        safety = Safety(delta=settings.delta_seconds, delta_cmd=settings.delta_cmd_seconds,
+                        period=settings.leader_period_seconds)
+        self.assertIn(pacing, list(candidates(safety)))
+        self.assertIn('unmeasured', config.statistics.profile)
+
     def test_cli_existing_json_uses_default_and_new_wait_is_module_owned(self):
         self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
                                      'lease_seconds': 20})

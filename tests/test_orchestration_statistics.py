@@ -23,6 +23,41 @@ from zontcontrol.control_types import CommandOutcomeUnknown
 
 
 class StatisticsTests(unittest.TestCase):
+    def test_calibration_analyzer_rejects_incomplete_normal_grid(self):
+        from scripts.analyze_orchestration import analyze_calibration
+        from scripts.calibrate_coordination import Pacing, Safety, normal_inputs, run_series
+        from dataclasses import asdict, replace
+        import gzip
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'report.json'
+            artifact = path.parent/'one.jsonl.gz'
+            series = run_series(Pacing(1, 1, 0, .2),
+                                replace(next(normal_inputs()), requests=1), Safety())
+            with gzip.open(artifact, 'wt') as stream:
+                stream.write(json.dumps(series)+'\n')
+            path.write_text(json.dumps(dict(status='simulation', safety=asdict(Safety()),
+                profiles=[dict(pacing=Pacing(1, 1, 0, .2).as_dict(), artifact=artifact.name,
+                    sha256=hashlib.sha256(artifact.read_bytes()).hexdigest())])))
+            result = analyze_calibration(path)
+            self.assertIsNone(result['selected'])
+            self.assertEqual(result['profiles'][0]['summary']['started_requests'], 9000)
+            self.assertIn('incomplete-profile-grid', result['profiles'][0]['summary']['violations'])
+
+    def test_live_calibration_keeps_missing_requests_unknown_without_winner(self):
+        from scripts.analyze_orchestration import analyze_calibration
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'live.json'
+            path.write_text(json.dumps(dict(status='calibrated', started_requests=2,
+                samples=[dict(outcome='GRANTED', wait_s=1, timeout_s=30)],
+                schedule_confirmed=True)))
+            result = analyze_calibration(path)
+            self.assertEqual(result['status'], 'unmeasured')
+            self.assertEqual(result['summary']['started_requests'], 2)
+            self.assertEqual(result['summary']['unknown'], 1)
+            self.assertFalse(result['summary']['eligible'])
+            self.assertIsNone(result['selected'])
+
     def recorder(self, sink, **kwargs):
         return Statistics(sink, protocol_version='r1r2-v1', profile='offline', **kwargs)
 
