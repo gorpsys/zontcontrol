@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from tests.fakes.clock import FakeClock
 from tests.fakes.protocol import Scenario
+from zontcontrol.control_types import ControllerError
 from zontcontrol.coordination.clock import BootClock, clock_factor, clock_rho
 from zontcontrol.coordination.leader import LeaseLost
 from zontcontrol.coordination.models import HandledRequest, RecordError
@@ -427,9 +428,31 @@ class ElectionTests(unittest.TestCase):
         record = self.s.store.read_r1()
         self.s.inject_r1(replace(record, leader=replace(record.leader, term_id=str(self.s.uid()))))
         effects = []
-        with self.assertRaises(LeaseLost):
+        with self.assertRaises(LeaseLost) as lost:
             self.leader.coordinate(lambda record, window: effects.append(record), 1)
         self.assertEqual(effects, [])
+        self.assertIsNone(lost.exception.__cause__)
+
+    def test_internal_role_loss_preserves_caught_metadata_error(self):
+        for operation in ('try_acquire', 'confirm', 'coordinate'):
+            with self.subTest(operation=operation):
+                self.setUp()
+                if operation != 'try_acquire':
+                    self.leader.try_acquire()
+                writes = len(self.s.adapter.writes)
+                error = ControllerError()
+                with patch.object(self.s.adapter, 'read_metadata_field', side_effect=error):
+                    with self.assertRaises(LeaseLost) as lost:
+                        if operation == 'coordinate':
+                            self.leader.coordinate(lambda record, window: self.fail('not admitted'), 1)
+                        elif operation == 'confirm':
+                            self.leader.confirm(1)
+                        else:
+                            self.leader.try_acquire()
+                self.assertIs(lost.exception.__cause__, error)
+                self.assertTrue(self.leader.role_cancelled.is_set())
+                self.assertFalse(self.leader.can_coordinate(0))
+                self.assertEqual(len(self.s.adapter.writes), writes)
 
     def test_full_coordination_window_includes_confirmation_and_callback(self):
         self.leader.try_acquire()

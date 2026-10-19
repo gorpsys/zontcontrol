@@ -1,7 +1,8 @@
 """Whole-device local ownership and synchronous command admission.
 
 The coordination gate is mandatory: local exclusion alone grants no right to
-control ZONT. A production gate must validate the current R1/R2 permission.
+control ZONT. A production gate validates the cached grant's local interval;
+the executor checks local expiry again at final command admission.
 There is deliberately no local permissive implementation in the application.
 Gate I/O and command HTTP never hold the account-wide state lock.
 """

@@ -54,12 +54,12 @@ class LeaderElection:
         observe(self._statistics, event, device_id=self._store.device_id,
                 run_id=self._owner, **fields)
 
-    def _lose(self):
+    def _lose(self, cause=None):
         self._active = False
         self.role_cancelled.set()
         self._observation = None
         self._observe('leader_lost', outcome='unknown')
-        raise LeaseLost() from None
+        raise LeaseLost() from cause
 
     def stop(self):
         self.role_cancelled.set()
@@ -170,8 +170,8 @@ class LeaderElection:
                 self._observation = None
                 self._observe('leader_acquired', wait_s=self._clock.now() - sent)
                 return True
-            except (ControllerError, RecordError, TimingViolation):
-                self._lose()
+            except (ControllerError, RecordError, TimingViolation) as error:
+                self._lose(error)
 
     def _confirm(self, window):
         if not self.can_coordinate(window.remaining):
@@ -189,8 +189,8 @@ class LeaderElection:
                     record = self._confirm(window)
                     self._wake_guard.expect_resume(self._clock.now())
                     return record
-            except (ControllerError, RecordError, TimingViolation):
-                self._lose()
+            except (ControllerError, RecordError, TimingViolation) as error:
+                self._lose(error)
 
     def coordinate(self, operation, duration):
         """Internal callback gets record and original operation window."""
@@ -203,8 +203,8 @@ class LeaderElection:
                     window.complete(role_deadline=self.expires_at, stop_margin=self.timing.stop_margin)
                     self._wake_guard.expect_resume(self._clock.now())
                     return result
-            except (ControllerError, RecordError, TimingViolation):
-                self._lose()
+            except (ControllerError, RecordError, TimingViolation) as error:
+                self._lose(error)
 
     def publish(self, record, window):
         """Only called inside coordinate, under its role lock and original window."""

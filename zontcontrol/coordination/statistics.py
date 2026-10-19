@@ -364,6 +364,9 @@ def analyze_command_effects(rows: Iterable[Observation]) -> dict[str, object]:
     and local clock domain. The producer asserts that domain and evidence; this
     analyzer cannot verify a sensor, clock synchronization or a hard maximum.
     Critical section boundaries belong to the algorithm producing the sample.
+    Physical coverage includes each command ID seen at either API boundary;
+    an entirely missing residual sample is unknown. Descriptive sample counts
+    include repeated rows; command_coverage counts distinct IDs, not samples.
     """
     groups: dict[tuple[object, ...], list[Observation]] = {}
     for row in rows:
@@ -377,6 +380,8 @@ def analyze_command_effects(rows: Iterable[Observation]) -> dict[str, object]:
         values: dict[str, list[float]] = {kind: [] for kind in (*_KINDS, 'api_elapsed', 'network_to_effect')}
         unknown: Counter[str] = Counter()
         residual_limits: list[float] = []
+        residual_ids: set[object] = set()
+        measured_ids: set[object] = set()
         commands: dict[object, list[Observation]] = {}
         for row in samples:
             if row['event'] in {'command_started', 'command_finished'}:
@@ -414,7 +419,9 @@ def analyze_command_effects(rows: Iterable[Observation]) -> dict[str, object]:
                 else:
                     unknown[kind] += 1
                 continue
-            anchor = anchors.get(row.get('command_observation_id'))
+            identifier = row.get('command_observation_id')
+            residual_ids.add(identifier)
+            anchor = anchors.get(identifier)
             if (not complete or anchor is None
                     or row.get('completion_basis') != 'physical_upper_bound'
                     or row.get('clock_id') != anchor['clock_id']
@@ -427,10 +434,21 @@ def analyze_command_effects(rows: Iterable[Observation]) -> dict[str, object]:
                 continue
             elapsed = cast(float, row['effect_completed_at']) - cast(float, anchor['admitted_at'])
             values[kind].append(elapsed)
+            measured_ids.add(identifier)
             residual_limits.append(cast(float, row.get('delta_cmd_s', 5.)))
             if ('sent_at' in row and anchor['admitted_at'] <= row['sent_at'] <= row['effect_completed_at']):
                 values['network_to_effect'].append(cast(float, row['effect_completed_at']) - cast(float, row['sent_at']))
+        # Explicit invalid samples already contribute unknown above. Add only
+        # commands with no residual row at all, once per boundary identity.
+        unknown['residual_effect'] += len(commands.keys() - residual_ids)
+        command_ids = commands.keys() - {None}
         report = dict(zip(('protocol_version', 'profile', 'source', 'device_id'), key))
+        report['command_coverage'] = {
+            'identified': len(command_ids),
+            'with_physical_evidence': len(command_ids & measured_ids),
+            'without_physical_evidence': len(command_ids - measured_ids),
+            'unidentified_boundary_rows': len(commands.get(None, [])),
+        }
         for kind, durations in sorted(values.items()):
             report[kind] = sample_summary(durations, unknown=unknown[kind],
                     limits=residual_limits if kind == 'residual_effect' else None)
@@ -442,5 +460,7 @@ def analyze_command_effects(rows: Iterable[Observation]) -> dict[str, object]:
         result.append(report)
     return {'schema': 1, 'groups': result,
             'limitation': 'Descriptive samples only; API RTT is not physical completion. '
-                          'Missing/incomparable physical evidence is unknown. Recommendations '
+                          'Missing/incomparable physical evidence is unknown, including commands '
+                          'seen at either API boundary with no residual sample. Coverage counts '
+                          'distinct command IDs; descriptive samples may repeat. Recommendations '
                           'do not prove a hard bound; change the shared profile manually.'}

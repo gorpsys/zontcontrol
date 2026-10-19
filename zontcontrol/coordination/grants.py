@@ -55,6 +55,8 @@ class GrantCoordinator:
 
     def step(self, *, accepting=True):
         # Keep both protocol phases serialized with renewal and shutdown.
+        # These package-internal collaborators intentionally share the leader's
+        # reentrant role lock across their nested confirm/coordinate calls.
         with self._leader._lock:
             if self._leader.record is None:
                 self._leader.confirm(self.window)

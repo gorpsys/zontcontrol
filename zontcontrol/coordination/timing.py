@@ -108,6 +108,8 @@ class OperationWindow:
             label = f'{getpid()}-{int(self._started_at * 1e9)}-{next(_WINDOW_NUMBERS)}'
             context = dict(device_id=device_id, role=role, window_id=label)
             self._statistics, self._observation_context = statistics, context
+            # The window owns this internal guard. Attach the same observer
+            # without reconstructing its original wakeup target or failed state.
             self._freeze_guard._statistics = statistics
             self._freeze_guard._context = context
         except Exception:

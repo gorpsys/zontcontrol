@@ -120,9 +120,102 @@ class CommandEffectStatisticsTests(unittest.TestCase):
                               coverage='complete', outcome='success')
                 self.effect('residual_effect', **(fields | changes))
                 report = analyze_command_effects(self.rows)['groups'][0]
-                self.assertEqual(report['residual_effect']['unknown'], 1)
+                # An orphan sample does not cover the known admitted command.
+                self.assertEqual(report['residual_effect']['unknown'],
+                                 2 if changes == {'command_observation_id': 'missing'} else 1)
                 self.assertIsNone(report['delta_cmd_recommendation_s'])
                 self.assertEqual(report['delta_cmd_recommendation_status'], 'unknown')
+
+    def test_physical_coverage_includes_every_identified_command(self):
+        for measured in (0, 1, 2):
+            with self.subTest(measured=measured):
+                self.rows.clear()
+                self.execute()
+                self.execute()
+                starts = [row for row in self.rows if row['event'] == 'command_started']
+                for start in starts[:measured]:
+                    self.effect('residual_effect',
+                                command_observation_id=start['command_observation_id'],
+                                clock_id=start['clock_id'], admitted_at=start['admitted_at'],
+                                effect_completed_at=start['admitted_at']+6,
+                                completion_basis='physical_upper_bound',
+                                coverage='complete', outcome='success')
+                report = analyze_command_effects(self.rows)['groups'][0]
+                self.assertEqual(report['command']['count'], 2)
+                self.assertEqual(report['command_coverage'], {
+                    'identified': 2, 'with_physical_evidence': measured,
+                    'without_physical_evidence': 2-measured, 'unidentified_boundary_rows': 0,
+                })
+                self.assertEqual(report['residual_effect']['count'], measured)
+                self.assertEqual(report['residual_effect']['unknown'], 2-measured)
+                self.assertEqual(report['residual_effect']['max'], 6 if measured else None)
+                self.assertEqual(report['delta_cmd_recommendation_s'], 60 if measured else None)
+                self.assertEqual(report['delta_cmd_recommendation_status'],
+                                 ('unknown', 'incomplete', 'observed')[measured])
+
+    def test_repeated_samples_do_not_inflate_command_coverage(self):
+        self.execute()
+        start = next(row for row in self.rows if row['event'] == 'command_started')
+        self.effect('residual_effect', command_observation_id=start['command_observation_id'],
+                    clock_id=start['clock_id'], admitted_at=start['admitted_at'],
+                    effect_completed_at=start['admitted_at']+6,
+                    completion_basis='physical_upper_bound', coverage='complete', outcome='success')
+        self.rows.append(self.rows[-1].copy())
+        report = analyze_command_effects(self.rows)['groups'][0]
+        self.assertEqual(report['command']['count'], 1)
+        self.assertEqual(report['command_coverage']['identified'], 1)
+        self.assertEqual(report['command_coverage']['with_physical_evidence'], 1)
+        self.assertEqual(report['residual_effect']['count'], 2)  # Descriptive sample count.
+        self.assertEqual(report['residual_effect']['unknown'], 0)
+        self.assertEqual(report['delta_cmd_recommendation_status'], 'observed')
+        self.rows.append(start.copy())
+        repeated = analyze_command_effects(self.rows)['groups'][0]
+        self.assertEqual(repeated['command_coverage']['identified'], 1)
+        self.assertEqual(repeated['command_coverage']['without_physical_evidence'], 1)
+        self.assertEqual(repeated['command']['unknown'], 1)
+        self.assertEqual(repeated['residual_effect']['count'], 0)
+        self.assertEqual(repeated['residual_effect']['unknown'], 2)
+
+    def test_lost_boundaries_keep_identified_commands_in_physical_coverage(self):
+        self.execute()
+        for dropped in ('command_started', 'command_finished'):
+            with self.subTest(dropped=dropped):
+                report = analyze_command_effects(
+                    row for row in self.rows if row['event'] != dropped)['groups'][0]
+                self.assertEqual(report['command']['unknown'], 1)
+                self.assertEqual(report['command_coverage']['identified'], 1)
+                self.assertEqual(report['command_coverage']['without_physical_evidence'], 1)
+                self.assertEqual(report['residual_effect']['count'], 0)
+                self.assertEqual(report['residual_effect']['unknown'], 1)
+
+    def test_physical_evidence_does_not_require_an_api_finish(self):
+        self.execute()
+        start = next(row for row in self.rows if row['event'] == 'command_started')
+        self.effect('residual_effect', command_observation_id=start['command_observation_id'],
+                    clock_id=start['clock_id'], admitted_at=start['admitted_at'],
+                    effect_completed_at=start['admitted_at']+6,
+                    completion_basis='physical_upper_bound', coverage='complete', outcome='success')
+        report = analyze_command_effects(
+            row for row in self.rows if row['event'] != 'command_finished')['groups'][0]
+        self.assertEqual(report['command']['unknown'], 1)
+        self.assertEqual(report['command_coverage']['with_physical_evidence'], 1)
+        self.assertEqual(report['residual_effect']['count'], 1)
+        self.assertEqual(report['residual_effect']['unknown'], 0)
+        self.assertEqual(report['delta_cmd_recommendation_status'], 'observed')
+
+    def test_unidentified_boundaries_are_visible_without_inventing_commands(self):
+        self.execute()
+        rows = [dict(row) for row in self.rows]
+        for row in rows:
+            row.pop('command_observation_id', None)
+        report = analyze_command_effects(rows)['groups'][0]
+        self.assertEqual(report['command_coverage'], {
+            'identified': 0, 'with_physical_evidence': 0,
+            'without_physical_evidence': 0, 'unidentified_boundary_rows': 2,
+        })
+        self.assertEqual(report['residual_effect']['unknown'], 1)
+        self.assertIsNone(report['residual_effect']['max'])
+        self.assertEqual(report['delta_cmd_recommendation_status'], 'unknown')
 
     def test_residual_exceedances_use_its_own_profile_bound(self):
         self.execute()
