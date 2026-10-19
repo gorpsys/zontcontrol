@@ -121,19 +121,21 @@ class LeaderElection:
             try:
                 window = self._window()
                 with self._store.observe_window(window):
+                    read_sent_at = self.timeline.now()
                     observed = self._read(window)
                     received = self._clock.now()
                     if observed is not None and observed.leader is not None:
-                        if self._observation is None or self._observation[0] != observed:
-                            self._observation = (observed, received)
-                            return False
+                        self._observation = (observed, received)
                         old = observed.leader
-                        wait = (old.leader_until - old.sampled_at) * clock_factor(old.period_s)
+                        # Absolute scales are trusted within the larger of the
+                        # two profiles' skew bounds. Test at READ send: a slow
+                        # response must not make an early read permit capture.
+                        safe_after = old.leader_until + max(
+                            self.timing.delta, observed.profile.delta_seconds)
                         if observed.profile != self._store.profile:
-                            wait += (observed.profile.delta_cmd_seconds
-                                     * clock_factor(observed.profile.delta_cmd_seconds))
-                        # Use READ send, never its response, as the final endpoint.
-                        if window.started_at - self._observation[1] < wait:
+                            safe_after += (observed.profile.delta_cmd_seconds
+                                           * clock_factor(observed.profile.delta_cmd_seconds))
+                        if read_sent_at < safe_after:
                             return False
                     term_id = str(self._uuid_factory())
                     record_id = str(self._uuid_factory())

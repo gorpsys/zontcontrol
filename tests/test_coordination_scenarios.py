@@ -434,18 +434,18 @@ class ScenarioTests(unittest.TestCase):
                         previous = gate, owner, session, clock, rate
 
                     # Stop the old role and take over with both a different
-                    # BOOTTIME origin and a backwards UNIX origin. Stale R2
+                    # BOOTTIME origin and an absolute offset within Delta. Stale R2
                     # cannot be served in the new term or grant new authority.
                     gate, owner, session, clock, rate = previous
                     advance((session.expires_at-clock.now())/rate + 1)
                     old_request = s.store.read_r2()
                     old_term = s.leader.record.term_id
                     s.leader.stop()
-                    takeover_rate = 1.005
+                    takeover_rate = 1.0001
                     takeover_clock = FakeClock(start=700000, rate=takeover_rate)
                     clocks.append((takeover_clock, takeover_rate))
                     successor = LeaderElection(s.store, str(s.uid()), s.leader.timing,
-                        clock=takeover_clock, epoch_sampler=lambda: 900000000,
+                        clock=takeover_clock, epoch_sampler=lambda: s.leader.timeline.now()+.5,
                         uuid_factory=s.uid)
                     active_leaders[:] = [(successor, takeover_rate)]
                     self.assertFalse(successor.try_acquire())
@@ -463,7 +463,7 @@ class ScenarioTests(unittest.TestCase):
                     self.assertEqual(successor.record.term_id, str(UUID(int=before_takeover+1)))
                     self.assertNotEqual(successor.record.term_id, old_term)
                     self.assertNotEqual(successor.timeline.clock_id, s.leader.timeline.clock_id)
-                    self.assertLess(successor.timeline.now(), issued[-1].sampled_at)
+                    self.assertLessEqual(abs(successor.timeline.now()-s.leader.timeline.now()), 1)
                     advance(successor.timing.quarantine/takeover_rate)
                     coordinator = GrantCoordinator(s.store, successor, clock=takeover_clock,
                                                    uuid_factory=s.uid)

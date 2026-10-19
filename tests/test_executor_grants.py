@@ -671,7 +671,8 @@ class GrantTests(unittest.TestCase):
     def test_restart_does_not_serve_unchanged_old_term_request(self):
         self.s.acquire(seconds=10)
         old = self.s.store.read_r2()
-        new = self.s.candidate(epoch=900000000)
+        new = self.s.candidate()
+        self.assertNotEqual(new.timeline.clock_id, self.s.leader.timeline.clock_id)
         self.assertFalse(new.try_acquire())
         self.s.advance(1000*clock_factor(1000))
         self.assertTrue(new.try_acquire())

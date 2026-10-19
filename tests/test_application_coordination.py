@@ -879,7 +879,7 @@ class ProfileTransitionTests(unittest.TestCase):
         self.store = s.make_store(LeaderStore, profile=self.b, previous=self.a)
         self.executor = s.make_store(ExecutorStore, profile=self.b, previous=self.a)
         self.leader = LeaderElection(self.store, str(s.uid()), LeaseTiming(300, 2, 3),
-            clock=s.clock, uuid_factory=s.uid, epoch_sampler=lambda: 900000000)
+            clock=s.clock, uuid_factory=s.uid, epoch_sampler=s.leader.timeline.now)
         self.gate = ExecutorGate({42: self.executor}, clock=s.clock, delta=2, uuid_factory=s.uid)
         self.coordinator = GrantCoordinator(self.store, self.leader, clock=s.clock, uuid_factory=s.uid)
 
@@ -899,8 +899,9 @@ class ProfileTransitionTests(unittest.TestCase):
         old_nonce = pending.request.nonce
         self.assertEqual(s.store.read_r2().profile_id, self.a.profile_id)
         self.assertFalse(self.leader.try_acquire())
-        wait = ((original.leader.leader_until-original.leader.sampled_at)*clock_factor(60)
-                + self.a.delta_cmd_seconds*clock_factor(self.a.delta_cmd_seconds))
+        safe_after = (original.leader.leader_until + max(self.a.delta_seconds, self.b.delta_seconds)
+                      + self.a.delta_cmd_seconds*clock_factor(self.a.delta_cmd_seconds))
+        wait = safe_after-self.leader.timeline.now()
         s.advance(wait-.01, self.leader)
         self.assertFalse(self.leader.try_acquire())
         self.assertEqual(s.store.read_r1(), original)
@@ -931,7 +932,8 @@ class ProfileTransitionTests(unittest.TestCase):
         s.acquire(seconds=10)
         s.leader.stop()
         self.assertFalse(self.leader.try_acquire())
-        s.advance(60*clock_factor(60)+clock_factor(1)+.01, self.leader)
+        safe_after = s.leader.record.leader_until + 2 + clock_factor(1)
+        s.advance(safe_after-self.leader.timeline.now()+.01, self.leader)
         self.assertTrue(self.leader.try_acquire())
         before = self.store.read_r1()
         self.leader.stop()

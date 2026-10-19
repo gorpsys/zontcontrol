@@ -49,8 +49,8 @@ def _uuid(value):
 class LeaderTimeline:
     """One process incarnation's fixed UNIX/BOOTTIME binding, immune to NTP.
 
-    Snapshot uncertainty is bounded by delta; the midpoint is merely an origin,
-    not an assertion of accurate UTC. Subsequent time reads use BOOTTIME only.
+    Snapshot uncertainty is bounded by delta. Accuracy and pairwise absolute
+    skew are model assumptions, not proved by capture. Further reads use BOOTTIME.
     """
 
     _clock: 'Clock'

@@ -34,9 +34,11 @@ class Scenario:
                    notes_capacity=10000, name_capacity=10000, profile=profile or self.profile,
                    previous_profile=previous)
 
-    def candidate(self, *, period=1000, store=None, epoch=1700000000, **kwargs):
+    def candidate(self, *, period=1000, store=None, epoch=None, **kwargs):
         from zontcontrol.coordination.leader import LeaderElection
         from zontcontrol.coordination.timing import LeaseTiming
+        if epoch is None:
+            epoch = 1700000000 + self.clock.now() - 100
         return LeaderElection(store or self.store, str(self.uid()),
             LeaseTiming(period, 1, (store or self.store).profile.delta_cmd_seconds),
             clock=self.clock, epoch_sampler=lambda: epoch, uuid_factory=self.uid, **kwargs)

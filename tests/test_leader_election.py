@@ -346,29 +346,82 @@ class ElectionTests(unittest.TestCase):
         self.assertTrue(self.leader.role_cancelled.is_set())
         self.assertEqual(len(self.s.adapter.writes), 1)
 
-    def test_expiry_observation_starts_at_response_and_ends_at_last_read_send(self):
+    def test_expired_absolute_lease_is_captured_on_first_read(self):
+        self.assertTrue(self.leader.try_acquire())
+        self.s.advance(1001)
+        other = self.s.candidate(epoch=self.leader.timeline.now())
+        started = self.s.clock.now()
+        self.assertTrue(other.try_acquire())
+        self.assertEqual(self.s.clock.now() - started, other.timing.barrier)
+        self.assertNotEqual(other.record.term_id, self.leader.record.term_id)
+
+    def test_absolute_expiry_uses_read_send_before_a_response_crosses_margin(self):
         self.leader.try_acquire()
-        other = self.s.candidate()
+        old = self.leader.record
+        self.s.advance(old.leader_until + 1 - self.leader.timeline.now() - .05)
+        other = self.s.candidate(epoch=self.leader.timeline.now())
         self.s.adapter.read_delay = .1
         self.assertFalse(other.try_acquire())
-        response = self.s.clock.now()
-        old = self.s.store.read_r1().leader
-        wait = (old.leader_until-old.sampled_at)*clock_factor(old.period_s)
-        self.s.advance(wait - .15)
+        self.assertGreater(other.timeline.now(), old.leader_until + 1)
+        self.assertEqual(len(self.s.adapter.writes), 1)
+        self.assertTrue(other.try_acquire())
+
+    def test_fast_absolute_clock_cannot_capture_before_skew_margin(self):
+        self.leader.try_acquire()
+        old = self.leader.record
+        self.s.advance(old.leader_until - self.leader.timeline.now() - .1)
+        other = self.s.candidate(epoch=self.leader.timeline.now() + 1)
         self.assertFalse(other.try_acquire())
-        self.assertGreater(self.s.clock.now() - response, wait)
+        self.assertEqual(len(self.s.adapter.writes), 1)
+        self.s.advance(.2, other)
+        self.assertTrue(other.try_acquire())
+
+    def test_profile_switch_keeps_old_clock_margin_and_physical_tail(self):
+        from zontcontrol.coordination.leader import LeaderElection
+        from zontcontrol.coordination.models import ProtocolProfile
+        from zontcontrol.coordination.store import LeaderStore
+
+        self.leader.try_acquire()
+        old = self.leader.record
+        margin = 1 + self.leader.timing.command_guard
+        self.s.advance(old.leader_until + margin - self.leader.timeline.now() - .1)
+        profile = ProtocolProfile(str(self.s.uid()), .5, 1)
+        store = self.s.make_store(LeaderStore, profile=profile, previous=self.s.profile)
+        other = LeaderElection(store, str(self.s.uid()), LeaseTiming(60, .5, 1),
+            clock=self.s.clock, epoch_sampler=self.leader.timeline.now,
+            uuid_factory=self.s.uid)
+        self.assertFalse(other.try_acquire())
+        self.assertEqual(len(self.s.adapter.writes), 1)
+        self.s.advance(.2, other)
+        self.assertTrue(other.try_acquire())
+        self.assertEqual(store.read_r1().profile, profile)
+
+    def test_renewed_absolute_deadline_prevents_capture_at_the_old_deadline(self):
+        self.leader.try_acquire()
+        other = self.s.candidate()
+        self.assertFalse(other.try_acquire())
+        old = self.leader.record
+        self.s.advance(20, other)
+        self.leader.renew()
+        renewed = self.leader.record
+        self.assertGreater(renewed.leader_until, old.leader_until)
+        self.s.advance(old.leader_until + 1 - other.timeline.now() + .1, other)
+        self.assertFalse(other.try_acquire())
+        self.assertEqual(len(self.s.adapter.writes), 2)
+        self.s.advance(renewed.leader_until + 1 - other.timeline.now() + .1, other)
         self.assertTrue(other.try_acquire())
         self.assertNotEqual(other.record.term_id, self.leader.record.term_id)
 
-    def test_observation_resets_for_every_record_id_including_replies(self):
+    def test_record_id_change_does_not_restart_the_expired_absolute_lease(self):
         self.leader.try_acquire()
         other = self.s.candidate()
         self.assertFalse(other.try_acquire())
         old = self.s.store.read_r1()
         self.s.advance(1100)
         self.s.inject_r1(replace(old, record_id=str(self.s.uid())))
-        self.assertFalse(other.try_acquire())
-        self.assertEqual(len(self.s.adapter.writes), 1)
+        self.assertTrue(other.try_acquire())
+        self.assertEqual(len(self.s.adapter.writes), 2)
+        self.assertNotEqual(other.record.term_id, old.leader.term_id)
 
     def test_renew_grows_revision_preserves_marker_and_cap(self):
         self.leader.try_acquire()
