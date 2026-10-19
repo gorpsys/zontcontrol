@@ -37,7 +37,7 @@ _EVENTS = frozenset({
     'leader_acquired', 'leader_renewed', 'leader_lost', 'leader_released',
     'leader_changed_active_grant', 'delta_breach', 'rtt', 'rate_limited',
     'timeout', 'error', 'cleanup', 'conflict', 'command', 'grant_ack', 'leader_attempt',
-    'sync_started', 'sync_read', 'sync_write', 'sync_confirmation', 'sync_window',
+    'sync_started', 'sync_read', 'sync_write_started', 'sync_write', 'sync_confirmation', 'sync_window',
     'freeze', 'command_started', 'command_finished', 'command_effect',
 })
 _IDS = frozenset({'episode_id', 'run_id', 'request_id', 'grant_id', 'leader_term',
@@ -256,7 +256,11 @@ def _synchronization(rows: list[Observation]) -> dict[str, object]:
                        row.get('stage', 'unknown'), metric)
                 metrics.setdefault(key, []).append((cast(float, row[metric]),
                         cast(float, row.get('delta_s', 5.)),
-                        row.get('outcome') in {'unknown', 'failure'}))
+                        row.get('outcome') in {'unknown', 'failure'}
+                        # Earlier v2 records measured send, without a response
+                        # outcome. Keep that elapsed lower bound, never present
+                        # it as a completed READ-to-WRITE percentile.
+                        or metric == 'read_write_s' and row.get('outcome') != 'success'))
         if 'window_id' in row and row['event'] in {'sync_started', 'sync_window'}:
             key = (row.get('device_id'), row['window_id'])
             windows.setdefault(key, []).append(row)

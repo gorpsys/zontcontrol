@@ -92,11 +92,6 @@ def candidates(safety):
         try:
             CoordinationConfig(safety.delta, safety.period, safety.delta_cmd,
                                PROFILE_ID, **pacing.as_dict())
-            # The wake + full renewal window must fit before the stop margin.
-            if (safety.period * pacing.renewal_fraction
-                    + pacing.poll_seconds * (1 + pacing.jitter_fraction) + 2*safety.delta
-                    >= safety.period - safety.timing.stop_margin):
-                continue
         except ValueError:
             continue
         yield pacing
@@ -272,10 +267,24 @@ def run_series(pacing, item, safety):
                                        uuid_factory=uid, statistics=observations)
     leader, coordinator = new_leader()
     leader.try_acquire()
+    term_trace = []
+    renewed_at = leader_clock.now()
     if item.scenario == 'term-handover':
-        world.now += (safety.timing.term_budget - safety.period/2) / leader_clock.rate
-        # This is a planned idle interval, not an injected process freeze.
-        leader.expect_resume(leader_clock.now())
+        target = leader.term_expires_at - safety.period/2
+        # Reach the cap using actual bounded renewal operations. A jump past
+        # the initial lease would model crash recovery instead of handover.
+        while leader_clock.now() < target:
+            wake = min(target, renewed_at+safety.period*pacing.renewal_fraction)
+            world.now += max(0, wake-leader_clock.now())/leader_clock.rate
+            leader.expect_resume(leader_clock.now())
+            leader.renew()
+            renewed_at = leader_clock.now()
+            term_trace.append(dict(event='renewed', at=renewed_at,
+                term=leader.record.term_id, expires_at=leader.expires_at,
+                cap=leader.term_expires_at))
+        term_trace.append(dict(event='near-cap', at=leader_clock.now(),
+            active=leader.can_coordinate(safety.delta), term=leader.record.term_id,
+            expires_at=leader.expires_at, cap=leader.term_expires_at))
     gate = ExecutorGate({42: executor_store}, clock=executor_clock, delta=safety.delta,
                         uuid_factory=uid, statistics=observations,
                         retry_seconds=pacing.retry_seconds)
@@ -283,7 +292,7 @@ def run_series(pacing, item, safety):
     samples, active = [], []
     started = 0
     leader_due = world.now
-    renewed_at = leader_clock.now()
+    retired_terms = set()
     displaced = False
     def pause(base, rate):
         return base * (1 + rng.uniform(0, pacing.jitter_fraction)) / rate
@@ -362,12 +371,20 @@ def run_series(pacing, item, safety):
             leader.expect_resume(leader_clock.now())
             try:
                 if not leader.can_coordinate(safety.delta):
+                    if leader.record is not None and leader.record.term_id not in retired_terms:
+                        retired_terms.add(leader.record.term_id)
+                        term_trace.append(dict(event='retired', at=leader_clock.now(),
+                            term=leader.record.term_id, expires_at=leader.expires_at,
+                            cap=leader.term_expires_at,
+                            reason='term-limit' if leader.expires_at == leader.term_expires_at else 'lease'))
                     if leader.record is not None and leader_clock.now() >= leader.term_expires_at:
                         leader.stop()
                         leader, coordinator = new_leader()
                     if not leader.try_acquire():
                         leader_due = world.now + pause(pacing.retry_seconds, leader_clock.rate)
                         continue
+                    term_trace.append(dict(event='acquired', at=leader_clock.now(),
+                        term=leader.record.term_id, cap=leader.term_expires_at))
                     renewed_at = leader_clock.now()
                 if leader_clock.now()-renewed_at >= safety.period*pacing.renewal_fraction:
                     leader.renew()
@@ -380,6 +397,7 @@ def run_series(pacing, item, safety):
     return dict(status='simulation', inputs=asdict(item), samples=sorted(samples, key=lambda s:s['index']),
         summary=request_summary(samples, violations=violations, expected=item.requests),
         http_count=port.http_count, leader_terms=observations.terms,
+        term_trace=term_trace,
         sync_windows=sample_summary(observations.windows), window_samples_s=observations.windows,
         violations=sorted(set(violations)))
 
@@ -611,15 +629,19 @@ def _profile_job(job):
 
 
 def _refresh_r2_job(job):
-    pacing, safety, output = job
+    return _refresh_scenario_job((*job, job[2], 'r2-displaced'))
+
+
+def _refresh_scenario_job(job):
+    pacing, safety, output, source, scenario = job
     label = '-'.join(format(v, '.8g') for v in asdict(pacing).values())
-    with gzip.open(Path(output)/(label+'.jsonl.gz'), 'rt', encoding='utf-8') as stream:
+    with gzip.open(Path(source)/(label+'.jsonl.gz'), 'rt', encoding='utf-8') as stream:
         old = [json.loads(line) for line in stream]
     if len(old) != 90:
         raise ValueError('Cannot refresh an incomplete matrix')
     rows = []
     for row in old:
-        if row['inputs']['scenario'] == 'r2-displaced':
+        if row['inputs']['scenario'] == scenario:
             item = dict(row['inputs'])
             item['clock_rates'] = tuple(item['clock_rates'])
             with cached_codecs():
@@ -659,6 +681,8 @@ def main(argv=None):
     parser.add_argument('--fault-only', action='store_true')
     parser.add_argument('--refresh-r2', action='store_true',
                         help='Recompute all R2-displacement cells in an existing complete matrix')
+    parser.add_argument('--refresh-term-handover-from', type=Path,
+                        help='Reuse comparable other cells; recompute handover in a new output directory')
     parser.add_argument('--device', type=int)
     parser.add_argument('--count', type=int, default=4)
     args = parser.parse_args(argv)
@@ -686,9 +710,14 @@ def main(argv=None):
         print(f'{len(faults)*len(SEEDS)*len(FAULTS)} fault cases; {failed} unexpected results')
         return int(failed != 0)
     jobs = [(p, safety, str(args.output)) for p in candidates(safety)]
+    if args.refresh_term_handover_from:
+        if args.output.resolve() == args.refresh_term_handover_from.resolve():
+            parser.error('Use a separate output directory to preserve original evidence')
+        jobs = [(*job, str(args.refresh_term_handover_from), 'term-handover') for job in jobs]
     results = []
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        operation = _refresh_r2_job if args.refresh_r2 else _profile_job
+        operation = (_refresh_scenario_job if args.refresh_term_handover_from else
+                     _refresh_r2_job if args.refresh_r2 else _profile_job)
         futures = [pool.submit(operation, job) for job in jobs]
         for future in as_completed(futures):
             result = future.result()
@@ -699,7 +728,7 @@ def main(argv=None):
                   f'{result["summary"]["GRANTED"]}/9000 grants', flush=True)
     results.sort(key=lambda r: tuple(r['pacing'].values()))
     winner = select_profile(results)
-    report = dict(status='simulation', harness_revision=2, safety=asdict(safety), seeds=SEEDS,
+    report = dict(status='simulation', harness_revision=3, safety=asdict(safety), seeds=SEEDS,
         normal_scenarios=SCENARIOS, fault_scenarios=FAULTS, requests_per_series=100,
         series_per_profile=90, profiles=results, selected=winner,
         zont_timing_status='unmeasured', physical_tail={'status': 'unknown'})

@@ -216,6 +216,29 @@ class StoreTests(unittest.TestCase):
                 self.write()
         self.assertEqual(self.adapter.writes, [])
 
+    def test_truncated_and_normalized_readback_are_unknown_without_retry(self):
+        for role in ('leader', 'executor'):
+            for normalize in (lambda raw: raw[:-1],
+                              lambda raw: raw.replace('"v":2', '"v": 2')):
+                with self.subTest(role=role, normalize=normalize):
+                    self.setUp()
+                    self.adapter.normalize = {('name' if role == 'leader' else 'notes'): normalize}
+                    with self.assertRaises(CommandOutcomeUnknown):
+                        self.write() if role == 'leader' else self.publish(request())
+                    self.assertEqual(len(self.adapter.writes), 1)
+
+    def test_previous_r1_and_current_r2_are_refused_before_write(self):
+        future = ProtocolProfile(OWNER, 1, 1)
+        self.write(r1(leader=None, grants=()))
+        self.server.apply(self.server.send_update(42, {
+            'notes': encode_r2(R2Record(future.profile_id, request()))}))
+        store = LeaderStore(self.adapter, 42, **{**self.options,
+                            'profile': future, 'previous_profile': PROFILE})
+        before = len(self.adapter.writes)
+        with self.assertRaises(RecordError):
+            self.write(r1(profile=future, record_id=str(self.uid()), leader=None, grants=()), store)
+        self.assertEqual(len(self.adapter.writes), before)
+
     def test_size_types_and_invalid_store_arguments_never_send(self):
         for changes in ({'device_id': True}, {'device_id': 0}, {'original_name': None},
                         {'notes_capacity': 0}, {'name_capacity': False}):

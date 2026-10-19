@@ -3,11 +3,16 @@
 from ..control_types import CommandOutcomeUnknown, ControllerError
 from .models import (ProtocolProfile, R2Record, RecordError,
                      decode_r1, decode_r2, encode_r1, encode_r2)
+from .timing import TimingViolation
 
 
 class RecordCapacityError(RecordError):
     def __init__(self):
         ValueError.__init__(self, 'Complete coordination field exceeds configured capacity')
+
+
+class RequestDisplaced(Exception):
+    """A successful R2 write was replaced by another exact, valid request."""
 
 
 class _Reader:
@@ -58,6 +63,11 @@ class _Reader:
             raise RecordError()
         return record
 
+    def validate_pair(self, r1, r2):
+        if (r1 is not None and r1.profile != self.profile and r2 is not None
+                and r2.profile_id == self.profile.profile_id):
+            raise RecordError()
+
     def _capacity(self, field, raw):
         try:
             size = len(raw.encode('utf-8'))
@@ -67,15 +77,30 @@ class _Reader:
             raise RecordCapacityError()
 
     def _send(self, field, raw, window, timeout):
-        window.record('sync_write', stage='write',
-                      read_write_s=window.deadline - timeout - window.started_at)
-        self._adapter.update_metadata(self.device_id, field, raw, timeout_seconds=timeout)
-        window.complete()
+        window.record('sync_write_started', stage='write')
+        try:
+            self._adapter.update_metadata(self.device_id, field, raw, timeout_seconds=timeout)
+            elapsed = window.complete()
+        except (CommandOutcomeUnknown, TimingViolation):
+            elapsed = window.elapsed
+            window.record('sync_write', stage='write', outcome='unknown',
+                          read_write_s=elapsed, finished_at=window.started_at+elapsed)
+            raise
+        window.record('sync_write', stage='write', read_write_s=elapsed, outcome='success')
         try:
             confirmed = self._read(field, window, confirmation=True)
         except ControllerError:
             raise CommandOutcomeUnknown() from None
         if confirmed != raw:
+            if field == 'notes':
+                try:
+                    other, sent = decode_r2(confirmed), decode_r2(raw)
+                    if (other is not None and other.profile_id == self.profile.profile_id
+                            and other.request is not None and other.request != sent.request
+                            and encode_r2(other) == confirmed):
+                        raise RequestDisplaced()
+                except RecordError:
+                    pass
             raise CommandOutcomeUnknown()
 
 
@@ -127,7 +152,8 @@ class LeaderStore(_Reader):
         current = self.read_r1(window=window)
         if current is not None and current.record_id == record.record_id:
             raise RecordError()
-        self.read_r2(window=window)
+        r2 = self.read_r2(window=window)
+        self.validate_pair(current, r2)
         timeout = window.guard_write(role_deadline=role_deadline, stop_margin=stop_margin)
         self._send('name', raw, window, timeout)
         window.complete(role_deadline=role_deadline, stop_margin=stop_margin)

@@ -9,6 +9,7 @@ from ..control_types import (CommandOutcomeUnknown, ControllerError, ControlOwne
 from .clock import BootClock, ClockSample, GrantInterval, _duration, clock_factor, clock_rho
 from .models import GrantRecord, HandledRequest, RecordError, ReplyRecord, RequestRecord
 from .statistics import error_event, observe
+from .store import RequestDisplaced
 from .timing import OperationWindow, TimingViolation
 
 
@@ -130,6 +131,10 @@ class GrantCoordinator:
                         start = max(start, live[position - 1].valid_until + guard)
                     if position + 1 < len(live):
                         until = min(until, live[position + 1].valid_from - guard)
+                    # An earlier revision may remain cached without this ack.
+                    # Never shorten any interval already announced to owners.
+                    if until < live[position].valid_until:
+                        return None
                 else:
                     if len(live) >= 2:
                         return None
@@ -253,6 +258,8 @@ class ExecutorGate:
         window = OperationWindow(self._clock, self._delta)
         try:
             store.publish_request(pending.request, window=window)
+        except RequestDisplaced:
+            self._observe('request_lost', store, pending.request)
         except (CommandOutcomeUnknown, TimingViolation):
             pending.uncertain = True
             self._observe('timeout', store, pending.request, outcome='unknown')
@@ -265,6 +272,14 @@ class ExecutorGate:
         event = {'acquire': 'request', 'finish': 'finished'}.get(
             pending.request.operation, pending.request.operation)
         self._observe(event, store, pending.request, outcome='success')
+
+    def _repeat_displaced(self, store, pending):
+        if not pending.uncertain and self._clock.now() >= pending.last_publish + self._retry_seconds:
+            r2 = store.read_r2(window=OperationWindow(self._clock, self._delta))
+            if r2 is None or r2.request != pending.request:
+                self._observe('request_lost', store, pending.request)
+                self._observe('request_repeated', store, pending.request)
+                self._publish(store, pending)
 
     def _ack(self, store, pending):
         self._check(pending.local_deadline, pending.attempt_deadline)
@@ -356,12 +371,8 @@ class ExecutorGate:
                 pending.request = replace(pending.request, nonce=str(self._uuid_factory()), leader_term_id=term)
                 pending.sent, pending.uncertain = self._clock.now(), False
                 self._publish(store, pending)
-            elif not pending.uncertain and self._clock.now() >= pending.last_publish + self._retry_seconds:
-                r2 = store.read_r2(window=OperationWindow(self._clock, self._delta))
-                if r2 is None or r2.request != pending.request:
-                    self._observe('request_lost', store, pending.request)
-                    self._observe('request_repeated', store, pending.request)
-                    self._publish(store, pending)
+            else:
+                self._repeat_displaced(store, pending)
             raise DeviceControlBusy()
 
     def abandon_request(self, owner, device_id, request_id):
@@ -419,6 +430,8 @@ class ExecutorGate:
                 if updated is not None:
                     self._held[(owner, session.device_id)] = updated
                     return updated.session
+                if pending.grant is None:
+                    self._repeat_displaced(store, pending)
             raise DeviceControlBusy()
 
     def release(self, owner, session):

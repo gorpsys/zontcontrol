@@ -100,6 +100,28 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(len(displaced), 1)
         self.assertEqual(displaced[0]['outcome'], 'DECLINED')
 
+    def test_term_handover_renews_active_role_to_cap_and_acquires_fresh_term(self):
+        item = replace(next(i for i in normal_inputs() if i.scenario == 'term-handover'),
+                       requests=20)
+        row = run_series(Pacing(1, 1, 0, .25), item, Safety())
+        trace = row['term_trace']
+        renewals = [r for r in trace if r['event'] == 'renewed']
+        near = next(r for r in trace if r['event'] == 'near-cap')
+        self.assertGreater(len(renewals), 10)
+        self.assertTrue(near['active'])
+        self.assertEqual(near['expires_at'], near['cap'])
+        self.assertGreater(near['cap']-near['at'], 100)
+        retired = next(r for r in trace if r['event'] == 'retired')
+        self.assertEqual(retired['reason'], 'term-limit')
+        self.assertLessEqual(retired['at'], near['cap']+5)
+        acquired = next(r for r in trace if r['event'] == 'acquired')
+        self.assertNotEqual(acquired['term'], near['term'])
+        self.assertGreater(acquired['at'], near['cap'])
+        self.assertEqual(row['summary']['started_requests'], 20)
+        self.assertEqual(row['violations'], [])
+        with cached_codecs():
+            self.assertEqual(row, run_series(Pacing(1, 1, 0, .25), item, Safety()))
+
 
 class LiveCalibrationTests(unittest.TestCase):
     def controller(self):

@@ -455,11 +455,83 @@ class GrantTests(unittest.TestCase):
             self.s.gate.renew(self.s.owner, session, lease_seconds=10)
         self.s.advance(5)
         self.s.coordinator.step()
-        renewed = self.s.gate.renew(self.s.owner, session, lease_seconds=600)
-        self.assertAlmostEqual(renewed.expires_at, sent+10, places=6)
+        pending = self.s.gate._held[self.s.owner, 42].renewal
+        with self.assertRaises(DeviceControlBusy):
+            self.s.gate.renew(self.s.owner, session, lease_seconds=600)
+        self.assertAlmostEqual(pending.local_deadline, sent+10, places=6)
         self.s.advance(10)
         with self.assertRaises(ControlOwnershipRequired):
-            self.s.gate.validate(self.s.owner, renewed)
+            self.s.gate.renew(self.s.owner, session, lease_seconds=600)
+        self.s.gate.validate(self.s.owner, session)
+
+    def test_unacknowledged_short_heartbeat_preserves_old_cached_reservation(self):
+        s = self.s
+        session = s.acquire()
+        original = s.store.read_r1().grants[0]
+        s.advance(5)
+        with self.assertRaises(DeviceControlBusy):
+            s.gate.renew(s.owner, session, lease_seconds=10)
+        s.coordinator.step()  # Deliberately never deliver this heartbeat ack.
+        current = s.store.read_r1().grants[0]
+        self.assertEqual(current, original)
+        other, owner = s.make_gate(), s.uid()
+        s.pending(gate=other, owner=owner, seconds=120)
+        future = s.coordinator.step()
+        self.assertGreaterEqual(future.valid_from,
+                               original.valid_until+s.leader.timing.command_guard)
+        s.advance(20)
+        s.gate.validate(s.owner, session)
+        with self.assertRaises(DeviceControlBusy):
+            other.try_acquire(owner, 42, lease_seconds=120)
+
+    def test_acquire_displaced_between_write_ack_and_readback_can_retry(self):
+        s = self.s
+        update = s.adapter.update_metadata
+        # A separate adapter models a competing successful writer.
+        from tests.fakes.zont import FakeMetadataAdapter
+        competitor = FakeMetadataAdapter(s.server)
+        def overwrite(*args, **kwargs):
+            result = update(*args, **kwargs)
+            from zontcontrol.coordination.models import R2Record, encode_r2
+            req = s.store.read_r2().request
+            raw = encode_r2(R2Record(s.profile.profile_id, replace(req,
+                owner_id=str(s.uid()), request_id=str(s.uid()), nonce=str(s.uid()))))
+            competitor.update_metadata(42, 'notes', raw)
+            return result
+        with patch.object(s.adapter, 'update_metadata', side_effect=overwrite):
+            pending = self.start_request()
+        self.assertFalse(pending.uncertain)
+        original = pending.request, pending.sent, pending.local_deadline, pending.attempt_deadline
+        with self.assertRaises(DeviceControlBusy):
+            self.attempt()
+        self.assertEqual(s.store.read_r2().request, pending.request)
+        self.assertEqual(original, (pending.request, pending.sent, pending.local_deadline,
+                                    pending.attempt_deadline))
+        s.coordinator.step()
+        self.attempt()
+
+    def test_heartbeat_known_displacement_retries_same_sample_with_backoff(self):
+        s = self.s
+        session = s.acquire()
+        s.gate._retry_seconds = 2
+        with self.assertRaises(DeviceControlBusy):
+            s.gate.renew(s.owner, session, lease_seconds=60)
+        pending = s.gate._held[s.owner, 42].renewal
+        original = pending.request, pending.sent, pending.local_deadline
+        self.publish(replace(pending.request, operation='acquire', grant_id=None,
+                             grant_revision=None, owner_id=str(s.uid()), nonce=str(s.uid())))
+        before = len(s.adapter.writes)
+        with self.assertRaises(DeviceControlBusy):
+            s.gate.renew(s.owner, session, lease_seconds=600)
+        self.assertEqual(len(s.adapter.writes), before)
+        s.advance(2)
+        with self.assertRaises(DeviceControlBusy):
+            s.gate.renew(s.owner, session, lease_seconds=600)
+        self.assertEqual(s.store.read_r2().request, pending.request)
+        self.assertEqual(original, (pending.request, pending.sent, pending.local_deadline))
+        s.coordinator.step()
+        renewed = s.gate.renew(s.owner, session, lease_seconds=600)
+        self.assertLessEqual(renewed.expires_at, pending.local_deadline)
 
     def test_failed_off_after_expiry_has_no_bypass_and_release_is_local_only(self):
         executor = CommandExecutor(gate=self.s.gate, clock=self.s.clock.now, uuid_factory=self.s.uid)

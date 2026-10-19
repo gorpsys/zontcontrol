@@ -92,9 +92,10 @@ class OperationWindow:
             self._observation_started = True
             self.record('sync_started', stage='read')
 
-    def record(self, event, *, stage, **fields):
+    def record(self, event, *, stage, finished_at=None, **fields):
         observe(self._statistics, event, **self._observation_context,
-                started_at=self._started_at, finished_at=self._last_at,
+                started_at=self._started_at,
+                finished_at=self._last_at if finished_at is None else finished_at,
                 delta_s=self._deadline - self._started_at, stage=stage, **fields)
 
     def finish_observation(self, error=None):
@@ -123,6 +124,10 @@ class OperationWindow:
     @property
     def remaining(self):
         return max(0, self._deadline - _duration(self._clock.now()))
+
+    @property
+    def elapsed(self):
+        return max(0, _duration(self._clock.now()) - self._started_at)
 
     def _check(self, *, completed=False, role_deadline=None, stop_margin=0):
         now = _duration(self._clock.now())

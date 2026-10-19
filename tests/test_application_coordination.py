@@ -935,3 +935,38 @@ class ProfileTransitionTests(unittest.TestCase):
         with self.assertRaises(RecordError):
             store.read_r1()
         self.assertEqual(len(self.s.adapter.writes), before)
+
+    def test_previous_r1_current_r2_pair_starts_no_worker_and_never_transitions(self):
+        from unittest.mock import Mock
+        from zontcontrol.config import CoordinationConfig
+        from zontcontrol.coordination.runtime import CoordinationRuntime
+        from zontcontrol.coordination.leader import LeaseLost
+        from zontcontrol.coordination.models import R2Record
+        for free in (False, True):
+            with self.subTest(free=free):
+                self.setup_profiles()
+                s = self.s
+                if free:
+                    s.inject_r1(replace(s.store.read_r1(), record_id=str(s.uid()),
+                                        leader=None, grants=()))
+                s.server.apply(s.server.send_update(42, {'notes': encode_r2(R2Record(self.b.profile_id))}))
+                original = s.server.read_device(42)
+                port = Mock(wraps=s.adapter)
+                port.read_metadata = Mock(side_effect=lambda *a, **kw: s.server.read_device(42))
+                worker = Mock()
+                config = CoordinationConfig(2, 300, 3, self.b.profile_id,
+                                            1, 1, .1, .25, self.a)
+                runtime = CoordinationRuntime(port, config, s.clock, None,
+                                               worker_factory=worker, uuid_factory=s.uid)
+                before = len(s.adapter.writes)
+                with self.assertRaises(RecordError):
+                    runtime.try_acquire(s.uid(), 42, lease_seconds=60)
+                worker.assert_not_called()
+                self.assertEqual(runtime._devices, {})
+                if not free:
+                    self.assertFalse(self.leader.try_acquire())
+                    s.advance(100, self.leader)
+                with self.assertRaises(LeaseLost):
+                    self.leader.try_acquire()
+                self.assertEqual(len(s.adapter.writes), before)
+                self.assertEqual(s.server.read_device(42), original)

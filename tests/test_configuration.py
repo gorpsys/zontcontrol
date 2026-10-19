@@ -143,6 +143,15 @@ class ConfigurationTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 self.controller(coordination={**asdict(current), 'previous_profile': bad})
 
+    def test_pacing_combines_renewal_poll_jitter_and_operation_budget(self):
+        from dataclasses import replace
+        settings = self.controller().coordination
+        for poll, jitter in ((290, 0), (150, .5)):
+            with self.subTest(poll=poll), self.assertRaises(ValueError):
+                replace(settings, delta_seconds=5, delta_cmd_seconds=5,
+                        leader_period_seconds=300, poll_seconds=poll,
+                        jitter_fraction=jitter, renewal_fraction=.25)
+
     def test_controller_validation_precedes_any_effect_and_hides_values(self):
         invalid = [
             {'token': 'private-value'}, {'password': 'private-value'},

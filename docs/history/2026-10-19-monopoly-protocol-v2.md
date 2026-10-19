@@ -65,9 +65,11 @@ installed-only skip; PIP_NO_INDEX=1 make package-check PYTHON=python3 —
 Документация и версия отдельно проверяются перед фиксацией задачи 7.
 
 [Калибровка](../reports/2026-10-19-coordination-v2-calibration.md):
-3 888 000 нормальных запросов, отдельно 7776 fault cases. Симуляционный
-победитель poll 1/retry 5/jitter 0.25/renewal 0.25 имеет 2825/9000 GRANTED,
-18 DECLINED, 6157 timeout; цензурированные timeout и все начатые запросы сохранены.
+3 888 000 нормальных запросов, отдельно 7776 fault cases. После исправления
+term-handover и пересчёта его 777 600 запросов в harness revision 3
+симуляционный победитель poll 1/retry 0.5/jitter 0.25/renewal 0.25
+имеет 2945/9000 GRANTED, 18 DECLINED, 6037 timeout. Первоначальное
+ранжирование 1/5 заменено; цензурированные timeout и все запросы сохранены.
 Это результат модели нагрузки, не надёжность настоящего API.
 
 После наблюдавшихся HTTP 429 пример вручную использует provisional

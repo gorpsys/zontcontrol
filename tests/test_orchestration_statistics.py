@@ -239,11 +239,24 @@ class SynchronizationMeasurementsTests(unittest.TestCase):
         self.assertIn('sync_confirmation', events)
         finished = next(row for row in self.rows if row['event'] == 'sync_window')
         written = next(row for row in self.rows if row['event'] == 'sync_write')
-        self.assertAlmostEqual(written['read_write_s'], .7)
+        self.assertAlmostEqual(written['read_write_s'], .9)
+        self.assertIn('sync_write_started', events)
         self.assertAlmostEqual(finished['sync_window_s'], 1)
         self.assertEqual(finished['started_at'], 100)
         self.assertAlmostEqual(finished['finished_at'], 101)
         self.assertEqual(analyze(self.rows)['groups'][0]['windows']['incomplete'], 0)
+
+    def test_old_presend_samples_cannot_be_completed_read_write_percentiles(self):
+        self.stats.emit('sync_write', device_id=42, role='leader', stage='write',
+                        read_write_s=.7, delta_s=5)
+        group = analyze(self.rows)['groups'][0]
+        metric = next(row for row in group['timings'] if row['metric'] == 'read_write_s')
+        self.assertEqual(metric['count'], 0)
+        self.assertIsNone(metric['max'])
+        self.assertIsNone(metric['p99'])
+        self.assertEqual(metric['unknown'], 1)
+        self.assertEqual(metric['censored_elapsed']['max'], .7)
+        self.assertEqual(group['delta_recommendation_status'], 'incomplete')
 
     def test_lost_finish_and_timeout_samples_remain_unknown(self):
         store, adapter = self.store()
@@ -267,6 +280,12 @@ class SynchronizationMeasurementsTests(unittest.TestCase):
         self.assertEqual(group['delta_recommendation_status'], 'incomplete')
         summary = next(row for row in self.rows if row['event'] == 'sync_window')
         self.assertEqual(summary['outcome'], 'unknown')
+        written = next(row for row in self.rows if row['event'] == 'sync_write')
+        self.assertEqual(written['outcome'], 'unknown')
+        self.assertEqual(written['finished_at'], self.clock.now())
+        metric = next(row for row in group['timings'] if row['metric'] == 'read_write_s')
+        self.assertEqual(metric['count'], 0)
+        self.assertEqual(metric['censored_elapsed']['max'], 6)
         self.assertGreater(summary['sync_window_s'], 5)
         lost = analyze([row for row in self.rows if row['event'] != 'sync_window'])['groups'][0]
         self.assertEqual(lost['windows']['incomplete'], 1)

@@ -30,7 +30,7 @@ cp config/boiler_cli.example.json config/boiler_cli.json
 config/registry.headless.example.json вместо registry.example.json: он отключает
 интерактивный boiler_cli. Пример безопасности координации 5/5/300 с остаётся
 unmeasured; pacing poll 20/retry 60/jitter 0.25/renewal 0.25 — provisional по малой
-натурной пробе, отдельно от симуляционного победителя 1/5.
+натурной пробе, отдельно от результатов симуляционной сетки.
 
 controller.json задаёт контакт, HTTP-таймаут, координацию и путь статистики;
 registry.json — disabled_modules, autostart_dual_mode и once_timeouts.

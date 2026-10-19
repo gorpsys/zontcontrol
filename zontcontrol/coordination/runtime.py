@@ -129,10 +129,11 @@ class CoordinationRuntime:
                     statistics=self.statistics)
                 with self._lock:
                     self._check_attempt(local_deadline, attempt_deadline)
-                executor_store.read_r1(window=window)
+                r1 = executor_store.read_r1(window=window)
                 with self._lock:
                     self._check_attempt(local_deadline, attempt_deadline)
-                executor_store.read_r2(window=window)
+                r2 = executor_store.read_r2(window=window)
+                executor_store.validate_pair(r1, r2)
                 leader = LeaderElection(leader_store, str(self._uuid_factory()), self.config.timing,
                                         clock=self.clock, statistics=self.statistics,
                                         timeline=self._timeline, uuid_factory=self._uuid_factory,

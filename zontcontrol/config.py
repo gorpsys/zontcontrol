@@ -159,8 +159,8 @@ class CoordinationConfig:
             _number(n)
         if (type(self.jitter_fraction) not in (int, float)
                 or not 0 <= self.jitter_fraction <= 1 or self.renewal_fraction >= 1
-                or self.poll_seconds * (1 + self.jitter_fraction) >= self.timing.period
-                or self.timing.period * self.renewal_fraction + 2 * self.delta_seconds
+                or self.timing.period * self.renewal_fraction
+                   + self.poll_seconds * (1 + self.jitter_fraction) + 2 * self.delta_seconds
                    >= self.timing.period - self.timing.stop_margin
                 or self.previous_profile is not None and (
                     type(self.previous_profile) is not ProtocolProfile
