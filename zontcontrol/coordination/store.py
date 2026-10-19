@@ -12,7 +12,8 @@ class RecordCapacityError(RecordError):
 
 class _Reader:
     def __init__(self, adapter, device_id, *, original_name, notes_capacity, name_capacity,
-                 profile: ProtocolProfile, previous_profile: ProtocolProfile | None = None):
+                 profile: ProtocolProfile, previous_profile: ProtocolProfile | None = None,
+                 statistics=None):
         if (type(device_id) is not int or device_id <= 0 or not isinstance(original_name, str)
                 or any(type(n) is not int or n <= 0 for n in (notes_capacity, name_capacity))
                 or type(profile) is not ProtocolProfile
@@ -23,12 +24,24 @@ class _Reader:
         self.device_id, self.original_name = device_id, original_name
         self.profile, self.previous_profile = profile, previous_profile
         self._capacities = {'name': name_capacity, 'notes': notes_capacity}
+        self._statistics = statistics
 
-    def _read(self, field, window):
-        raw = self._adapter.read_metadata_field(self.device_id, field,
-                    timeout_seconds=window.before_io() if window is not None else None)
+    def _observe_with(self, window):
         if window is not None:
-            window.complete()
+            window.observe_with(self._statistics, device_id=self.device_id,
+                                role='executor' if isinstance(self, ExecutorStore) else 'leader')
+
+    def _read(self, field, window, *, confirmation=False):
+        self._observe_with(window)
+        timeout = window.before_io() if window is not None else None
+        started = window.deadline - timeout if window is not None else None
+        raw = self._adapter.read_metadata_field(self.device_id, field,
+                    timeout_seconds=timeout)
+        if window is not None:
+            elapsed = window.complete()
+            window.record('sync_confirmation' if confirmation else 'sync_read',
+                          stage='confirmation' if confirmation else 'read',
+                          rtt_s=window.started_at + elapsed - started, outcome='success')
         return raw
 
     def read_r1(self, *, window=None):
@@ -54,10 +67,12 @@ class _Reader:
             raise RecordCapacityError()
 
     def _send(self, field, raw, window, timeout):
+        window.record('sync_write', stage='write',
+                      read_write_s=window.deadline - timeout - window.started_at)
         self._adapter.update_metadata(self.device_id, field, raw, timeout_seconds=timeout)
         window.complete()
         try:
-            confirmed = self._read(field, window)
+            confirmed = self._read(field, window, confirmation=True)
         except ControllerError:
             raise CommandOutcomeUnknown() from None
         if confirmed != raw:
@@ -68,6 +83,16 @@ class ExecutorStore(_Reader):
     """Only notes/R2 may be written by an executor."""
 
     def publish_request(self, request, *, window):
+        self._observe_with(window)
+        window.begin_observation()
+        try:
+            self._publish_request(request, window=window)
+        except BaseException as error:
+            window.finish_observation(error)
+            raise
+        window.finish_observation()
+
+    def _publish_request(self, request, *, window):
         raw = encode_r2(R2Record(self.profile.profile_id, request))
         self._capacity('notes', raw)
         current = self.read_r2(window=window)
@@ -84,6 +109,17 @@ class LeaderStore(_Reader):
     """Only name/R1 may be written; every send requires the original guard."""
 
     def write_r1(self, record, *, window, role_deadline, stop_margin=0):
+        self._observe_with(window)
+        window.begin_observation()
+        try:
+            self._write_r1(record, window=window, role_deadline=role_deadline,
+                           stop_margin=stop_margin)
+        except BaseException as error:
+            window.finish_observation(error)
+            raise
+        window.finish_observation()
+
+    def _write_r1(self, record, *, window, role_deadline, stop_margin=0):
         if record.profile != self.profile:
             raise RecordError()
         raw = encode_r1(self.original_name, record)

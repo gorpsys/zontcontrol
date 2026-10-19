@@ -37,10 +37,20 @@ _EVENTS = frozenset({
     'leader_acquired', 'leader_renewed', 'leader_lost', 'leader_released',
     'leader_changed_active_grant', 'delta_breach', 'rtt', 'rate_limited',
     'timeout', 'error', 'cleanup', 'conflict', 'command', 'grant_ack', 'leader_attempt',
+    'sync_started', 'sync_read', 'sync_write', 'sync_confirmation', 'sync_window',
+    'freeze', 'command_started', 'command_finished', 'command_effect',
 })
-_IDS = frozenset({'episode_id', 'run_id', 'request_id', 'grant_id', 'leader_term'})
-_NUMBERS = frozenset({'wait_s', 'rtt_s', 'delta_s', 'elapsed_s'})
-_FIELDS = _IDS | _NUMBERS | {'device_id', 'revision', 'outcome', 'coverage', 'phase'}
+_IDS = frozenset({'episode_id', 'run_id', 'request_id', 'grant_id', 'leader_term',
+                  'window_id', 'command_observation_id', 'clock_id'})
+_TIMINGS = ('read_write_s', 'sync_window_s', 'rtt_s', 'freeze_gap_s')
+_NUMBERS = frozenset({'wait_s', 'delta_s', 'delta_cmd_s', 'elapsed_s', *_TIMINGS})
+_STAMPS = frozenset({'started_at', 'finished_at', 'admitted_at', 'api_response_at',
+                     'effect_completed_at', 'sent_at', 'expected_resume_at'})
+_KINDS = frozenset({'critical_section', 'command', 'residual_effect'})
+_FIELDS = _IDS | _NUMBERS | _STAMPS | {
+    'device_id', 'revision', 'outcome', 'coverage', 'phase', 'role', 'stage',
+    'exceeded', 'sample_kind', 'completion_basis',
+}
 _BASE = frozenset({'schema', 'event', 'protocol_version', 'profile', 'source'})
 _OUTCOMES = frozenset({'success', 'unknown', 'conflict', 'failure', 'busy'})
 _COVERAGE = frozenset({'complete', 'partial', 'none'})
@@ -72,6 +82,18 @@ def _validate(row: Any) -> Observation:
         if key in _NUMBERS and (type(value) not in (int, float)
                                 or not 0 <= value <= 1e9 or not math.isfinite(value)):
             raise ObservationError()
+        if key in _STAMPS and (type(value) not in (int, float)
+                              or not 0 <= value <= 1e15 or not math.isfinite(value)):
+            raise ObservationError()
+        if key in {'role', 'stage'} and not _label(value):
+            raise ObservationError()
+        if key == 'exceeded' and (type(value) is not int or value not in (0, 1)):
+            raise ObservationError()
+        if key == 'sample_kind' and (type(value) is not str or value not in _KINDS):
+            raise ObservationError()
+        if key == 'completion_basis' and (type(value) is not str
+                or value not in {'physical_upper_bound', 'api_response'}):
+            raise ObservationError()
         if key in {'device_id', 'revision'} and (type(value) is not int
                                                 or not 0 <= value < 2**63
                                                 or key == 'device_id' and value == 0):
@@ -88,6 +110,8 @@ def _validate(row: Any) -> Observation:
             raise ObservationError()
         if row['event'] == 'episode_finished' and not {'outcome', 'coverage'} <= row.keys():
             raise ObservationError()
+    if row['event'] == 'command_effect' and 'sample_kind' not in row:
+        raise ObservationError()
     return row
 
 
@@ -198,6 +222,75 @@ def read_jsonl(stream: TextIO) -> Iterator[Observation]:
             raise ObservationError(line_number) from None
 
 
+def sample_summary(values: Iterable[float], *, unknown: int = 0,
+                   limits: Iterable[float] | None = None) -> dict[str, object]:
+    """Nearest-rank descriptive statistics; unknown samples stay in the report."""
+    samples = list(values)
+    ordered = sorted(samples)
+    bounds = list(limits) if limits is not None else None
+    exceeded = (sum(value > limit for value, limit in zip(samples, bounds))
+                if bounds is not None else None)
+    return {'status': 'observed' if samples else 'unknown', 'count': len(samples),
+            'unknown': unknown, 'max': max(samples, default=None),
+            'p99': ordered[math.ceil(.99 * len(ordered)) - 1] if ordered else None,
+            'p99_9': ordered[math.ceil(.999 * len(ordered)) - 1] if ordered else None,
+            'exceedances': exceeded,
+            'exceedance_fraction': exceeded / len(samples) if samples and exceeded is not None else None}
+
+
+def _recommend(summary: dict[str, Any]) -> float | None:
+    if not summary['count']:
+        return None
+    return max(5., 10 * summary['p99_9'], 1.2 * summary['max'])
+
+
+def _synchronization(rows: list[Observation]) -> dict[str, object]:
+    metrics: dict[tuple[object, ...], list[tuple[float, float, bool]]] = {}
+    windows: dict[tuple[object, ...], list[Observation]] = {}
+    for row in rows:
+        if str(row['event']).startswith('command'):
+            continue
+        for metric in _TIMINGS:
+            if metric in row:
+                key = (row.get('device_id'), row.get('role', 'unknown'),
+                       row.get('stage', 'unknown'), metric)
+                metrics.setdefault(key, []).append((cast(float, row[metric]),
+                        cast(float, row.get('delta_s', 5.)),
+                        row.get('outcome') in {'unknown', 'failure'}))
+        if 'window_id' in row and row['event'] in {'sync_started', 'sync_window'}:
+            key = (row.get('device_id'), row['window_id'])
+            windows.setdefault(key, []).append(row)
+    reports = []
+    for key, samples in sorted(metrics.items(), key=lambda item: str(item[0])):
+        complete = [(value, limit) for value, limit, censored in samples if not censored]
+        censored = [(value, limit) for value, limit, censored in samples if censored]
+        summary = sample_summary((value for value, _ in complete), unknown=len(censored),
+                                 limits=(limit for _, limit in complete))
+        summary['censored_elapsed'] = sample_summary((value for value, _ in censored),
+                                                    limits=(limit for _, limit in censored))
+        reports.append(dict(zip(('device_id', 'role', 'stage', 'metric'), key)) | summary)
+    incomplete = unknown = timeouts = 0
+    for events in windows.values():
+        starts = [row for row in events if row['event'] == 'sync_started']
+        ends = [row for row in events if row['event'] == 'sync_window']
+        complete = len(starts) == len(ends) == 1
+        incomplete += not complete
+        unknown += not complete or ends[0].get('outcome') != 'success'
+        timeouts += any(row.get('outcome') == 'unknown' for row in ends)
+    recommendations = [_recommend(report) for report in reports]
+    lower_bounds = [report['censored_elapsed']['max'] for report in reports
+                    if report['censored_elapsed']['count']]
+    # Timeout elapsed times are lower bounds, not completion percentiles. Keep
+    # their observed maxima in the recommendation floor without inventing p99.
+    recommendations.extend(max(5., 1.2 * value) for value in lower_bounds)
+    recommendation = max((n for n in recommendations if n is not None), default=None)
+    return {'timings': reports, 'windows': {'total': len(windows), 'incomplete': incomplete,
+                                          'unknown': unknown, 'timeouts': timeouts},
+            'delta_recommendation_s': recommendation,
+            'delta_recommendation_status': ('incomplete' if lower_bounds or incomplete
+                                            else 'observed' if recommendation is not None else 'unknown')}
+
+
 def analyze(rows: Iterable[Observation]) -> dict[str, object]:
     """Group protocol/profile/source; count episodes, never infer them from polls.
 
@@ -213,7 +306,8 @@ def analyze(rows: Iterable[Observation]) -> dict[str, object]:
         _validate(row)
         key = tuple(cast(str, row[field]) for field in ('protocol_version', 'profile', 'source'))
         group = groups.setdefault(key, {'events': Counter(), 'episodes': {},
-                                        'wait_s': [], 'rtt_s': []})
+                                        'wait_s': [], 'rtt_s': [], 'rows': []})
+        group['rows'].append(row)
         group['events'][row['event']] += 1
         for metric in ('wait_s', 'rtt_s'):
             if metric in row:
@@ -245,6 +339,7 @@ def analyze(rows: Iterable[Observation]) -> dict[str, object]:
             counts[outcome] += 1
         report: dict[str, object] = dict(zip(('protocol_version', 'profile', 'source'), key))
         report.update(events=dict(sorted(group['events'].items())), episodes=counts)
+        report.update(_synchronization(group['rows']))
         for metric in ('wait_s', 'rtt_s'):
             values = group[metric]
             report[metric] = {'count': len(values), 'total': sum(values),
@@ -252,4 +347,90 @@ def analyze(rows: Iterable[Observation]) -> dict[str, object]:
         result.append(report)
     return {'schema': 1, 'groups': result,
             'limitation': 'Observations only; missing coverage is unknown. '
+                          'Timeout elapsed lower bounds are separate from completion percentiles. '
                           'Simulations and poll counts do not establish ZONT reliability.'}
+
+
+def analyze_command_effects(rows: Iterable[Observation]) -> dict[str, object]:
+    """Offline, explicitly typed samples. API response is never physical evidence.
+
+    Physical upper bounds must refer to the exact command's admission timestamp
+    and local clock domain. The producer asserts that domain and evidence; this
+    analyzer cannot verify a sensor, clock synchronization or a hard maximum.
+    Critical section boundaries belong to the algorithm producing the sample.
+    """
+    groups: dict[tuple[object, ...], list[Observation]] = {}
+    for row in rows:
+        _validate(row)
+        if row['event'] not in {'command_started', 'command_finished', 'command_effect'}:
+            continue
+        key = tuple(row.get(k) for k in ('protocol_version', 'profile', 'source', 'device_id'))
+        groups.setdefault(key, []).append(row)
+    result = []
+    for key, samples in sorted(groups.items(), key=lambda item: str(item[0])):
+        values: dict[str, list[float]] = {kind: [] for kind in (*_KINDS, 'api_elapsed', 'network_to_effect')}
+        unknown: Counter[str] = Counter()
+        residual_limits: list[float] = []
+        commands: dict[object, list[Observation]] = {}
+        for row in samples:
+            if row['event'] in {'command_started', 'command_finished'}:
+                commands.setdefault(row.get('command_observation_id'), []).append(row)
+        anchors: dict[object, Observation] = {}
+        for identifier, events in commands.items():
+            starts = [r for r in events if r['event'] == 'command_started']
+            ends = [r for r in events if r['event'] == 'command_finished']
+            if (identifier is not None and len(starts) == 1
+                    and {'admitted_at', 'clock_id'} <= starts[0].keys()):
+                anchors[identifier] = starts[0]
+            anchor = anchors.get(identifier)
+            if (anchor is None or len(ends) != 1
+                    or ends[0].get('admitted_at') != anchor['admitted_at']
+                    or ends[0].get('clock_id') != anchor['clock_id']
+                    or 'api_response_at' not in ends[0]
+                    or ends[0]['api_response_at'] < anchor['admitted_at']):
+                unknown['command'] += 1
+                continue
+            elapsed = cast(float, ends[0]['api_response_at']) - cast(float, anchor['admitted_at'])
+            values['api_elapsed'].append(elapsed)
+            if ends[0].get('outcome') == 'success':
+                values['command'].append(elapsed)
+            else:
+                unknown['command'] += 1
+        for row in samples:
+            if row['event'] != 'command_effect':
+                continue
+            kind = cast(str, row['sample_kind'])
+            complete = row.get('coverage') == 'complete' and row.get('outcome') == 'success'
+            if kind in {'critical_section', 'command'}:
+                if (complete and {'started_at', 'finished_at'} <= row.keys()
+                        and row['finished_at'] >= row['started_at']):
+                    values[kind].append(cast(float, row['finished_at']) - cast(float, row['started_at']))
+                else:
+                    unknown[kind] += 1
+                continue
+            anchor = anchors.get(row.get('command_observation_id'))
+            if (not complete or anchor is None
+                    or row.get('completion_basis') != 'physical_upper_bound'
+                    or row.get('clock_id') != anchor['clock_id']
+                    or row.get('admitted_at') != anchor['admitted_at']
+                    or 'effect_completed_at' not in row
+                    or row['effect_completed_at'] < anchor['admitted_at']
+                    or 'sent_at' in row and not (
+                        anchor['admitted_at'] <= row['sent_at'] <= row['effect_completed_at'])):
+                unknown[kind] += 1
+                continue
+            elapsed = cast(float, row['effect_completed_at']) - cast(float, anchor['admitted_at'])
+            values[kind].append(elapsed)
+            residual_limits.append(cast(float, row.get('delta_cmd_s', 5.)))
+            if ('sent_at' in row and anchor['admitted_at'] <= row['sent_at'] <= row['effect_completed_at']):
+                values['network_to_effect'].append(cast(float, row['effect_completed_at']) - cast(float, row['sent_at']))
+        report = dict(zip(('protocol_version', 'profile', 'source', 'device_id'), key))
+        for kind, durations in sorted(values.items()):
+            report[kind] = sample_summary(durations, unknown=unknown[kind],
+                    limits=residual_limits if kind == 'residual_effect' else None)
+        report['delta_cmd_recommendation_s'] = _recommend(cast(dict, report['residual_effect']))
+        result.append(report)
+    return {'schema': 1, 'groups': result,
+            'limitation': 'Descriptive samples only; API RTT is not physical completion. '
+                          'Missing/incomparable physical evidence is unknown. Recommendations '
+                          'do not prove a hard bound; change the shared profile manually.'}

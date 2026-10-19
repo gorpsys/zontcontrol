@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Read observation JSONL; no controller, network, recovery or command effects."""
+"""Offline JSONL: nearest-rank timings, incomplete windows and suggested Delta.
+
+Recommendations require an explicit shared-profile change and are descriptive,
+not a proven timing bound. Physical command effects have a separate analyzer.
+"""
 
 import argparse
 import json

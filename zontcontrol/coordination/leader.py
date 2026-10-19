@@ -43,7 +43,11 @@ class LeaderElection:
         self.quarantine_until = None
         self._term_started = None
         self._observation = None
-        self._wake_guard = FreezeGuard(self._clock, timing.delta)
+        self._wake_guard = self._new_wake_guard()
+
+    def _new_wake_guard(self):
+        return FreezeGuard(self._clock, self.timing.delta, statistics=self._statistics,
+                           device_id=self._store.device_id, role='leader')
 
     def _observe(self, event, **fields):
         observe(self._statistics, event, device_id=self._store.device_id,
@@ -102,7 +106,7 @@ class LeaderElection:
                 return True
             self.role_cancelled = Event()
             # A failed guard ends its role. A new candidate starts by observing.
-            self._wake_guard = FreezeGuard(self._clock, self.timing.delta)
+            self._wake_guard = self._new_wake_guard()
             try:
                 window = self._window()
                 observed = self._read(window)

@@ -94,6 +94,32 @@ class CommandExecutor:
             self._observe(held, 'cleanup', phase='command', outcome=outcome,
                           coverage='partial')
 
+    def _command_sample(self, binding: _ControlBinding) -> dict[str, ObservationValue]:
+        if self._statistics is None:
+            return {}
+        try:
+            identifier = self._uuid_factory()
+            if not isinstance(identifier, UUID):
+                raise ValueError()
+            # Namespace for this consumer's local BOOTTIME, never a wall clock.
+            return {'command_observation_id': str(identifier), 'clock_id': str(binding._owner)}
+        except Exception:
+            observe(self._statistics, 'error', phase='command', outcome='unknown')
+            return {}
+
+    def _finish_command_sample(self, held: _Ownership, sample: dict[str, ObservationValue],
+                               outcome: str) -> None:
+        if not sample:
+            return
+        try:
+            returned_at = self._clock()
+            admitted_at = cast(float, sample['admitted_at'])
+            self._observe(held, 'command_finished', **sample, api_response_at=returned_at,
+                          rtt_s=returned_at - admitted_at, phase='command', outcome=outcome)
+        except Exception:
+            # A timing/observer failure must not replace an API result or error.
+            pass
+
     def bind(self) -> _ControlBinding:
         with self._lock:
             if self._closed:
@@ -351,21 +377,32 @@ class CommandExecutor:
             # Reserve validation as well as accepted HTTP so release can never
             # hand the device to a new owner while this call is being admitted.
             held.in_flight += 1
+        sample: dict[str, ObservationValue] = {}
         try:
             if not self._clock() < session.expires_at:
                 raise ControlOwnershipRequired()
             prepared = validate()
             self._gate.validate(binding._owner, session)
+            sample = self._command_sample(binding)
             with self._lock:
                 self._match(binding, session, command.device_id)
-                if not self._clock() < session.expires_at:
+                admitted_at = self._clock()
+                if not admitted_at < session.expires_at:
+                    sample = {}
                     raise ControlOwnershipRequired()
                 # Accepted here. No subsequent expiry/stop/deadline recheck.
+                if sample:
+                    sample['admitted_at'] = admitted_at
+            if sample:
+                self._observe(held, 'command_started', **sample, phase='command')
             result = send(prepared)
+            self._finish_command_sample(held, sample, 'success')
             self._command_observation(held, command, 'success')
             return result
         except BaseException as error:
             outcome = 'unknown' if isinstance(error, CommandOutcomeUnknown) else 'failure'
+            if 'admitted_at' in sample:
+                self._finish_command_sample(held, sample, outcome)
             with self._lock:
                 if held.outcome != 'unknown':
                     held.outcome = outcome

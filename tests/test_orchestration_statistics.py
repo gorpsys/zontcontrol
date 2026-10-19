@@ -12,6 +12,14 @@ import unittest
 from zontcontrol.coordination.statistics import (
     JsonlSink, ObservationError, Statistics, analyze, read_jsonl,
 )
+from tests.fakes.clock import FakeClock
+from tests.fakes.protocol import PROFILE
+from tests.fakes.uuid import uuid_generator
+from tests.fakes.zont import FakeMetadataAdapter, FakeZontServer
+from tests.test_coordination_store import PREFIX, r1
+from zontcontrol.coordination.store import LeaderStore
+from zontcontrol.coordination.timing import FreezeGuard, OperationWindow, TimingViolation
+from zontcontrol.control_types import CommandOutcomeUnknown
 
 
 class StatisticsTests(unittest.TestCase):
@@ -144,3 +152,114 @@ class StatisticsTests(unittest.TestCase):
                                     capture_output=True, text=True, check=False)
             self.assertNotEqual(failed.returncode, 0)
             self.assertNotIn('SECRET', failed.stderr + failed.stdout)
+
+
+class SynchronizationMeasurementsTests(unittest.TestCase):
+    def setUp(self):
+        self.rows = []
+        self.stats = Statistics(self.rows.append, protocol_version='r1r2-v2', profile='profile')
+        self.clock = FakeClock(start=100)
+        self.uid = uuid_generator()
+
+    def test_nearest_rank_percentiles_exceedances_and_recommendation(self):
+        for number in range(1, 1001):
+            self.stats.emit('sync_window', device_id=42, role='leader', stage='confirmation',
+                            sync_window_s=number / 100, delta_s=5, outcome='success')
+        group = analyze(self.rows)['groups'][0]
+        metric = group['timings'][0]
+        self.assertEqual(metric['count'], 1000)
+        self.assertEqual(metric['p99'], 9.9)
+        self.assertEqual(metric['p99_9'], 9.99)
+        self.assertEqual(metric['max'], 10)
+        self.assertEqual(metric['exceedances'], 500)
+        self.assertEqual(metric['exceedance_fraction'], .5)
+        self.assertEqual(group['delta_recommendation_s'], 99.9)
+
+    def test_timing_groups_keep_device_role_stage_and_protocol_separate(self):
+        for device, role, stage in [(42, 'leader', 'write'), (43, 'leader', 'write'),
+                                     (42, 'executor', 'write'), (42, 'leader', 'confirmation')]:
+            self.stats.emit('sync_window', device_id=device, role=role, stage=stage,
+                            sync_window_s=1, delta_s=5, outcome='success')
+        self.assertEqual(len(analyze(self.rows)['groups'][0]['timings']), 4)
+        self.assertIsNone(analyze([self.stats._base])['groups'][0]['delta_recommendation_s'])
+
+    def store(self, statistics=None):
+        adapter = FakeMetadataAdapter(FakeZontServer({42: {'name': PREFIX, 'notes': None}},
+                                                    clock=self.clock))
+        store = LeaderStore(adapter, 42, original_name=PREFIX, notes_capacity=10000,
+                            name_capacity=10000, profile=PROFILE,
+                            statistics=self.stats if statistics is None else statistics)
+        return store, adapter
+
+    def test_real_store_observes_original_window_and_read_write_confirmation(self):
+        store, adapter = self.store()
+        adapter.read_delay = .1
+        adapter.write_delay = .2
+        window = OperationWindow(self.clock, 5)
+        self.clock.advance(.5)  # Includes scheduling before the first store call.
+        store.write_r1(r1(record_id=str(self.uid())), window=window, role_deadline=200)
+        events = [row['event'] for row in self.rows]
+        self.assertIn('sync_read', events)
+        self.assertIn('sync_write', events)
+        self.assertIn('sync_confirmation', events)
+        finished = next(row for row in self.rows if row['event'] == 'sync_window')
+        written = next(row for row in self.rows if row['event'] == 'sync_write')
+        self.assertAlmostEqual(written['read_write_s'], .7)
+        self.assertAlmostEqual(finished['sync_window_s'], 1)
+        self.assertEqual(finished['started_at'], 100)
+        self.assertAlmostEqual(finished['finished_at'], 101)
+        self.assertEqual(analyze(self.rows)['groups'][0]['windows']['incomplete'], 0)
+
+    def test_lost_finish_and_timeout_samples_remain_unknown(self):
+        store, adapter = self.store()
+        adapter.write_delay = 6
+        update = adapter.update_metadata
+        def late_response(*args, **kwargs):
+            try:
+                return update(*args, **kwargs)
+            finally:
+                self.clock.advance(1)  # Scheduler resumes after the socket timeout.
+        adapter.update_metadata = late_response
+        with self.assertRaises(CommandOutcomeUnknown):
+            store.write_r1(r1(record_id=str(self.uid())),
+                           window=OperationWindow(self.clock, 5), role_deadline=200)
+        group = analyze(self.rows)['groups'][0]
+        self.assertEqual(group['windows']['unknown'], 1)
+        timing = next(row for row in group['timings'] if row['metric'] == 'sync_window_s')
+        self.assertEqual(timing['count'], 0)
+        self.assertIsNone(timing['p99_9'])
+        self.assertEqual(timing['censored_elapsed']['max'], 6)
+        self.assertEqual(group['delta_recommendation_status'], 'incomplete')
+        summary = next(row for row in self.rows if row['event'] == 'sync_window')
+        self.assertEqual(summary['outcome'], 'unknown')
+        self.assertGreater(summary['sync_window_s'], 5)
+        lost = analyze([row for row in self.rows if row['event'] != 'sync_window'])['groups'][0]
+        self.assertEqual(lost['windows']['incomplete'], 1)
+
+    def test_freeze_records_expected_wakeup_and_preserves_rejection(self):
+        guard = FreezeGuard(self.clock, 5, expected_resume_at=110,
+                            statistics=self.stats, device_id=42, role='leader')
+        self.clock.advance(12)
+        self.assertEqual(guard.check(), 2)
+        self.clock.advance(4)
+        with self.assertRaises(TimingViolation):
+            guard.check()
+        self.assertEqual([row['freeze_gap_s'] for row in self.rows], [2, 6])
+        self.assertEqual([row['exceeded'] for row in self.rows], [0, 1])
+
+    def test_failed_observer_never_changes_write_or_guard_outcome(self):
+        class Broken:
+            def emit(self, *args, **kwargs):
+                raise RuntimeError('private')
+        store, adapter = self.store(Broken())
+        with self.assertLogs('zontcontrol.coordination.statistics', level='WARNING'):
+            store.write_r1(r1(record_id=str(self.uid())),
+                           window=OperationWindow(self.clock, 5), role_deadline=200)
+        self.assertEqual(len(adapter.writes), 1)
+        self.clock.advance(6)
+        window = OperationWindow(self.clock, 5)
+        self.clock.advance(6)
+        with self.assertLogs('zontcontrol.coordination.statistics', level='WARNING'):
+            with self.assertRaises(TimingViolation):
+                store.write_r1(r1(record_id=str(self.uid())), window=window, role_deadline=200)
+        self.assertEqual(len(adapter.writes), 1)

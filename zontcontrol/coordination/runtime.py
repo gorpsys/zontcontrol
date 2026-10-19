@@ -122,9 +122,11 @@ class CoordinationRuntime:
                 name = original_name(metadata['name'])
                 options: _StoreOptions = dict(original_name=name, notes_capacity=65536, name_capacity=16384)
                 executor_store = ExecutorStore(self.adapter, device_id, **options,
-                    profile=self.config.profile, previous_profile=self.config.previous_profile)
+                    profile=self.config.profile, previous_profile=self.config.previous_profile,
+                    statistics=self.statistics)
                 leader_store = LeaderStore(self.adapter, device_id, **options,
-                    profile=self.config.profile, previous_profile=self.config.previous_profile)
+                    profile=self.config.profile, previous_profile=self.config.previous_profile,
+                    statistics=self.statistics)
                 with self._lock:
                     self._check_attempt(local_deadline, attempt_deadline)
                 executor_store.read_r1(window=window)
