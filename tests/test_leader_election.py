@@ -53,9 +53,11 @@ class TimingTests(unittest.TestCase):
             del time.CLOCK_BOOTTIME
             with self.assertRaises(RuntimeError):
                 BootClock()
-        with patch("zontcontrol.coordination.clock.time.clock_gettime", side_effect=OSError):
-            with self.assertRaises(RuntimeError):
-                BootClock()
+        for error in (OSError, ValueError):
+            with self.subTest(error=error), patch(
+                    "zontcontrol.coordination.clock.time.clock_gettime", side_effect=error):
+                with self.assertRaises(RuntimeError):
+                    BootClock()
         event = Event()
         event.set()
         self.assertTrue(BootClock().wait(event, 100))

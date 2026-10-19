@@ -56,3 +56,9 @@ class Clock(Protocol):
     def now(self) -> float: ...
 
     def wait(self, cancelled: Event, seconds: float) -> bool: ...
+
+
+class EpochSampler(Protocol):
+    """UNIX-seconds source sampled once when creating a v2 leader timeline."""
+
+    def __call__(self) -> float: ...

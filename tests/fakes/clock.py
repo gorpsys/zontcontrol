@@ -24,6 +24,16 @@ class FakeClock:
         with self._lock:
             return self._wall
 
+    def epoch_now(self):
+        return self.wall_now().timestamp()
+
+    def jump_wall(self, seconds):
+        """Model NTP correction without changing suspend-inclusive BOOTTIME."""
+        if type(seconds) not in (int, float) or not math.isfinite(seconds):
+            raise ValueError("invalid wall clock adjustment")
+        with self._lock:
+            self._wall += timedelta(seconds=seconds)
+
     def wait(self, cancelled, seconds):
         """Advance a local-duration wait without sleeping in offline tests."""
         if cancelled.is_set():
