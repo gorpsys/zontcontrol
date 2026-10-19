@@ -1,15 +1,21 @@
 """Adversarial schedules and independent physical oracle; no reliability claim."""
 
 from dataclasses import replace
+from threading import Event, Thread
 import unittest
+from unittest.mock import patch
+from uuid import UUID
 
+from tests.fakes.clock import FakeClock
 from tests.fakes.protocol import Scenario
 from zontcontrol.control_types import (CommandOutcomeUnknown, ControlOwnershipRequired,
                                       DeviceControlBusy, RateLimited)
 from zontcontrol.controller.ownership import CommandExecutor
+from zontcontrol.coordination.clock import clock_factor
 from zontcontrol.coordination.grants import GrantCoordinator
-from zontcontrol.coordination.leader import LeaseLost
-from zontcontrol.coordination.models import encode_r1
+from zontcontrol.coordination.leader import LeaderElection, LeaseLost
+from zontcontrol.coordination.models import encode_r1, original_name
+from zontcontrol.coordination.store import LeaderStore
 from zontcontrol.coordination.statistics import Statistics, analyze
 from zontcontrol.coordination.timing import OperationWindow
 
@@ -91,7 +97,7 @@ class ScenarioTests(unittest.TestCase):
         self.assertTrue(s.leader.role_cancelled.is_set())
         s.gate.validate(s.owner, session)
 
-    def test_late_apply_after_unknown_ack_never_becomes_success_from_polling(self):
+    def test_out_of_model_late_apply_after_unknown_ack_never_becomes_success_from_polling(self):
         s = self.s
         s.adapter.write_mode = 'defer'
         with self.assertRaises(CommandOutcomeUnknown):
@@ -100,7 +106,7 @@ class ScenarioTests(unittest.TestCase):
         s.adapter.write_mode = 'apply'
         s.advance(2)
         s.server.apply(sent)
-        self.assertTrue(s.server.out_of_model_faults)
+        self.assertEqual(s.server.out_of_model_faults, ((sent, 'late_apply'),))
         s.coordinator.step()
         session = s.gate.try_acquire(s.owner, 42, lease_seconds=60)
         s.gate.validate(s.owner, session)
@@ -211,3 +217,263 @@ class ScenarioTests(unittest.TestCase):
         s.server.finish_control(later)
         self.assertGreaterEqual(next_grant.valid_from, old.valid_until+s.leader.timing.command_guard)
         self.assertEqual(s.server.control_conflicts, ())
+
+    def test_request_before_first_leader_cannot_admit_a_command(self):
+        s = Scenario(ready=False)
+        executor = CommandExecutor(gate=s.gate, clock=s.clock.now, uuid_factory=s.uid)
+        binding = executor.bind()
+        before = s.uid.call_count
+        with self.assertRaises(DeviceControlBusy):
+            binding.try_acquire_control(42, lease_seconds=60)
+        request = s.store.read_r2().request
+        self.assertEqual((request.request_id, request.nonce),
+                         (str(UUID(int=before+1)), str(UUID(int=before+2))))
+        self.assertIsNone(request.leader_term_id)
+        self.assertIsNone(s.store.read_r1())
+        prepared, sent = [], []
+        command = type('Command', (), {'device_id': 42})()
+        with self.assertRaises(ControlOwnershipRequired):
+            binding.execute(command, None, lambda: prepared.append('on'), sent.append)
+        self.assertEqual((prepared, sent), ([], []))
+        self.assertEqual([field for _, field, _ in s.adapter.writes], ['notes'])
+
+        self.assertTrue(s.leader.try_acquire())
+        s.advance(s.leader.timing.quarantine)
+        s.coordinator.step()
+        self.assertEqual(s.store.read_r1().grants, ())
+        with self.assertRaises(DeviceControlBusy):
+            binding.try_acquire_control(42, lease_seconds=60)
+        rebound = s.store.read_r2().request
+        self.assertEqual(rebound.request_id, request.request_id)
+        self.assertNotEqual(rebound.nonce, request.nonce)
+        self.assertEqual(rebound.leader_term_id, s.leader.record.term_id)
+        s.coordinator.step()
+        session = binding.try_acquire_control(42, lease_seconds=60)
+        binding.execute(command, session, lambda: 'on', sent.append)
+        self.assertEqual(sent, ['on'])
+        binding.release_control(session)
+        self.assertEqual(original_name(s.server.read_device(42)['name']), s.prefix)
+
+    def test_simultaneous_bootstrap_candidates_and_early_executors_with_event_schedule(self):
+        for count in (2, 5):
+            with self.subTest(participants=count):
+                s = Scenario(ready=False)
+                stores = [s.store] + [s.make_store(LeaderStore) for _ in range(count-1)]
+                candidates = [s.leader] + [s.candidate(store=store) for store in stores[1:]]
+                executors = [(s.make_gate(), s.uid()) for _ in range(count)]
+                requests = []
+                for gate, owner in executors:
+                    self.assertIsNone(s.pending(gate=gate, owner=owner))
+                    requests.append(s.store.read_r2().request)
+                    self.assertEqual(gate._held, {})
+                self.assertEqual(s.server.read_device(42)['name'], s.prefix)
+                self.assertTrue(all(request.leader_term_id is None for request in requests))
+
+                # Every first READ sees the pristine R1. Gates then serialize
+                # candidate WRITEs, keeping all confirmations behind all WRITEs.
+                started = Event()
+                read_ready = [Event() for _ in candidates]
+                allow_read = [Event() for _ in candidates]
+                waiting = [Event() for _ in candidates]
+                allow_confirm = [Event() for _ in candidates]
+                outcomes = [None] * count
+                patches, threads = [], []
+                before = s.uid.call_count
+
+                def buffered_read(index, store):
+                    read, first = store.read_r1, True
+                    def callback(**kwargs):
+                        nonlocal first
+                        value = read(**kwargs)
+                        if first:
+                            first = False
+                            read_ready[index].set()
+                            if not allow_read[index].wait(2):
+                                raise AssertionError('candidate READ gate was not released')
+                        return value
+                    return callback
+
+                class CandidateClock:
+                    def __init__(self, index):
+                        self.index = index
+                    def now(self):
+                        return s.clock.now()
+                    def wait(self, cancelled, seconds):
+                        waiting[self.index].set()
+                        if not allow_confirm[self.index].wait(2):
+                            raise AssertionError('candidate confirmation gate was not released')
+                        return cancelled.is_set()
+
+                def run(index):
+                    started.wait(2)
+                    try:
+                        outcomes[index] = candidates[index].try_acquire()
+                    except LeaseLost:
+                        outcomes[index] = False
+                    except BaseException as error:
+                        outcomes[index] = error
+
+                try:
+                    for index, (store, candidate) in enumerate(zip(stores, candidates)):
+                        candidate._clock = CandidateClock(index)
+                        item = patch.object(store, 'read_r1', side_effect=buffered_read(index, store))
+                        item.start()
+                        patches.append(item)
+                        thread = Thread(target=run, args=(index,), name=f'bootstrap-{index}')
+                        threads.append(thread)
+                        thread.start()
+                    started.set()
+                    for ready in read_ready:
+                        self.assertTrue(ready.wait(2))
+                    for index in range(count):
+                        allow_read[index].set()
+                        self.assertTrue(waiting[index].wait(2))
+                    s.clock.advance(s.leader.timing.barrier + 1e-7)
+                    for gate in allow_confirm:
+                        gate.set()
+                    for thread in threads:
+                        thread.join(2)
+                        self.assertFalse(thread.is_alive())
+                finally:
+                    started.set()
+                    for gate in (*allow_read, *allow_confirm):
+                        gate.set()
+                    for thread in threads:
+                        thread.join(2)
+                    for item in reversed(patches):
+                        item.stop()
+                self.assertEqual(outcomes, [False] * (count-1) + [True])
+                elected = candidates[-1]
+                self.assertEqual(s.store.read_r1().leader, elected.record)
+                self.assertEqual(elected.record.term_id, str(UUID(int=before+2*count-1)))
+                self.assertEqual(s.store.read_r1().record_id, str(UUID(int=before+2*count)))
+                coordinator = GrantCoordinator(s.store, elected, clock=s.clock, uuid_factory=s.uid)
+                coordinator.step()
+                self.assertEqual(s.store.read_r1().grants, ())
+                s.advance(elected.timing.quarantine, elected)
+                gate, owner = executors[0]
+                self.assertIsNone(s.pending(gate=gate, owner=owner))
+                rebound = s.store.read_r2().request
+                self.assertEqual(rebound.request_id, requests[0].request_id)
+                self.assertEqual(rebound.leader_term_id, elected.record.term_id)
+                grant = coordinator.step()
+                self.assertEqual(grant.request_id, rebound.request_id)
+                session = gate.try_acquire(owner, 42, lease_seconds=60)
+                gate.validate(owner, session)
+                self.assertEqual(original_name(s.server.read_device(42)['name']), s.prefix)
+                self.assertEqual(s.server.out_of_model_faults, ())
+
+    def test_dynamic_executors_lost_requests_future_grants_and_new_epoch_takeover(self):
+        for count in (2, 5):
+            for rates in ((.9, 1.1), (1.1, .9)):
+                with self.subTest(participants=count, rates=rates):
+                    s = Scenario()
+                    clocks, active_leaders = [], [(s.leader, 1)]
+
+                    def advance(seconds):
+                        for leader, leader_rate in active_leaders:
+                            leader.expect_resume(leader._clock.now() + seconds*leader_rate)
+                        s.clock.advance(seconds)
+                        for clock, rate in clocks:
+                            clock.advance(seconds)
+
+                    previous = None
+                    issued = []
+                    for index in range(count):
+                        # Participants join while older grants still reserve
+                        # the device; local BOOTTIMEs and wall clocks differ.
+                        rate = rates[index % len(rates)]
+                        clock = FakeClock(start=10000*(index+1), rate=rate)
+                        clocks.append((clock, rate))
+                        gate, owner = s.make_gate(clock=clock), s.uid()
+                        effect = None
+                        if previous is not None:
+                            old_gate, old_owner, old_session, old_clock, old_rate = previous
+                            advance((old_session.expires_at-old_clock.now()) / old_rate - .05)
+                            old_gate.validate(old_owner, old_session)
+                            effect = s.server.begin_control(42, str(old_owner))
+                        before = s.uid.call_count
+                        s.pending(gate=gate, owner=owner)
+                        pending = gate._pending[owner, 42]
+                        request, deadline = pending.request, pending.local_deadline
+                        self.assertEqual((request.request_id, request.nonce),
+                            (str(UUID(int=before+1)), str(UUID(int=before+2))))
+                        # Another participant displaces R2. Retransmission keeps
+                        # the original nonce, send sample and deadline.
+                        s.pending(gate=s.make_gate(), owner=s.uid())
+                        self.assertNotEqual(s.store.read_r2().request, request)
+                        sent_at = pending.sent
+                        s.pending(gate=gate, owner=owner)
+                        self.assertEqual(s.store.read_r2().request, request)
+                        self.assertEqual((pending.local_deadline, pending.sent), (deadline, sent_at))
+                        before_grant = s.uid.call_count
+                        grant = s.coordinator.step()
+                        self.assertEqual(grant.grant_id, str(UUID(int=before_grant+2)))
+                        self.assertEqual((grant.owner_id, grant.request_id, grant.nonce),
+                                         (str(owner), request.request_id, request.nonce))
+                        issued.append(grant)
+                        # Wall corrections never change the cached causal map.
+                        clock.jump_wall((-1 if index % 2 else 1) * 100000000)
+                        if previous is not None:
+                            self.assertGreater(grant.valid_from, grant.sampled_at)
+                            with self.assertRaises(DeviceControlBusy):
+                                gate.try_acquire(owner, 42, lease_seconds=60)
+                            self.assertIsNotNone(pending.interval)
+                            advance(.5)
+                            s.server.finish_control(effect)
+                            with self.assertRaises(ControlOwnershipRequired):
+                                old_gate.validate(old_owner, old_session)
+                            # Keep the first matched sample, then advance only
+                            # to its local inclusive lower admission boundary.
+                            local_wait = pending.interval.usable_from-clock.now()
+                            if local_wait > 0:
+                                advance(local_wait/rate + 1e-7)
+                        session = gate.try_acquire(owner, 42, lease_seconds=60)
+                        gate.validate(owner, session)
+                        self.assertLess(clock.now(), session.expires_at)
+                        previous = gate, owner, session, clock, rate
+
+                    # Stop the old role and take over with both a different
+                    # BOOTTIME origin and a backwards UNIX origin. Stale R2
+                    # cannot be served in the new term or grant new authority.
+                    gate, owner, session, clock, rate = previous
+                    advance((session.expires_at-clock.now())/rate + 1)
+                    old_request = s.store.read_r2()
+                    old_term = s.leader.record.term_id
+                    s.leader.stop()
+                    takeover_rate = 1.005
+                    takeover_clock = FakeClock(start=700000, rate=takeover_rate)
+                    clocks.append((takeover_clock, takeover_rate))
+                    successor = LeaderElection(s.store, str(s.uid()), s.leader.timing,
+                        clock=takeover_clock, epoch_sampler=lambda: 900000000,
+                        uuid_factory=s.uid)
+                    active_leaders[:] = [(successor, takeover_rate)]
+                    self.assertFalse(successor.try_acquire())
+                    record = s.store.read_r1()
+                    old_horizon = record.leader.leader_until-record.leader.sampled_at
+                    advance(old_horizon*clock_factor(record.leader.period_s)/takeover_rate + 1e-7)
+                    before_takeover = s.uid.call_count
+
+                    def wait(cancelled, seconds):
+                        advance(seconds/takeover_rate)
+                        return cancelled.is_set()
+
+                    with patch.object(takeover_clock, 'wait', side_effect=wait):
+                        self.assertTrue(successor.try_acquire())
+                    self.assertEqual(successor.record.term_id, str(UUID(int=before_takeover+1)))
+                    self.assertNotEqual(successor.record.term_id, old_term)
+                    self.assertNotEqual(successor.timeline.clock_id, s.leader.timeline.clock_id)
+                    self.assertLess(successor.timeline.now(), issued[-1].sampled_at)
+                    advance(successor.timing.quarantine/takeover_rate)
+                    coordinator = GrantCoordinator(s.store, successor, clock=takeover_clock,
+                                                   uuid_factory=s.uid)
+                    coordinator.step()
+                    self.assertEqual(s.store.read_r2(), old_request)
+                    self.assertEqual(s.store.read_r1().grants, ())
+                    with self.assertRaises(ControlOwnershipRequired):
+                        gate.validate(owner, session)
+                    for first, second in zip(issued, issued[1:]):
+                        self.assertGreaterEqual(second.valid_from,
+                            first.valid_until+s.leader.timing.command_guard)
+                    self.assertEqual(s.server.control_conflicts, ())
+                    self.assertEqual(s.server.out_of_model_faults, ())

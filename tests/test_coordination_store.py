@@ -248,3 +248,44 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(RecordError):
             store.read_r1()
         self.assertEqual(len(self.adapter.writes), before)
+
+    def test_bootstrap_rejects_either_unknown_register_before_any_role_write(self):
+        foreign = ProtocolProfile(OWNER, 1, 1)
+        mismatched_parameters = replace(PROFILE, delta_cmd_seconds=2)
+        cases = (
+            ('name', PREFIX + ' [zc:legacy]'),
+            ('notes', '{"v":1}'),
+            ('name', encode_r1(PREFIX, r1(profile=foreign))),
+            ('notes', encode_r2(R2Record(foreign.profile_id))),
+            ('name', encode_r1(PREFIX, r1(profile=mismatched_parameters))),
+        )
+        for field, raw in cases:
+            for role in ('leader', 'executor'):
+                with self.subTest(field=field, raw=raw, role=role):
+                    self.setUp()
+                    self.server.apply(self.server.send_update(42, {field: raw}))
+                    before = self.server.read_device(42)
+                    requests = len(self.server.requests)
+                    with self.assertRaises(RecordError):
+                        self.write() if role == 'leader' else self.publish(request())
+                    self.assertEqual(self.adapter.writes, [])
+                    self.assertEqual(len(self.server.requests), requests)
+                    self.assertEqual(self.server.read_device(42), before)
+
+    def test_missing_other_register_never_gives_a_writer_the_other_capability(self):
+        for role in ('leader', 'executor'):
+            with self.subTest(role=role):
+                self.setUp()
+                if role == 'leader':
+                    self.write(r1(record_id=str(self.uid()), leader=None, grants=()))
+                    self.assertIsNone(self.server.read_device(42)['notes'])
+                    self.assertFalse(hasattr(self.store, 'publish_request'))
+                    field = 'name'
+                else:
+                    self.publish(request(leader_term_id=None))
+                    self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+                    self.assertFalse(hasattr(self.executor, 'write_r1'))
+                    field = 'notes'
+                self.assertEqual([item[1] for item in self.adapter.writes], [field])
+                self.assertEqual(original_name(self.server.read_device(42)['name']), PREFIX)
+                self.assertEqual(self.server.read_device(42)['heating'], {'mode': 'unchanged'})

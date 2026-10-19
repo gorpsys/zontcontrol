@@ -803,6 +803,32 @@ class ComposedCoordinationTests(unittest.TestCase):
             original_name('Дом [zc:v1 управление занято malformed]')
         self.owner.release_control(session)
 
+    def test_invalid_bootstrap_metadata_starts_no_worker_and_sends_no_write(self):
+        from tests.fakes.protocol import PROFILE
+        from zontcontrol.coordination.models import R1Record, R2Record
+
+        foreign = replace(PROFILE, profile_id=str(self.uuid_generator()))
+        cases = (
+            ('name', 'Дом [zc:v1 malformed]'),
+            ('notes', '{"v":1}'),
+            ('name', encode_r1('Дом', R1Record(foreign, str(self.uuid_generator())))),
+            ('notes', encode_r2(R2Record(foreign.profile_id))),
+        )
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                with self.transport.lock:
+                    self.transport.raw['name'], self.transport.raw['notes'] = 'Дом', ''
+                    self.transport.raw[field] = value
+                    original = deepcopy(self.transport.raw)
+                before = len(self.transport.requests)
+                with self.assertRaises(RecordError):
+                    self.owner.try_acquire_control(42, lease_seconds=10)
+                self.assertEqual(self.app._coordination._devices, {})
+                self.assertEqual(self.transport.commands, [])
+                self.assertEqual(self.transport.raw, original)
+                self.assertTrue(all(request.full_url.endswith('/devices')
+                                    for request in self.transport.requests[before:]))
+
     def test_host_services_leader_renewals_without_extending_executor_session(self):
         session = self.acquire()
         self.app._coordination._devices[42][1].leader.renewal_fraction = .0003
