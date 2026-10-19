@@ -42,7 +42,11 @@ class CoordinatorWorker:
                     if self.cancelled.is_set():
                         break
                     renewal_due = self.leader.renewal_due_at
-                    if renewal_due is not None and self.clock.now() >= renewal_due:
+                    now = self.clock.now()
+                    if renewal_due is not None and (
+                            now >= renewal_due
+                            or now + self.coordinator.renewal_headroom
+                               >= self.leader.expires_at - self.leader.timing.stop_margin):
                         self.leader.renew()
                     self.coordinator.step()
                 except (LeaseLost, ControllerError, RecordError, TimingViolation):

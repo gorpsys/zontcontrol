@@ -45,6 +45,14 @@ class GrantCoordinator:
                 and request.grant_revision == grant.revision
                 and request.leader_term_id == grant.issuer_term_id)
 
+    @property
+    def renewal_headroom(self):
+        # inspect + confirm + optional cleanup/expired/finish publication are
+        # three independent windows, followed by a complete renewal window.
+        # Issuing a grant has a fourth phase, but renews separately after the
+        # first two; its final publication runs against that refreshed lease.
+        return 3 * min(self.window, self._leader.timing.delta) + self._leader.timing.delta
+
     def step(self, *, accepting=True):
         # Keep both protocol phases serialized with renewal and shutdown.
         with self._leader._lock:

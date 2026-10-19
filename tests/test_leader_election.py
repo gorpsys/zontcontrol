@@ -78,6 +78,140 @@ class TimingTests(unittest.TestCase):
 
 
 class WorkerTests(unittest.TestCase):
+    def run_bounded_worker(self, *, period=40, poll=1, jitter=0, fraction=.59,
+                           mode='idle', rate=1, phase_seconds=5):
+        from zontcontrol.config import CoordinationConfig
+        from zontcontrol.coordination.grants import GrantCoordinator
+        from zontcontrol.coordination.leader import LeaderElection
+        from zontcontrol.coordination.models import RequestRecord
+        from zontcontrol.coordination.statistics import Statistics
+        from zontcontrol.coordination.store import ExecutorStore, LeaderStore
+
+        s = Scenario(ready=False)
+        s.clock = s.server.clock = FakeClock(start=100, rate=rate)
+        config = CoordinationConfig(5, period, 5, s.profile.profile_id,
+                                    poll, 1, jitter, fraction)
+        store = s.make_store(LeaderStore, profile=config.profile)
+        events = []
+        statistics = Statistics(events.append, protocol_version='2', profile='test')
+        leader = LeaderElection(store, str(s.uid()), config.timing,
+            clock=s.clock, epoch_sampler=s.clock.epoch_now, uuid_factory=s.uid,
+            statistics=statistics, poll_seconds=poll, jitter_fraction=jitter,
+            renewal_fraction=fraction)
+        coordinator = GrantCoordinator(store, leader, clock=s.clock, uuid_factory=s.uid,
+                                       statistics=statistics)
+        worker = CoordinatorWorker(store, leader, coordinator, s.clock, statistics)
+        if mode != 'idle':
+            self.assertTrue(leader.try_acquire())
+            leader.expect_resume(s.clock.now() + config.timing.quarantine)
+            s.clock.wait(Event(), config.timing.quarantine)
+            executor = s.make_store(ExecutorStore, profile=config.profile)
+            request = RequestRecord(str(s.uid()), str(s.uid()), str(s.uid()),
+                                    leader.record.term_id, 'acquire', 5)
+            executor.publish_request(request, window=OperationWindow(s.clock, 5))
+            if mode == 'expired':
+                self.assertIsNotNone(coordinator.step())
+
+        read_r1, read_r2, write_r1 = store.read_r1, store.read_r2, store.write_r1
+        confirm, step = leader.confirm, coordinator.step
+        confirming = False
+        writing = False
+        windows, steps, starts = [], [], []
+        end = s.clock.now() + min(2.2 * period, 700)
+
+        def delay(seconds):
+            s.clock.advance(seconds * phase_seconds / 5 / rate)
+
+        def bounded_r1(**kwargs):
+            result = read_r1(**kwargs)
+            if not writing and leader.can_coordinate(0):
+                windows.append(kwargs['window'])
+                delay(5 if confirming else 1)
+            return result
+
+        def bounded_r2(**kwargs):
+            result = read_r2(**kwargs)
+            if not writing and leader.can_coordinate(0):
+                delay(4)  # With its initial R1 read, inspect consumes exactly Delta.
+            return result
+
+        def bounded_write(*args, **kwargs):
+            nonlocal writing
+            writing = True
+            try:
+                result = write_r1(*args, **kwargs)
+            finally:
+                writing = False
+            if leader.can_coordinate(0):
+                delay(4)  # Separate renewal/publication window also consumes Delta.
+            return result
+
+        def bounded_confirm(*args, **kwargs):
+            nonlocal confirming
+            confirming = True
+            try:
+                return confirm(*args, **kwargs)
+            finally:
+                confirming = False
+
+        def bounded_step():
+            before = len(windows)
+            starts.append((s.clock.now(), leader.record.revision))
+            try:
+                result = step()
+                steps.append((leader.record.term_id, len(windows)-before))
+                return result
+            finally:
+                if s.clock.now() >= end:
+                    worker.cancelled.set()
+
+        with patch.object(store, 'read_r1', side_effect=bounded_r1), \
+                patch.object(store, 'read_r2', side_effect=bounded_r2), \
+                patch.object(store, 'write_r1', side_effect=bounded_write), \
+                patch.object(leader, 'confirm', side_effect=bounded_confirm), \
+                patch.object(coordinator, 'step', side_effect=bounded_step), \
+                patch('zontcontrol.coordination.runtime.random.uniform', return_value=jitter):
+            worker._work()
+
+        self.assertGreaterEqual(len(steps), 4, (steps, [e for e in events if
+            e['event'] in ('leader_renewed', 'error', 'leader_lost', 'leader_acquired')]))
+        self.assertEqual(len({term for term, _ in steps}), 1)
+        self.assertEqual([e['event'] for e in events].count('leader_acquired'), 1)
+        self.assertGreaterEqual([e['event'] for e in events].count('leader_renewed'), 1)
+        self.assertEqual([e for e in events if e['event'] in
+                          ('error', 'leader_lost', 'delta_breach')], [])
+        self.assertFalse(any(e['event'] == 'freeze' and e['exceeded'] for e in events))
+        self.assertEqual(s.server.out_of_model_faults, ())
+        return [count for _, count in steps], store.read_r1(), starts
+
+    def test_full_step_and_next_renewal_fit_with_two_separate_delta_windows(self):
+        for rate in (.9, 1, 1.1):
+            with self.subTest(rate=rate):
+                windows, _, _ = self.run_bounded_worker(rate=rate)
+                self.assertEqual(set(windows), {2})
+
+    def test_renewal_reserve_equality_renews_before_short_step(self):
+        _, _, starts = self.run_bounded_worker(poll=3, fraction=.5, phase_seconds=1)
+        self.assertEqual(starts[:2], [(110, 0), (116, 1)])
+
+    def test_step_budget_covers_extra_publication_and_internal_grant_renewal(self):
+        for mode, count in (('expired', 3), ('request', 4)):
+            with self.subTest(mode=mode):
+                windows, record, _ = self.run_bounded_worker(mode=mode)
+                self.assertIn(count, windows)
+                self.assertEqual(record.reply.reason, 'expired')
+
+    def test_bounded_worker_preserves_role_across_legal_pacing_and_rho_boundaries(self):
+        profiles = ((40, 14, 0, .25), (40, 11, .25, .25),
+                    (40, .1, .25, .62), (40, 20, 0, .01),
+                    (60, 1, .25, .7), (60.01, 1, .25, .7),
+                    (300, 1, .25, .94), (300.01, 1, .25, .94),
+                    (600, 1, .25, .97), (600.01, 1, .25, .97))
+        for period, poll, jitter, fraction in profiles:
+            with self.subTest(period=period, poll=poll, jitter=jitter, fraction=fraction):
+                self.run_bounded_worker(period=period, poll=poll, jitter=jitter,
+                                        fraction=fraction)
+
     def test_poll_with_jitter_wakes_at_confirmed_renewal_deadline(self):
         s = Scenario(period=40, ready=False)
         s.leader.poll_seconds = 14
