@@ -3,8 +3,7 @@
 This is a lifecycle primitive, not a catalog/registrar. Bootstrap and module
 work run only in the worker. A separate once supervisor publishes the result
 timeout without waiting for HTTP or finally. Cancellation never reaches the
-controller's command admission; the module retains its control session until
-it releases it after cleanup. No thread can be forcibly stopped here.
+controller; the module executes its cleanup through the same direct API. No thread can be forcibly stopped here.
 """
 
 import math
@@ -12,7 +11,7 @@ from threading import Event, Lock, Thread, TIMEOUT_MAX
 from time import monotonic
 from uuid import uuid4
 
-from ..control_types import UUIDFactory
+from .contracts import UUIDFactory
 from .contracts import (
     AlgorithmBusy, AlgorithmCancelled, AlgorithmFailed, AlgorithmResult,
     AlgorithmSpec, AlgorithmState, AlgorithmTimeout, Mode, RunContext,
@@ -75,7 +74,7 @@ class RunHandle:
 class AlgorithmRuntime:
     """One spec/configuration slot, shared with the future registrar via DI.
 
-    controller_factory binds the consumer identity in the worker, inside the
+    controller_factory supplies the controller in the worker, inside the
     once budget. close_controller is an optional owner-supplied shutdown hook;
     a shared facade should instead be closed by its composition root after all
     runtimes have closed. close returns False while cleanup is still running.

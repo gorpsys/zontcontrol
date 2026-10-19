@@ -5,7 +5,5 @@
   "coolant_sensor_id": 8,
   "reset_control_id": 31,
   "check_interval_seconds": 60,
-  "detection_profile": "smart_2_heating",
-  "grant_wait_seconds": 30,
-  "grant_poll_seconds": 1
+  "detection_profile": "smart_2_heating"
 }

@@ -40,14 +40,9 @@ class PackageContentsTests(unittest.TestCase):
         required = {'zontcontrol.application', 'zontcontrol.controller.auth',
             'zontcontrol.controller.contracts', 'zontcontrol.controller.transport',
             'zontcontrol.controller.zont', 'zontcontrol.controller.service',
-            'zontcontrol.controller.ownership', 'zontcontrol.coordination.clock',
-            'zontcontrol.coordination.grants', 'zontcontrol.coordination.leader',
-            'zontcontrol.coordination.models', 'zontcontrol.coordination.ports',
-            'zontcontrol.coordination.runtime', 'zontcontrol.coordination.store',
-            'zontcontrol.coordination.timing',
-            'zontcontrol.coordination.statistics', 'zontcontrol.autonomy.registry',
-            'zontcontrol.autonomy.runtime', 'zontcontrol.algorithms.boiler_reset',
-            'zontcontrol.algorithms.boiler_cli', 'zontcontrol.algorithms.charts'}
+            'zontcontrol.autonomy.registry', 'zontcontrol.autonomy.runtime',
+            'zontcontrol.algorithms.boiler_reset', 'zontcontrol.algorithms.boiler_cli',
+            'zontcontrol.algorithms.charts'}
         with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
             modules = {item.name for item in pkgutil.walk_packages(
                 zontcontrol.__path__, prefix='zontcontrol.')}
@@ -63,37 +58,13 @@ class PackageContentsTests(unittest.TestCase):
                          if isinstance(node, (ast.ClassDef, ast.FunctionDef))}
             self.assertFalse({'ZontClient', 'apply_command'} & forbidden, path.name)
 
-    def test_source_and_wheel_expose_the_same_v2_contract(self):
-        from zontcontrol import coordination
-        from zontcontrol.controller.transport import HttpTransport
-        from zontcontrol.controller.zont import ZontAdapter
-        from zontcontrol.coordination.models import (
-            ProtocolProfile, R1Record, R2Record, decode_r1, decode_r2, encode_r1, encode_r2,
-        )
-        from zontcontrol.coordination.store import ExecutorStore, LeaderStore
-
-        self.assertEqual(set(coordination.__all__), {
-            'CoordinationRuntime', 'CoordinatorWorker', 'CoordinationGate', 'MetadataPort',
-            'CoordinationSettings', 'Clock', 'EpochSampler', 'BootClock', 'LeaseTiming',
-            'ProtocolProfile', 'Statistics', 'JsonlSink', 'ObservationError', 'observe',
-            'error_event', 'analyze', 'read_jsonl', 'Observer', 'ObservationSink', 'ObservationValue',
-        })
-        self.assertIs(coordination.ProtocolProfile, ProtocolProfile)
-        profile = coordination.ProtocolProfile(str(UUID(int=1)), 1, 1)
-        record = R1Record(profile, str(UUID(int=2)))
-        prefix = '  Дом 🏠  '
-        with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
-            self.assertEqual(decode_r1(encode_r1(prefix, record), prefix), record)
-            self.assertEqual(decode_r2(encode_r2(R2Record(profile.profile_id))),
-                             R2Record(profile.profile_id))
-        self.assertFalse(hasattr(ExecutorStore, 'write_r1'))
-        self.assertFalse(hasattr(LeaderStore, 'publish_request'))
-        for method in (HttpTransport.request, ZontAdapter.read_metadata,
-                       ZontAdapter.read_metadata_field, ZontAdapter.update_metadata):
-            with self.subTest(method=method.__qualname__):
-                parameter = inspect.signature(method).parameters['timeout_seconds']
-                self.assertIs(parameter.kind, inspect.Parameter.KEYWORD_ONLY)
-                self.assertIsNone(parameter.default)
+    def test_source_and_wheel_expose_the_same_direct_command_contract(self):
+        from zontcontrol.controller.contracts import API_VERSION, Controller
+        self.assertEqual(API_VERSION, 2)
+        self.assertEqual(tuple(inspect.signature(Controller.execute_command).parameters),
+                         ('self', 'command'))
+        for module in ('coordination', 'controller.ownership', 'controller.requests'):
+            self.assertIsNone(util.find_spec('zontcontrol.'+module))
 
 
 @unittest.skipUnless(INSTALLED, 'installed wheel suite: make package-check')
@@ -145,12 +116,7 @@ class InstalledPackageTests(unittest.TestCase):
         from zontcontrol.autonomy.contracts import AlgorithmState
         from zontcontrol.config import ConfigurationError, load_controller_config, load_registry_config
 
-        controller = {'contact': 'installed@example.invalid', 'http_timeout_seconds': 7,
-            'coordination': {'delta_seconds': 1, 'leader_period_seconds': 60,
-                'delta_cmd_seconds': 1, 'profile_id': str(UUID(int=1)),
-                'poll_seconds': 1, 'retry_seconds': 5, 'jitter_fraction': .25,
-                'renewal_fraction': .25},
-            'statistics': {'path': 'reports/offline.jsonl', 'profile': 'installed-offline'}}
+        controller = {'contact': 'installed@example.invalid', 'http_timeout_seconds': 7}
         registry = {'disabled_modules': [], 'once_timeouts': {
             'boiler_reset': {'minimum_seconds': 170, 'recommended_seconds': 180}}}
         reset = {'device_id': 2042, 'circuit_id': 10, 'air_sensor_id': 7,
@@ -174,15 +140,13 @@ class InstalledPackageTests(unittest.TestCase):
                         patch('zontcontrol.algorithms.boiler_cli.Terminal.available', return_value=False):
                     uuid_source = Mock(side_effect=(UUID(int=value) for value in range(1, 100)))
                     with create_application(environ={'ZONT_TOKEN': 'synthetic-offline'},
-                                            statistics_sink=lambda _: None,
                                             uuid_factory=uuid_source) as app:
                         rows = {row.spec.algorithm_id: row for row in app.list_algorithms()}
                         self.assertIs(rows['boiler_reset'].state, AlgorithmState.REGISTERED)
                         self.assertIs(rows['boiler_cli'].state, AlgorithmState.FAILED)
                         self.assertEqual(app._controller._adapter._transport, transport.return_value)
-                        self.assertEqual(app._coordination._timeline.clock_id, UUID(int=1))
                     transport.return_value.request.assert_not_called()
-                    self.assertEqual(uuid_source.call_count, 3)  # Timeline plus two module bindings.
+                    uuid_source.assert_not_called()  # No runs or control bindings at registration.
                 for name, load in (('boiler_reset', reset_config), ('boiler_cli', cli_config),
                                    ('registry', load_registry_config),
                                    ('controller', load_controller_config)):

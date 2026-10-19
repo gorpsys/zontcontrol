@@ -1,10 +1,7 @@
-"""Stable, transport-independent controller API v1.
+"""Transport-independent API v2: account data and direct commands.
 
-Collections are tuples and values are scalars: DTOs never retain mutable API
-responses, credentials, URLs or HTTP request bodies. Times are UTC datetimes,
-except ControlSession.expires_at, which belongs to the executor's local clock.
-Only an identity-bound controller can issue/validate a session; constructing a
-DTO does not confer ownership. Command preparation is not an authorization.
+DTOs retain neither credentials nor mutable API responses. Times are UTC.
+There are no device owners, sessions, leases or permission requests.
 """
 
 from __future__ import annotations
@@ -12,17 +9,48 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from threading import Event
-from typing import Mapping, Protocol, TypeAlias, cast, runtime_checkable
-from uuid import UUID
+import math
+from typing import ClassVar, Mapping, Protocol, TypeAlias, cast, runtime_checkable
 
-from ..control_types import (
-    CommandOutcomeUnknown, ControllerError, ControlOwnershipRequired, ControlSession,
-    DeviceControlBusy, InvalidArguments, RateLimited, _id, _number, _require,
-)
+class ControllerError(Exception):
+    """Safe public error; never retain arbitrary upstream messages."""
+
+    message: ClassVar[str] = "Controller operation failed."
+
+    def __init__(self) -> None:
+        super().__init__(self.message)
 
 
-API_VERSION = 1
+class InvalidArguments(ControllerError):
+    message = "Invalid controller arguments or data."
+
+
+class RateLimited(ControllerError):
+    message = "API rate limit reached."
+
+
+class CommandOutcomeUnknown(ControllerError):
+    message = "Command outcome is unknown after sending."
+
+
+def _require(condition: bool) -> None:
+    if not condition:
+        raise InvalidArguments()
+
+
+def _id(value: object) -> None:
+    _require(type(value) is int and value > 0)
+
+
+def _number(value: object) -> None:
+    _require(type(value) in (int, float))
+    try:
+        _require(math.isfinite(cast(float, value)))
+    except OverflowError:
+        raise InvalidArguments() from None
+
+
+API_VERSION = 2
 Scalar: TypeAlias = str | float | int | bool | None
 Arguments: TypeAlias = tuple[tuple[str, Scalar], ...]
 
@@ -41,54 +69,6 @@ class UnsupportedAction(ControllerError):
 
 class IncompleteHistory(ControllerError):
     message = "Required history is incomplete."
-
-
-class ControlRequestState(str, Enum):
-    REQUESTED = "requested"
-    GRANTED = "granted"
-    DENIED = "denied"
-
-
-class ControlRequestReason(str, Enum):
-    TIMEOUT = "timeout"
-    CANCELLED = "cancelled"
-    SHUTDOWN = "shutdown"
-    LEASE_EXPIRED = "lease_expired"
-    CONTROLLER_ERROR = "controller_error"
-
-
-class ControlRequestErrorCode(str, Enum):
-    AUTHENTICATION_ERROR = "authentication_error"
-    DEVICE_UNAVAILABLE = "device_unavailable"
-    UNSUPPORTED_ACTION = "unsupported_action"
-    INVALID_ARGUMENTS = "invalid_arguments"
-    INCOMPLETE_HISTORY = "incomplete_history"
-    RATE_LIMITED = "rate_limited"
-    COMMAND_OUTCOME_UNKNOWN = "command_outcome_unknown"
-    DEVICE_CONTROL_BUSY = "device_control_busy"
-    CONTROL_OWNERSHIP_REQUIRED = "control_ownership_required"
-    CONTROLLER_ERROR = "controller_error"
-
-    @classmethod
-    def from_error(cls, error: BaseException) -> "ControlRequestErrorCode":
-        """Classify only the fixed public types; never retain upstream details."""
-        return _CONTROL_REQUEST_ERROR_CODES.get(type(error), cls.CONTROLLER_ERROR)
-
-
-_CONTROL_REQUEST_ERROR_TYPES = {
-    ControlRequestErrorCode.AUTHENTICATION_ERROR: AuthenticationError,
-    ControlRequestErrorCode.DEVICE_UNAVAILABLE: DeviceUnavailable,
-    ControlRequestErrorCode.UNSUPPORTED_ACTION: UnsupportedAction,
-    ControlRequestErrorCode.INVALID_ARGUMENTS: InvalidArguments,
-    ControlRequestErrorCode.INCOMPLETE_HISTORY: IncompleteHistory,
-    ControlRequestErrorCode.RATE_LIMITED: RateLimited,
-    ControlRequestErrorCode.COMMAND_OUTCOME_UNKNOWN: CommandOutcomeUnknown,
-    ControlRequestErrorCode.DEVICE_CONTROL_BUSY: DeviceControlBusy,
-    ControlRequestErrorCode.CONTROL_OWNERSHIP_REQUIRED: ControlOwnershipRequired,
-    ControlRequestErrorCode.CONTROLLER_ERROR: ControllerError,
-}
-_CONTROL_REQUEST_ERROR_CODES = {error_type: code for code, error_type
-                                in _CONTROL_REQUEST_ERROR_TYPES.items()}
 
 
 class ValueType(Enum):
@@ -378,7 +358,7 @@ class ControlDescriptor:
 
 @dataclass(frozen=True, slots=True)
 class ValidatedCommand:
-    """Pure preview; execution must recheck current capabilities and ownership."""
+    """Pure preview; execution rechecks current capabilities before sending."""
 
     control_key: ControlKey
     action: str
@@ -399,54 +379,6 @@ class ValidatedCommand:
         return self.control_key.device_id
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
-class ControlRequest:
-    """Local identity handle; its UUID alone does not confer control rights."""
-
-    request_id: UUID
-    device_id: int
-    initial_state: ControlRequestState = field(default=ControlRequestState.REQUESTED, init=False)
-
-    def __post_init__(self) -> None:
-        _require(isinstance(self.request_id, UUID) and self.request_id.int != 0)
-        _id(self.device_id)
-
-
-@dataclass(frozen=True, slots=True)
-class ControlRequestResult:
-    """Immutable request outcome with safe codes, never exception instances."""
-
-    request_id: UUID
-    device_id: int
-    state: ControlRequestState
-    session: ControlSession | None = None
-    reason: ControlRequestReason | None = None
-    error_code: ControlRequestErrorCode | None = None
-
-    def __post_init__(self) -> None:
-        _require(isinstance(self.request_id, UUID) and self.request_id.int != 0)
-        _id(self.device_id)
-        _require(isinstance(self.state, ControlRequestState))
-        _require(self.reason is None or isinstance(self.reason, ControlRequestReason))
-        _require(self.error_code is None or isinstance(self.error_code, ControlRequestErrorCode))
-        if self.state is ControlRequestState.GRANTED:
-            _require(isinstance(self.session, ControlSession))
-            _require(self.session.device_id == self.device_id)
-            _require(self.reason is None and self.error_code is None)
-        elif self.state is ControlRequestState.DENIED:
-            _require(self.session is None and self.reason is not None)
-            _require((self.error_code is not None)
-                     == (self.reason is ControlRequestReason.CONTROLLER_ERROR))
-        else:
-            _require(self.session is None and self.reason is None and self.error_code is None)
-
-    def make_error(self) -> ControllerError | None:
-        """Make an independent safe exception; raising it cannot mutate this DTO."""
-        if self.error_code is None:
-            return None
-        return _CONTROL_REQUEST_ERROR_TYPES[self.error_code]()
-
-
 @dataclass(frozen=True, slots=True)
 class CommandResult:
     command: ValidatedCommand
@@ -464,37 +396,10 @@ class CommandResult:
 
 @runtime_checkable
 class Controller(Protocol):
-    """One account, bound by DI to one consumer; no credentials in this API.
+    """One authorized account; commands validate and send synchronously.
 
-    Reads and preparation never acquire control. try_acquire_control is immediate:
-    return a session or raise DeviceControlBusy. request_control registers a local
-    request without waiting for gate I/O. get/cancel require the exact issued
-    handle and its binding, and return the same immutable terminal result.
-    acquire_control waits for that request and returns only GRANTED or DENIED;
-    timeout/cancellation can deny it before in-flight gate I/O finishes. A late
-    session belongs to worker cleanup, never to the denied caller. Request
-    deadlines use the executor's local clock, including time spent in its queue.
-    Terminal status remains readable after shutdown, release and lease expiry;
-    it records issuance, not current command authority.
-    Reacquiring an unexpired owned device returns the same session and deadline.
-    The caller chooses lease_seconds for grant acquisition, its whole critical
-    section, finally and its own margin. Expiry rejects new commands including
-    finally; an accepted command is synchronous and is never cancelled by a
-    later timeout/stop. Release retains ownership until accepted work finishes.
-    The same lease bounds idle local ownership: expiry permits local eviction
-    on acquisition or shutdown, without a remote release or automatic renewal.
-    Acquisition, accepted work and a pending/running release finish first.
-    Application shutdown rejects new bindings and acquisitions, but does not
-    revoke an issued, unexpired session that is not being released. Its owner
-    must finish cleanup and explicitly release it, including between commands.
-    External consumers arrange their own cancellation; the registry does not
-    stop their threads. Do not wait for full app.close() in the same thread
-    while holding a session: it delays cleanup until lease expiry. Release
-    first, or use bounded close, cleanup and
-    then full close. A bounded close may return False with resources still open.
-    Shutdown waits for session work, not arbitrary external reads without one;
-    it neither extends the lease nor guarantees cleanup after process death.
-    Session identity and device must be checked by the bound implementation.
+    Calls are independent. No local or cross-client device serialization is
+    provided. Timeout after sending leaves an unknown outcome, without retry.
     """
 
     def list_devices(self) -> tuple[DeviceInfo, ...]: ...
@@ -512,21 +417,4 @@ class Controller(Protocol):
     def prepare_command(self, device_id: int, control_key: ControlKey, action: str,
                         arguments: Mapping[str, Scalar]) -> ValidatedCommand: ...
 
-    def try_acquire_control(self, device_id: int, *, lease_seconds: float) -> ControlSession: ...
-
-    def request_control(self, device_id: int, *, lease_seconds: float, timeout: float,
-                        poll_seconds: float = 1, cancelled: Event | None = None
-                        ) -> ControlRequest: ...
-
-    def get_control_request(self, request: ControlRequest) -> ControlRequestResult: ...
-
-    def cancel_control_request(self, request: ControlRequest) -> ControlRequestResult: ...
-
-    def acquire_control(self, device_id: int, *, lease_seconds: float, timeout: float,
-                        poll_seconds: float = 1, cancelled: Event | None = None
-                        ) -> ControlRequestResult: ...
-
-    def release_control(self, control_session: ControlSession) -> None: ...
-
-    def execute_command(self, command: ValidatedCommand,
-                        control_session: ControlSession) -> CommandResult: ...
+    def execute_command(self, command: ValidatedCommand) -> CommandResult: ...

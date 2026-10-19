@@ -16,7 +16,6 @@ from types import MappingProxyType
 from typing import Any, NoReturn, TypeAlias, cast
 
 from .autonomy.contracts import AlgorithmSpec, Mode, valid_id
-from .coordination import LeaseTiming, ProtocolProfile
 
 
 JSONReader: TypeAlias = Callable[[Path], dict[str, Any]]
@@ -142,53 +141,9 @@ class RegistryConfig:
 
 
 @dataclass(frozen=True)
-class CoordinationConfig:
-    delta_seconds: float
-    leader_period_seconds: float
-    delta_cmd_seconds: float
-    profile_id: str
-    poll_seconds: float
-    retry_seconds: float
-    jitter_fraction: float
-    renewal_fraction: float
-    previous_profile: ProtocolProfile | None = None
-
-    def __post_init__(self) -> None:
-        self.profile
-        for n in (self.poll_seconds, self.retry_seconds, self.renewal_fraction):
-            _number(n)
-        if (type(self.jitter_fraction) not in (int, float)
-                or not 0 <= self.jitter_fraction <= 1 or self.renewal_fraction >= 1
-                or self.timing.period * self.renewal_fraction
-                   + self.poll_seconds * (1 + self.jitter_fraction) + 2 * self.delta_seconds
-                   >= self.timing.period - self.timing.stop_margin
-                or self.previous_profile is not None and (
-                    type(self.previous_profile) is not ProtocolProfile
-                    or self.previous_profile.profile_id == self.profile_id)):
-            raise ValueError()
-
-    @property
-    def profile(self) -> ProtocolProfile:
-        return ProtocolProfile(self.profile_id, self.delta_seconds, self.delta_cmd_seconds)
-
-    @property
-    def timing(self) -> LeaseTiming:
-        # The agreed rho table is selected by LeaseTiming using original periods.
-        return LeaseTiming(self.leader_period_seconds, self.delta_seconds, self.delta_cmd_seconds)
-
-
-@dataclass(frozen=True)
-class StatisticsConfig:
-    path: Path
-    profile: str
-
-
-@dataclass(frozen=True)
 class ControllerConfig:
     contact: str
     http_timeout_seconds: float
-    coordination: CoordinationConfig
-    statistics: StatisticsConfig
 
 
 def load_registry_config(*, root: PathInput = Path('.'), reader: JSONReader = read_json
@@ -220,25 +175,10 @@ def load_controller_config(*, root: PathInput = Path('.'), reader: JSONReader = 
     path = Path(root) / 'config/controller.json'
     data = reader(path)
     try:
-        _keys(data, ('contact', 'http_timeout_seconds', 'coordination', 'statistics'))
+        _keys(data, ('contact', 'http_timeout_seconds'))
         contact = _text(data['contact'])
         if not contact.isascii() or any(ord(c) == 127 for c in contact):
             raise ValueError()
-        timeout = _number(data['http_timeout_seconds'], maximum=120)
-        _keys(data['coordination'], ('delta_seconds', 'leader_period_seconds', 'delta_cmd_seconds',
-              'profile_id', 'poll_seconds', 'retry_seconds', 'jitter_fraction', 'renewal_fraction'),
-              ('previous_profile',))
-        values = dict(data['coordination'])
-        if values.get('previous_profile') is not None:
-            _keys(values['previous_profile'], ('profile_id', 'delta_seconds', 'delta_cmd_seconds',
-                                               'rho_version'))
-            values['previous_profile'] = ProtocolProfile(**values['previous_profile'])
-        coordination = CoordinationConfig(**values)
-        coordination.timing  # Validate lease feasibility before constructing any transport.
-        _keys(data['statistics'], ('path', 'profile'))
-        statistics = StatisticsConfig(Path(_text(data['statistics']['path'])),
-                                      _text(data['statistics']['profile']))
-        return ControllerConfig(contact, timeout, coordination, statistics)
+        return ControllerConfig(contact, _number(data['http_timeout_seconds'], maximum=120))
     except (TypeError, ValueError, OverflowError):
-        raise ConfigurationError(path, 'Invalid controller settings; use the wire v2 profile and pacing '
-                                 'from config/controller.example.json') from None
+        raise ConfigurationError(path, 'Invalid contact or HTTP timeout; see controller.example.json') from None

@@ -13,7 +13,6 @@ from zontcontrol.autonomy.contracts import (
 from zontcontrol.config import (
     ConfigurationError, load_controller_config, load_registry_config, read_json,
 )
-from zontcontrol.algorithms.boiler_cli import load_config as load_cli_config
 
 
 def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
@@ -23,37 +22,7 @@ def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
 
 
 class ConfigurationTests(unittest.TestCase):
-    def test_example_pacing_is_provisional_live_profile_with_renewal_margin(self):
-        from scripts.calibrate_coordination import Safety, Pacing, candidates
-        project = Path(__file__).resolve().parents[1]
-        config = load_controller_config(reader=lambda path: read_json(
-            project/'config/controller.example.json'))
-        settings = config.coordination
-        pacing = Pacing(settings.poll_seconds, settings.retry_seconds,
-                        settings.jitter_fraction, settings.renewal_fraction)
-        safety = Safety(delta=settings.delta_seconds, delta_cmd=settings.delta_cmd_seconds,
-                        period=settings.leader_period_seconds)
-        self.assertEqual(pacing, Pacing(20, 60, .25, .25))
-        # The live recommendation is separate from the fixed simulation grid.
-        self.assertNotIn(pacing, list(candidates(safety)))
-        self.assertLess(settings.leader_period_seconds * settings.renewal_fraction
-                        + settings.poll_seconds * (1 + settings.jitter_fraction)
-                        + 2 * settings.delta_seconds,
-                        settings.leader_period_seconds - safety.timing.stop_margin)
-        self.assertIn('unmeasured', config.statistics.profile)
 
-    def test_cli_existing_json_uses_default_and_new_wait_is_module_owned(self):
-        self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
-                                     'lease_seconds': 20})
-        self.assertEqual(load_cli_config(root=self.root).grant_wait_seconds, 10)
-        for value in (0, True, 21, '5'):
-            self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
-                'lease_seconds': 20, 'grant_wait_seconds': value})
-            with self.subTest(value=value), self.assertRaises(ConfigurationError):
-                load_cli_config(root=self.root)
-        self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
-                                     'lease_seconds': 20, 'grant_wait_seconds': 5})
-        self.assertEqual(load_cli_config(root=self.root).grant_wait_seconds, 5)
 
     def setUp(self):
         self.directory = TemporaryDirectory()
@@ -74,12 +43,7 @@ class ConfigurationTests(unittest.TestCase):
         return load_registry_config(root=self.root)
 
     def controller(self, **overrides):
-        value = {'contact': 'owner@example.invalid', 'http_timeout_seconds': 15,
-                 'coordination': {'delta_seconds': 1, 'leader_period_seconds': 300, 'delta_cmd_seconds': 1,
-                                  'profile_id': 'ea3221c0-2a98-49f0-8705-e81917b9b5a9',
-                                  'poll_seconds': .2, 'retry_seconds': .5,
-                                  'jitter_fraction': 0, 'renewal_fraction': .33},
-                 'statistics': {'path': 'reports/orchestration.jsonl', 'profile': 'unmeasured'}}
+        value = {'contact': 'owner@example.invalid', 'http_timeout_seconds': 15}
         value.update(overrides)
         self.write('controller.json', value)
         return load_controller_config(root=self.root)
@@ -97,8 +61,6 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config.disabled_modules, frozenset())
         controller = self.controller()
         self.assertEqual(controller.http_timeout_seconds, 15)
-        self.assertEqual(controller.coordination.timing.clock_rho, .05)
-        self.assertEqual(controller.statistics.profile, 'unmeasured')
         with self.assertRaisesRegex(ConfigurationError, 'controller.json'):
             load_controller_config(root=self.root, reader=reader)
 
@@ -114,43 +76,6 @@ class ConfigurationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ConfigurationError, 'module.json'):
                     read_json(path)
 
-    def test_wire_v2_requires_explicit_shared_profile_and_pacing(self):
-        with self.assertRaisesRegex(ConfigurationError, 'wire v2.*controller.example.json'):
-            self.controller(coordination={'delta_seconds': 1, 'leader_period_seconds': 60})
-        config = self.controller()
-        good = dict(delta_seconds=1, delta_cmd_seconds=1, leader_period_seconds=300,
-                    profile_id=config.coordination.profile_id, poll_seconds=.2, retry_seconds=.5,
-                    jitter_fraction=.1, renewal_fraction=.33)
-        for change in ({'profile_id': 'bad'}, {'profile_id': '0'*32}, {'delta_cmd_seconds': True},
-                       {'poll_seconds': 0}, {'retry_seconds': False}, {'jitter_fraction': 1.01},
-                       {'jitter_fraction': float('nan')}, {'renewal_fraction': 0},
-                       {'renewal_fraction': .999}, {'poll_seconds': 300}):
-            with self.subTest(change=change), self.assertRaises(ConfigurationError):
-                self.controller(coordination={**good, **change})
-
-    def test_previous_profile_is_explicit_exact_and_has_distinct_uuid(self):
-        from dataclasses import asdict
-        current = self.controller().coordination
-        previous = dict(profile_id='c935f016-9ea1-4909-8f10-96fd98c792cb',
-                        delta_seconds=5, delta_cmd_seconds=10, rho_version=1)
-        config = self.controller(coordination={**{key: value for key, value in asdict(current).items()
-                                                  if key != 'previous_profile'},
-                                                'previous_profile': previous})
-        self.assertEqual(asdict(config.coordination.previous_profile), previous)
-        for bad in ({**previous, 'profile_id': current.profile_id},
-                    {**previous, 'rho_version': 2}, {**previous, 'extra': 1},
-                    {k: v for k, v in previous.items() if k != 'delta_cmd_seconds'}):
-            with self.assertRaises(ConfigurationError):
-                self.controller(coordination={**asdict(current), 'previous_profile': bad})
-
-    def test_pacing_combines_renewal_poll_jitter_and_operation_budget(self):
-        from dataclasses import replace
-        settings = self.controller().coordination
-        for poll, jitter in ((290, 0), (150, .5)):
-            with self.subTest(poll=poll), self.assertRaises(ValueError):
-                replace(settings, delta_seconds=5, delta_cmd_seconds=5,
-                        leader_period_seconds=300, poll_seconds=poll,
-                        jitter_fraction=jitter, renewal_fraction=.25)
 
     def test_controller_validation_precedes_any_effect_and_hides_values(self):
         invalid = [
@@ -262,7 +187,6 @@ class ConfigurationTests(unittest.TestCase):
             self.assertFalse(config.autostart_dual_mode)
         config = load_controller_config(reader=lambda _path: read_json(
             project / 'config/controller.example.json'))
-        self.assertEqual(config.statistics.profile, 'unmeasured-example')
 
     def test_modes_spec_and_autostart_contract(self):
         config = self.registry()

@@ -1,4 +1,4 @@
-"""Consumer API v1. Implementation modules are deliberately not imported here."""
+"""Consumer API v2. Implementation modules are deliberately not imported here."""
 
 from .contracts import API_VERSION, Controller
 

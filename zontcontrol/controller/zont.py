@@ -1,7 +1,6 @@
 """Internal ZONT operations; no consumer facade or ownership policy here.
 
-Methods return raw API data for the normalization layer. Metadata reads project
-only notes/name; writes change exactly one of those fields. POST reads are
+Methods return raw API data for the normalization layer. POST reads are
 explicitly distinguished from effects when translating transport failures.
 """
 
@@ -59,7 +58,7 @@ class ZontAdapter:
         self._transport = transport
         self._headers = dict(headers)
 
-    def _request(self, url, *, body=None, write=False, timeout_seconds=None):
+    def _request(self, url, *, body=None, write=False):
         try:
             payload = None if body is None else json.dumps(body, allow_nan=False).encode("utf-8")
         except (ValueError, TypeError, UnicodeError):
@@ -67,9 +66,7 @@ class ZontAdapter:
         headers = self._headers if body is None else {**self._headers, "Content-Type": "application/json"}
         request = Request(url, data=payload, headers=headers, method="GET" if body is None else "POST")
         try:
-            if timeout_seconds is None:
-                return self._transport.request(request)
-            return self._transport.request(request, timeout_seconds=timeout_seconds)
+            return self._transport.request(request)
         except TransportError as error:
             raise_controller_error(error, write=write)
 
@@ -85,38 +82,14 @@ class ZontAdapter:
         suffix = "?" + urlencode(query) if query else ""
         return _devices(self._request(f"{API_URL}/devices{suffix}"), device_id)
 
-    def full_device(self, device_id, *, load_io=True, timeout_seconds=None):
+    def full_device(self, device_id):
         _device_id(device_id)
-        if type(load_io) is not bool:
-            raise InvalidArguments()
-        data = self._request(f"{FULL_API_URL}/devices", body={"load_io": load_io},
-                             timeout_seconds=timeout_seconds)
+        data = self._request(f"{FULL_API_URL}/devices", body={"load_io": True})
         return _devices(data, device_id)[0]
 
-    def read_metadata(self, device_id, *, timeout_seconds=None):
-        device = self.full_device(device_id, load_io=False, timeout_seconds=timeout_seconds)
-        if (not isinstance(device.get("name"), str) or "notes" not in device
-                or device["notes"] is not None and not isinstance(device["notes"], str)):
-            raise InvalidArguments()
-        return {"name": device["name"], "notes": device["notes"]}
-
-    def update_metadata(self, device_id, field, value, *, timeout_seconds=None):
-        _device_id(device_id)
-        if field not in ("notes", "name") or not isinstance(value, str):
-            raise InvalidArguments()
-        self._request(f"{FULL_API_URL}/update_device", body={"device_id": device_id, field: value},
-                      write=True, timeout_seconds=timeout_seconds)
-
-    def read_metadata_field(self, device_id, field, *, timeout_seconds=None):
-        """Project a single coordination register without interpreting its content."""
-        if field not in ("notes", "name"):
-            raise InvalidArguments()
-        if timeout_seconds is None:
-            return self.read_metadata(device_id)[field]
-        return self.read_metadata(device_id, timeout_seconds=timeout_seconds)[field]
 
     def send_command(self, command: PreparedCommand):
-        """Internal send primitive; the executor must enforce ownership first."""
+        """Send one command already validated by the controller."""
         if not isinstance(command, PreparedCommand):
             raise InvalidArguments()
         data = self._request(command.preview(API_URL)["url"], body=command.body, write=True)

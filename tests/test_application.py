@@ -3,30 +3,17 @@
 import unittest
 from threading import Event, Thread
 from unittest.mock import Mock, patch
-from uuid import UUID
 from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.application import create_application, create_read_controller
 from zontcontrol.autonomy.contracts import AlgorithmResult, AlgorithmSpec, Mode, ResultStatus
 from zontcontrol.config import ConfigurationError
-from zontcontrol.controller.contracts import (
-    ControlOwnershipRequired, ControlKey, ControlRequestReason, ControlRequestState,
-    ControlSession, DeviceControlBusy,
-)
-from zontcontrol.controller.ownership import CommandExecutor
-from tests.test_inventory import inventory_device
 from zontcontrol.autonomy.contracts import AlgorithmState
 
 
 def settings(disabled=()):
     return {
-        'config/controller.json': {'contact': 'owner@example.invalid', 'http_timeout_seconds': 15,
-            'coordination': {'delta_seconds': .01, 'leader_period_seconds': 300,
-                             'delta_cmd_seconds': .01,
-                             'profile_id': 'ea3221c0-2a98-49f0-8705-e81917b9b5a9',
-                             'poll_seconds': .005, 'retry_seconds': .005,
-                             'jitter_fraction': 0, 'renewal_fraction': .33},
-            'statistics': {'path': 'reports/test.jsonl', 'profile': 'offline'}},
+        'config/controller.json': {'contact': 'owner@example.invalid', 'http_timeout_seconds': 15},
         'config/registry.json': {'disabled_modules': list(disabled),
             'once_timeouts': {'sample': {'minimum_seconds': .1, 'recommended_seconds': 1}}},
     }
@@ -43,44 +30,8 @@ class ApplicationTests(unittest.TestCase):
             data['config/registry.json']['once_timeouts'] = {}
         return create_application(environ={'ZONT_TOKEN': 'fake-secret'},
             reader=lambda path: data[str(path)], catalog=catalog,
-            statistics_sink=lambda row: None, **kwargs)
+            **kwargs)
 
-    def test_uuid_generator_reaches_algorithm_bindings_and_control_requests(self):
-        contexts, owners = [], []
-
-        class Sample:
-            def __init__(self, controller):
-                owners.append(controller._control._owner)
-
-            def run_once(self, context):
-                contexts.append(context)
-                return AlgorithmResult(ResultStatus.SUCCESS)
-
-        spec = AlgorithmSpec('sample', 'Offline UUID propagation', frozenset({Mode.ONCE}), Sample)
-        transport = Mock()
-        app = self.build(catalog=(spec,), transport_factory=lambda **kwargs: transport)
-        self.addCleanup(app.close)
-        self.assertEqual(owners, [UUID(int=2)])
-        consumer = app.controller()
-        self.assertEqual(consumer._control._owner, UUID(int=3))
-        app.run_once('sample')
-        context, = contexts
-        self.assertEqual((context.instance_id, context.run_id), (UUID(int=4), UUID(int=5)))
-        self.assertEqual(owners, [UUID(int=2), UUID(int=6)])
-
-        session = ControlSession(42, UUID(int=100), consumer._control._executor._clock() + 60)
-        with patch.object(app._coordination, 'try_acquire', return_value=session) as acquire, \
-                patch.object(app._coordination, 'observation_context', return_value={}), \
-                patch.object(app._coordination, 'release'):
-            result = consumer.acquire_control(42, lease_seconds=60, timeout=5)
-            self.assertIs(result.state, ControlRequestState.GRANTED)
-            self.assertEqual(result.request_id, UUID(int=7))
-            self.assertIs(result.session, session)
-            self.assertEqual(acquire.call_args.args, (UUID(int=3), 42))
-            self.assertEqual(acquire.call_args.kwargs['request_id'], UUID(int=7))
-            consumer.release_control(session)
-        self.assertEqual(self.uuid_generator.call_count, 7)
-        transport.request.assert_not_called()
 
     def test_config_errors_before_transport_and_no_token_diagnostics(self):
         with patch('zontcontrol.application.HttpTransport') as transport:
@@ -94,34 +45,6 @@ class ApplicationTests(unittest.TestCase):
                 uuid_factory=self.uuid_generator)
             self.assertIn('zontcontrol.get_token', str(caught.exception))
 
-    def test_unknown_catalog_id_and_bad_statistics_profile_fail_before_transport(self):
-        for kind in ('unknown', 'statistics'):
-            data = settings()
-            if kind == 'unknown':
-                data['config/registry.json']['disabled_modules'] = ['unknown']
-            else:
-                data['config/registry.json']['once_timeouts'] = {}
-                data['config/controller.json']['statistics']['profile'] = 'bad secret profile'
-            with self.subTest(kind=kind), patch('zontcontrol.application.HttpTransport') as transport:
-                with self.assertRaises(ConfigurationError):
-                    create_application(environ={'ZONT_TOKEN': 'fake-secret'}, catalog=(),
-                        reader=lambda path: data[str(path)],
-                        uuid_factory=self.uuid_generator)
-                transport.assert_not_called()
-
-    def test_ambiguous_epoch_snapshot_closes_transport_before_returning_error(self):
-        from tests.fakes.clock import FakeClock
-        from zontcontrol.coordination.timing import TimingViolation
-        clock = FakeClock()
-        transport = Mock()
-        def delayed_epoch():
-            clock.advance(.02)
-            return 1700000000
-        with self.assertRaises(TimingViolation):
-            self.build(clock=clock, epoch_sampler=delayed_epoch,
-                       transport_factory=lambda **kwargs: transport)
-        transport.close.assert_called_once_with()
-        transport.request.assert_not_called()
 
     def test_disabled_builtins_read_no_module_files_and_perform_no_requests(self):
         data = settings(disabled=('boiler_cli', 'boiler_reset'))
@@ -134,7 +57,6 @@ class ApplicationTests(unittest.TestCase):
                 patch('zontcontrol.algorithms.boiler_reset.read_json') as reset_config, \
                 patch('zontcontrol.application.HttpTransport') as transport:
             with create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=read,
-                                    statistics_sink=lambda row: None,
                                     uuid_factory=self.uuid_generator) as app:
                 self.assertEqual(app.list_algorithms(), ())
                 self.assertEqual(app.run_all_once(), {})
@@ -151,7 +73,7 @@ class ApplicationTests(unittest.TestCase):
                 patch('zontcontrol.algorithms.boiler_cli.Terminal.available', return_value=False), \
                 patch('zontcontrol.application.HttpTransport') as transport:
             with create_application(environ={'ZONT_TOKEN': 'fake-secret'},
-                    reader=lambda path: data[str(path)], statistics_sink=lambda row: None,
+                    reader=lambda path: data[str(path)],
                     uuid_factory=self.uuid_generator) as app:
                 row, = app.list_algorithms()
                 self.assertIs(row.state, AlgorithmState.FAILED)
@@ -204,92 +126,9 @@ class ApplicationTests(unittest.TestCase):
             service = create_read_controller(environ={'ZONT_TOKEN': 'fake-secret'},
                 reader=lambda path: data[str(path)])
             self.assertFalse(hasattr(service, 'run_once'))
-            with self.assertRaises(ControlOwnershipRequired):
-                service.for_consumer()
+            self.assertFalse(hasattr(service, 'execute_command'))
             transport.return_value.request.assert_not_called()
 
-    def test_failed_bootstrap_closes_owned_transport_before_returning_error(self):
-        data = settings()
-        data['config/registry.json']['once_timeouts'] = {}
-        transport = Mock()
-        with patch('zontcontrol.application.BootClock', side_effect=RuntimeError('clock unavailable')):
-            with self.assertRaises(RuntimeError):
-                create_application(environ={'ZONT_TOKEN': 'fake-secret'}, catalog=(),
-                    reader=lambda path: data[str(path)], transport_factory=lambda **kw: transport,
-                    uuid_factory=self.uuid_generator)
-        transport.close.assert_called_once_with()
-        transport.request.assert_not_called()
-
-    def test_public_consumer_cannot_send_without_own_session(self):
-        with self.build() as app:
-            adapter = app._controller._adapter
-            with patch.object(adapter, 'devices', return_value=[inventory_device()]), \
-                    patch.object(adapter, 'send_command') as send:
-                consumer = app.controller()
-                command = consumer.prepare_command(42, ControlKey(42, 'circuit', 10),
-                                                   'target-temp', {'target_temp': 22})
-                with self.assertRaises(ControlOwnershipRequired):
-                    consumer.execute_command(command, None)
-                send.assert_not_called()
-
-    def test_public_request_shutdown_is_terminal_and_status_survives_close(self):
-        transport = Mock()
-        app = self.build(transport_factory=lambda **kw: transport)
-        consumer = app.controller()
-        entered, finish = Event(), Event()
-        def acquire(*args, **kwargs):
-            entered.set()
-            if not finish.wait(3):
-                raise AssertionError('test barrier timed out')
-            raise DeviceControlBusy()
-        def cleanup():
-            finish.set()
-            self.assertTrue(app.close(wait_timeout=2))
-        self.addCleanup(cleanup)
-        with patch.object(app._coordination, 'try_acquire', side_effect=acquire) as gate:
-            handle = consumer.request_control(42, lease_seconds=60, timeout=30)
-            self.assertTrue(entered.wait(1))
-            self.assertFalse(app.close(wait_timeout=0))
-            denied = consumer.get_control_request(handle)
-            self.assertIs(denied.state, ControlRequestState.DENIED)
-            self.assertIs(denied.reason, ControlRequestReason.SHUTDOWN)
-            with patch('zontcontrol.controller.requests.Thread.start') as start:
-                for method in (consumer.request_control, consumer.acquire_control):
-                    with self.assertRaises(ControlOwnershipRequired):
-                        method(42, lease_seconds=60, timeout=30)
-                start.assert_not_called()
-            transport.close.assert_not_called()
-            finish.set()
-            self.assertTrue(app.close(wait_timeout=2))
-            self.assertIs(consumer.get_control_request(handle), denied)
-            self.assertIs(consumer.cancel_control_request(handle), denied)
-            gate.assert_called_once()
-        transport.request.assert_not_called()
-        transport.close.assert_called_once()
-
-    def test_granted_public_request_remains_readable_after_release_and_close(self):
-        transport = Mock()
-        app = self.build(transport_factory=lambda **kw: transport)
-        self.addCleanup(app.close)
-        consumer = app.controller()
-        session = ControlSession(42, self.uuid_generator(), consumer._control._executor._clock() + 60)
-        with patch.object(app._coordination, 'try_acquire', return_value=session) as gate, \
-                patch.object(app._coordination, 'observation_context', return_value={}), \
-                patch.object(app._coordination, 'release') as release:
-            handle = consumer.request_control(42, lease_seconds=60, timeout=30)
-            result = consumer.acquire_control(42, lease_seconds=60, timeout=30)
-            self.assertIs(result.state, ControlRequestState.GRANTED)
-            self.assertIs(result.session, session)
-            terminal = consumer.get_control_request(handle)
-            self.assertIs(terminal.session, session)
-            consumer.release_control(session)
-            self.assertTrue(app.close(wait_timeout=2))
-            self.assertIs(consumer.get_control_request(handle), terminal)
-            self.assertIs(consumer.cancel_control_request(handle), terminal)
-            gate.assert_called_once()
-            release.assert_called_once()
-        transport.request.assert_not_called()
-        transport.close.assert_called_once()
 
     def test_close_waits_for_worker_finally_before_resources(self):
         entered, finish = Event(), Event()
@@ -313,7 +152,7 @@ class ApplicationTests(unittest.TestCase):
             self.assertTrue(runtime.wait(1))
         self.addCleanup(cleanup)
         self.assertTrue(entered.wait(1))
-        with patch.object(app._coordination, 'close', side_effect=lambda: events.append('resources')):
+        with patch('zontcontrol.application._close_transport', side_effect=lambda _: events.append('resources')):
             self.assertFalse(app.close(wait_timeout=0))
             self.assertEqual(events, [])
             finish.set()
@@ -327,53 +166,6 @@ class ApplicationTests(unittest.TestCase):
             app.host(cancelled)
             self.assertEqual(app.list_continuous(), ())
 
-    def test_close_drains_executor_after_finally_before_shared_resources(self):
-        entered, finish, drain_entered, drain_finish = Event(), Event(), Event(), Event()
-        effects = []
-        class Module:
-            def __init__(self, controller):
-                pass
-            def run_continuous(self, context):
-                entered.set()
-                try:
-                    context.wait()
-                finally:
-                    finish.wait()
-                    effects.append('finally')
-        def drain(executor):
-            effects.append('idle')
-            drain_entered.set()
-            drain_finish.wait()
-        transport = Mock()
-        transport.close.side_effect = lambda: effects.append('transport')
-        spec = AlgorithmSpec('sample', 'Sample', frozenset({Mode.CONTINUOUS}), Module)
-        app = self.build(catalog=(spec,), transport_factory=lambda **kw: transport)
-        consumer = app.controller()
-        def cleanup():
-            finish.set()
-            drain_finish.set()
-            app.close(wait_timeout=2)
-        self.addCleanup(cleanup)
-        self.assertTrue(entered.wait(1))
-        with patch.object(CommandExecutor, 'wait_idle', autospec=True, side_effect=drain), \
-                patch.object(app._coordination, 'close',
-                             side_effect=lambda: effects.append('coordination')):
-            self.assertFalse(app.close(wait_timeout=0))
-            with self.assertRaises(ControlOwnershipRequired):
-                app.controller()
-            with patch.object(app._coordination, 'try_acquire') as acquire:
-                with self.assertRaises(ControlOwnershipRequired):
-                    consumer.try_acquire_control(42, lease_seconds=10)
-                acquire.assert_not_called()
-            self.assertEqual(effects, [])
-            finish.set()
-            self.assertTrue(drain_entered.wait(1))
-            self.assertFalse(app.close(wait_timeout=0))
-            transport.close.assert_not_called()
-            drain_finish.set()
-            self.assertTrue(app.close(wait_timeout=1))
-        self.assertEqual(effects, ['finally', 'idle', 'coordination', 'transport'])
-        transport.close.assert_called_once_with()
 
     def test_close_without_sessions_and_invalid_timeout(self):
         transport = Mock()
@@ -394,35 +186,3 @@ class ApplicationTests(unittest.TestCase):
         self.assertEqual(results, [True, True])
         self.assertTrue(app.close(wait_timeout=0))
         transport.close.assert_called_once_with()
-
-    def test_early_hook_failure_cancels_worker_and_keeps_shared_resources_open(self):
-        entered, finish = Event(), Event()
-        class Module:
-            def __init__(self, controller):
-                pass
-            def run_continuous(self, context):
-                entered.set()
-                try:
-                    context.wait()
-                finally:
-                    finish.wait()
-        spec = AlgorithmSpec('sample', 'Sample', frozenset({Mode.CONTINUOUS}), Module)
-        transport = Mock()
-        with patch.object(CommandExecutor, 'begin_close',
-                          side_effect=RuntimeError('private-value')) as begin:
-            app = self.build(catalog=(spec,), transport_factory=lambda **kw: transport)
-            handle = app.start('sample')
-            def cleanup():
-                finish.set()
-                self.assertTrue(app.stop('sample', wait_timeout=1))
-            self.addCleanup(cleanup)
-            self.assertTrue(entered.wait(1))
-            with patch.object(app._coordination, 'close') as coordination_close:
-                for wait in (0, None):
-                    with self.assertRaisesRegex(RuntimeError,
-                                                '^Shared controller shutdown failed$'):
-                        app.close(wait_timeout=wait)
-                self.assertTrue(handle.context.cancelled.is_set())
-                coordination_close.assert_not_called()
-            begin.assert_called_once_with()
-            transport.close.assert_not_called()

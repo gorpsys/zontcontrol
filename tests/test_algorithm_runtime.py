@@ -11,12 +11,9 @@ from zontcontrol.autonomy.contracts import (
     AlgorithmSpec, AlgorithmState, AlgorithmTimeout, Mode, ResultStatus,
 )
 from zontcontrol.autonomy.runtime import AlgorithmRuntime
-from zontcontrol.controller.contracts import ControlKey, DeviceControlBusy, ValidatedCommand
-from zontcontrol.controller.ownership import CommandExecutor
 from zontcontrol.config import OnceTimeout
 from tests.fakes.uuid import uuid_generator
 from tests.fakes.clock import FakeClock
-from tests.test_control_ownership import LocalTestGate
 
 
 SUCCESS = AlgorithmResult(ResultStatus.SUCCESS, {'value': 1})
@@ -374,62 +371,6 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(runtime.close(wait_timeout=0))
         controller.close.assert_called_once()
 
-    def test_timeout_preserves_real_executor_ownership_and_late_finally_command(self):
-        self.check_executor_cleanup(inflight=False)
-
-    def test_command_accepted_before_timeout_finishes_later_and_finally_still_executes(self):
-        self.check_executor_cleanup(inflight=True)
-
-    def check_executor_cleanup(self, *, inflight):
-        clock = FakeClock(start=100)
-        gate = LocalTestGate(clock, uuid_factory=self.uuid_generator)
-        executor = CommandExecutor(gate=gate, clock=clock.now, uuid_factory=self.uuid_generator)
-        owner, competitor = executor.bind(), executor.bind()
-        entered, send_entered, release = Event(), Event(), self.gate()
-        effects = []
-        command = ValidatedCommand(ControlKey(42, 'toggle_buttons', 31), 'trigger',
-                                   (('target_state', False),))
-        on = ValidatedCommand(command.control_key, 'trigger', (('target_state', True),))
-
-        def send(prepared):
-            # The accepted synchronous request remains in flight past close.
-            send_entered.set()
-            release.wait()
-            effects.append(prepared)
-
-        def run(context):
-            session = owner.try_acquire_control(42, lease_seconds=60)
-            try:
-                entered.set()
-                if inflight:
-                    owner.execute(on, session, lambda: on, send)
-                else:
-                    context.wait(60)
-            finally:
-                owner.execute(command, session, lambda: command,
-                              effects.append if inflight else send)
-                owner.release_control(session)
-            return SUCCESS
-
-        close = Mock()
-        runtime = self.runtime(Mock(run_once=run), close_controller=close)
-        handle = runtime.start(Mode.ONCE, timeout=.03)
-        self.wait(entered)
-        with self.assertRaises(AlgorithmTimeout):
-            handle.result(1)
-        self.wait(send_entered)
-        self.assertFalse(runtime.close(wait_timeout=0))
-        self.assertEqual(runtime.state, AlgorithmState.STOPPING)
-        with self.assertRaises(DeviceControlBusy):
-            competitor.try_acquire_control(42, lease_seconds=60)
-        close.assert_not_called()
-        self.assertEqual(gate.releases, [])
-        release.set()
-        self.assertTrue(runtime.close(wait_timeout=2))
-        self.assertEqual(effects, [on, command] if inflight else [command])
-        self.assertEqual(len(gate.releases), 1)
-        competitor.try_acquire_control(42, lease_seconds=60)
-        close.assert_called_once()
 
     def test_invalid_mode_and_timeout_fail_before_bootstrap(self):
         bootstrap = Mock()

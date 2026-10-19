@@ -12,7 +12,6 @@ from urllib.request import Request
 from zontcontrol.controller.transport import (
     FailureKind, HttpTransport, MAX_RESPONSE_BYTES, NoRedirect, TransportError,
 )
-from zontcontrol.coordination.timing import OperationWindow, TimingViolation
 from tests.fakes.clock import FakeClock
 
 
@@ -40,27 +39,6 @@ class TransportTests(unittest.TestCase):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
                 HttpTransport(timeout=timeout)
 
-    def test_per_call_timeout_uses_remaining_window_without_changing_default(self):
-        clock = FakeClock()
-        transport = HttpTransport(timeout=3, opener=self.opener, clock=clock)
-        window = OperationWindow(clock, 5)
-        clock.advance(3)
-        self.opener.open.return_value = io.BytesIO(b'{"ok":true}')
-        transport.request(self.request, timeout_seconds=window.before_io())
-        self.opener.open.assert_called_once_with(self.request, timeout=2)
-        self.opener.open.reset_mock()
-        self.opener.open.return_value = io.BytesIO(b'{"ok":true}')
-        transport.request(self.request, timeout_seconds=10)
-        self.opener.open.assert_called_once_with(self.request, timeout=3)
-        clock.advance(2)
-        self.opener.open.reset_mock()
-        with self.assertRaises(TimingViolation):
-            transport.request(self.request, timeout_seconds=window.before_io())
-        self.opener.open.assert_not_called()
-        with self.assertRaises(TransportError) as caught:
-            transport.request(self.request, timeout_seconds=0)
-        self.assertIs(caught.exception.kind, FailureKind.NOT_SENT)
-        self.opener.open.assert_not_called()
 
     def test_per_call_timeout_is_local_to_concurrent_requests(self):
         barrier = Barrier(2)

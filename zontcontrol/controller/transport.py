@@ -3,7 +3,7 @@
 urllib does not expose an HTTP-send acknowledgement. Only known connection
 failures are classified NOT_SENT; timeouts and other ambiguous failures remain
 UNCONFIRMED. A failure while reading is always after the request was opened.
-Per-call bounds include reading the response body and suspend time. urllib's
+The timeout includes reading the response body. urllib's
 socket timeout cannot cancel a server write or establish its application time.
 """
 
@@ -17,7 +17,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from ..coordination import BootClock
+from time import monotonic
 
 
 API_URL = "https://my.zont.online/api/widget/v3"
@@ -61,7 +61,7 @@ class HttpTransport:
             raise ValueError("timeout must be between 0 and 120 seconds")
         self._timeout = timeout
         self._opener = opener if opener is not None else build_opener(NoRedirect())
-        self._clock = clock if clock is not None else BootClock()
+        self._now = clock.now if clock is not None else monotonic
 
     def request(self, request: Request, *, timeout_seconds=None) -> dict:
         timeout = self._timeout
@@ -81,8 +81,8 @@ class HttpTransport:
             trusted = False
         if not trusted:
             raise TransportError(FailureKind.NOT_SENT)
-        # HTTP owns its per-call deadline; protocol windows remain in coordination.
-        deadline = self._clock.now() + timeout
+        # Bound the entire HTTP exchange, including response decoding.
+        deadline = self._now() + timeout
         try:
             response = self._opener.open(request, timeout=timeout)
         except HTTPError as error:
@@ -104,7 +104,7 @@ class HttpTransport:
             raise TransportError(FailureKind.NOT_SENT) from None
         try:
             with response:
-                if self._clock.now() >= deadline:
+                if self._now() >= deadline:
                     raise TransportError(FailureKind.UNCONFIRMED)
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except (OSError, HTTPException):
@@ -119,7 +119,7 @@ class HttpTransport:
             raise TransportError(FailureKind.INVALID_RESPONSE)
         if data["ok"] is False:
             raise TransportError(FailureKind.REJECTED)
-        if self._clock.now() > deadline:
+        if self._now() > deadline:
             # Even an ok response is unusable after the local operation bound.
             # This does not imply cancellation of a previously sent write.
             raise TransportError(FailureKind.UNCONFIRMED) from None

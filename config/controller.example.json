@@ -1,18 +1,4 @@
 {
   "contact": "owner@example.invalid",
-  "http_timeout_seconds": 15,
-  "coordination": {
-    "delta_seconds": 5,
-    "delta_cmd_seconds": 5,
-    "leader_period_seconds": 300,
-    "profile_id": "99c733ec-f8d4-42fc-9cdb-376d46a4bd31",
-    "poll_seconds": 20,
-    "retry_seconds": 60,
-    "jitter_fraction": 0.25,
-    "renewal_fraction": 0.25
-  },
-  "statistics": {
-    "path": "reports/orchestration.jsonl",
-    "profile": "unmeasured-example"
-  }
+  "http_timeout_seconds": 15
 }

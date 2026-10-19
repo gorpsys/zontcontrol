@@ -9,27 +9,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BoundaryTests(unittest.TestCase):
-    def test_production_consumers_use_static_coordination_surface(self):
-        for path in (ROOT / 'zontcontrol').rglob('*.py'):
-            relative = path.relative_to(ROOT).with_suffix('')
-            if relative.parts[1] == 'coordination':
-                continue
-            package = '.'.join(relative.parts[:-1])
-            for node in ast.walk(ast.parse(path.read_text())):
-                modules = []
-                if isinstance(node, ast.Import):
-                    modules = [alias.name for alias in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    module = '.' * node.level + (node.module or '')
-                    module = importlib.util.resolve_name(module, package)
-                    modules = [module]
-                    if module == 'zontcontrol.coordination':
-                        from zontcontrol.coordination import __all__
-                        self.assertTrue(all(alias.name in __all__ for alias in node.names),
-                                        f'{path}:{node.lineno}')
-                for module in modules:
-                    self.assertFalse(module.startswith('zontcontrol.coordination.'),
-                                     f'{path}:{node.lineno}: {module}')
+    def test_no_control_synchronization_components_or_imports(self):
+        for path in (ROOT/'zontcontrol').rglob('*.py'):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    module = node.module or ''
+                    self.assertFalse(any(part in module.split('.') for part in
+                        ('coordination', 'ownership', 'requests', 'control_types')), str(path))
+        self.assertFalse((ROOT/'zontcontrol/coordination').exists())
+        for name in ('ownership.py', 'requests.py'):
+            self.assertFalse((ROOT/'zontcontrol/controller'/name).exists())
 
     def test_removed_prototype_modules_and_entrypoint(self):
         for module in ('client', 'cli', 'control'):
