@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from _thread import LockType
 from threading import Event, Lock, Thread
+import random
+import time
 from typing import TypeAlias, TypedDict
 from uuid import UUID, uuid4
 
@@ -12,11 +14,13 @@ from ..control_types import (
     ControllerError, ControlOwnershipRequired, ControlSession, InvalidArguments, UUIDFactory,
 )
 from .grants import ExecutorGate, GrantCoordinator
+from .clock import LeaderTimeline
 from .leader import LeaderElection, LeaseLost
 from .models import RecordError, original_name
 from .ports import Clock, CoordinationSettings, MetadataPort
 from .statistics import ObservationValue, Observer, observe
 from .store import ExecutorStore, LeaderStore
+from .timing import OperationWindow, TimingViolation
 
 
 class CoordinatorWorker:
@@ -34,30 +38,28 @@ class CoordinatorWorker:
                 try:
                     if not self.leader.can_coordinate(self.coordinator.window):
                         if not self.leader.try_acquire(cancelled=self.cancelled):
-                            self.clock.wait(self.cancelled, self.leader.timing.poll_after)
+                            self._wait(self.leader.retry_seconds)
                             continue
                         renewed_at = self.clock.now()
                     if self.cancelled.is_set():
                         break
-                    if self.clock.now() - renewed_at >= self.leader.timing.renew_after:
+                    if self.clock.now() - renewed_at >= self.leader.timing.period * self.leader.renewal_fraction:
                         self.leader.renew()
                         renewed_at = self.clock.now()
                     self.coordinator.step()
-                except (LeaseLost, ControllerError, RecordError):
+                except (LeaseLost, ControllerError, RecordError, TimingViolation):
                     # Role loss never reaches algorithm cancellation or finally.
                     observe(self.statistics, 'error', device_id=self.store.device_id,
                             outcome='unknown')
-                self.clock.wait(self.cancelled, self.leader.timing.poll_after)
+                self._wait(self.leader.poll_seconds)
         finally:
-            # Foreign/unsettled grants must expire, never be blindly cleared.
-            try:
-                if self.leader.can_coordinate(self.leader.timing.delta):
-                    self.coordinator.step(accepting=False)
-                    if self.store.read_r2() is None:
-                        self.leader.release()
-            except (LeaseLost, ControllerError, RecordError):
-                pass
+            # Preserve the published leader horizon and all command tails.
             self.leader.stop()
+
+    def _wait(self, seconds):
+        seconds *= 1 + random.uniform(0, self.leader.jitter_fraction)
+        self.leader.expect_resume(self.clock.now() + seconds)
+        self.clock.wait(self.cancelled, seconds)
 
     def close(self) -> None:
         self.cancelled.set()
@@ -79,16 +81,18 @@ class CoordinationRuntime:
     """Lazily attach independent device workers; R2 writers stay internal.
 
     Byte capacities are local refusal budgets, not inferred API limits.
-    Names are recovered only from a strictly validated v1 suffix.
+    Names are recovered only from a strictly validated v2 suffix.
     """
 
     def __init__(self, adapter: MetadataPort, config: CoordinationSettings, clock: Clock,
                  statistics: Observer | None, worker_factory: WorkerFactory | None = None,
-                 *, uuid_factory: UUIDFactory | None = None) -> None:
+                 *, uuid_factory: UUIDFactory | None = None, epoch_sampler=time.time) -> None:
         self.adapter, self.config, self.clock = adapter, config, clock
         self.statistics = statistics
         self._worker_factory = CoordinatorWorker if worker_factory is None else worker_factory
         self._uuid_factory = uuid4 if uuid_factory is None else uuid_factory
+        self._timeline = LeaderTimeline.capture(clock, delta=config.delta_seconds,
+                epoch_sampler=epoch_sampler, uuid_factory=self._uuid_factory)
         self._lock = Lock()
         self._devices: dict[int, tuple[ExecutorGate, CoordinatorWorker]] = {}
         self._device_locks: dict[int, LockType] = {}
@@ -112,19 +116,28 @@ class CoordinationRuntime:
             with self._lock:
                 self._check_attempt(local_deadline, attempt_deadline)
             if device_id not in self._devices:
-                metadata = self.adapter.read_metadata(device_id)
+                window = OperationWindow(self.clock, self.config.delta_seconds)
+                metadata = self.adapter.read_metadata(device_id, timeout_seconds=window.before_io())
+                window.complete()
                 name = original_name(metadata['name'])
                 options: _StoreOptions = dict(original_name=name, notes_capacity=65536, name_capacity=16384)
-                executor_store = ExecutorStore(self.adapter, device_id, **options)
-                leader_store = LeaderStore(self.adapter, device_id, **options)
+                executor_store = ExecutorStore(self.adapter, device_id, **options,
+                    profile=self.config.profile, previous_profile=self.config.previous_profile)
+                leader_store = LeaderStore(self.adapter, device_id, **options,
+                    profile=self.config.profile, previous_profile=self.config.previous_profile)
                 with self._lock:
                     self._check_attempt(local_deadline, attempt_deadline)
-                executor_store.read_r1()
+                executor_store.read_r1(window=window)
                 with self._lock:
                     self._check_attempt(local_deadline, attempt_deadline)
-                executor_store.read_r2()
+                executor_store.read_r2(window=window)
                 leader = LeaderElection(leader_store, str(self._uuid_factory()), self.config.timing,
-                                        clock=self.clock, statistics=self.statistics)
+                                        clock=self.clock, statistics=self.statistics,
+                                        timeline=self._timeline, uuid_factory=self._uuid_factory,
+                                        poll_seconds=self.config.poll_seconds,
+                                        retry_seconds=self.config.retry_seconds,
+                                        jitter_fraction=self.config.jitter_fraction,
+                                        renewal_fraction=self.config.renewal_fraction)
                 coordinator = GrantCoordinator(leader_store, leader, clock=self.clock,
                                                statistics=self.statistics,
                                                uuid_factory=self._uuid_factory)
@@ -132,7 +145,8 @@ class CoordinationRuntime:
                                              self.clock, self.statistics)
                 gate = ExecutorGate({device_id: executor_store}, clock=self.clock,
                                     delta=self.config.delta_seconds, statistics=self.statistics,
-                                    uuid_factory=self._uuid_factory)
+                                    uuid_factory=self._uuid_factory,
+                                    retry_seconds=self.config.retry_seconds)
                 with self._lock:
                     self._check_attempt(local_deadline, attempt_deadline)
                     self._devices[device_id] = (gate, worker)
@@ -144,11 +158,14 @@ class CoordinationRuntime:
     def try_acquire(self, owner: UUID, device_id: int, *, lease_seconds: float,
                     request_id: UUID | None = None, local_deadline: float | None = None,
                     attempt_deadline: float | None = None) -> ControlSession:
-        gate = self._device(device_id, local_deadline=local_deadline,
-                            attempt_deadline=attempt_deadline)
-        return gate.try_acquire(owner, device_id, lease_seconds=lease_seconds,
-                                request_id=request_id, local_deadline=local_deadline,
+        try:
+            gate = self._device(device_id, local_deadline=local_deadline,
                                 attempt_deadline=attempt_deadline)
+            return gate.try_acquire(owner, device_id, lease_seconds=lease_seconds,
+                                    request_id=request_id, local_deadline=local_deadline,
+                                    attempt_deadline=attempt_deadline)
+        except TimingViolation:
+            raise ControlOwnershipRequired() from None
 
     def abandon_request(self, owner: UUID, device_id: int, request_id: UUID) -> None:
         # Cancellation cannot initialize a device or start an independent role.

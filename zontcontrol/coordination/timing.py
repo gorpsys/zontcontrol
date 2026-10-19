@@ -1,4 +1,4 @@
-"""Unconnected v2 timing policy and local guards for bounded protocol I/O.
+"""V2 timing policy and local guards for bounded protocol I/O.
 
 These checks detect violations of the assumed timing model. They cannot cancel
 an already sent write or prove server deadlines, linearizability or clock bounds.
@@ -97,8 +97,8 @@ class OperationWindow:
 
 
 @dataclass(frozen=True)
-class V2LeaseTiming:
-    """Candidate-selected period; no pacing choices or runtime v1 integration."""
+class LeaseTiming:
+    """Candidate-selected period and distinct physical command tail."""
 
     period: float
     delta: float

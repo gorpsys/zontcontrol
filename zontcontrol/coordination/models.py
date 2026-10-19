@@ -1,35 +1,27 @@
-"""Strict version-1 relative-time wire records for notes/R1 and name/R2.
-
-Local clock instants never enter these records. Unknown or malformed metadata
-raises RecordError rather than implying FREE. This codec provides no CAS,
-leader election or proof of the accepted two-register protocol's safety.
-"""
+"""Strict wire v2: name/R1 contains leader replies; notes/R2 only requests."""
 
 from dataclasses import asdict, dataclass
 import json
 import math
 from uuid import UUID
 
+from .clock import clock_factor, clock_rho
+
 
 class RecordError(ValueError):
     def __init__(self):
-        super().__init__("Invalid or incompatible coordination record")
+        super().__init__('Invalid or incompatible coordination record/profile (wire v2 required)')
 
 
 def _uuid(value):
     if not isinstance(value, str):
         raise RecordError()
     try:
-        if str(UUID(value)) != value:
+        parsed = UUID(value)
+        if not parsed.int or str(parsed) != value:
             raise RecordError()
     except ValueError:
         raise RecordError() from None
-
-
-def _token(value):
-    if (not isinstance(value, str) or len(value) != 32
-            or any(char not in "0123456789abcdef" for char in value)):
-        raise RecordError()
 
 
 def _counter(value):
@@ -37,100 +29,191 @@ def _counter(value):
         raise RecordError()
 
 
-def _positive(value):
-    if type(value) not in (int, float):
-        raise RecordError()
+def _number(value, *, positive=False):
     try:
-        if not math.isfinite(value) or value <= 0:
+        if (type(value) not in (int, float) or not math.isfinite(value)
+                or positive and value <= 0):
             raise RecordError()
     except OverflowError:
         raise RecordError() from None
 
 
-def _lease(lease_s, clock_rho):
-    _positive(lease_s)
-    if type(clock_rho) not in (int, float) or clock_rho not in (.1, .05, .01, .005):
-        raise RecordError()
-    period = lease_s / ((1 + clock_rho) / (1 - clock_rho))
-    # Undo floating-point rounding at exact policy boundaries, not a new band
-    # chosen from the already increased lease_s.
-    for boundary in (60, 300, 600):
-        if math.isclose(period, boundary, rel_tol=1e-12):
-            period = boundary
-    expected = .1 if period <= 60 else .05 if period <= 300 else .01 if period <= 600 else .005
-    if clock_rho != expected:
+def _period(period, rho):
+    _number(period, positive=True)
+    if type(rho) not in (int, float) or rho != clock_rho(period):
         raise RecordError()
 
 
 @dataclass(frozen=True)
-class LeaderRecord:
-    owner: str
-    token: str
-    seq: int
-    lease_s: float
-    clock_rho: float
+class ProtocolProfile:
+    profile_id: str
+    delta_seconds: float
+    delta_cmd_seconds: float
+    rho_version: int = 1
 
     def __post_init__(self):
-        _uuid(self.owner)
-        _token(self.token)
-        _counter(self.seq)
-        _lease(self.lease_s, self.clock_rho)
-        if self.lease_s > 1200:
+        _uuid(self.profile_id)
+        _number(self.delta_seconds, positive=True)
+        _number(self.delta_cmd_seconds, positive=True)
+        if type(self.rho_version) is not int or self.rho_version != 1:
+            raise RecordError()
+
+
+@dataclass(frozen=True)
+class LeaderRecord:
+    owner_id: str
+    term_id: str
+    clock_id: str
+    period_s: float
+    clock_rho: float
+    sampled_at: float
+    leader_until: float
+    term_started_at: float
+    revision: int = 0
+
+    def __post_init__(self):
+        for value in (self.owner_id, self.term_id, self.clock_id):
+            _uuid(value)
+        _period(self.period_s, self.clock_rho)
+        _counter(self.revision)
+        for value in (self.sampled_at, self.leader_until, self.term_started_at):
+            _number(value)
+        if not (self.term_started_at <= self.sampled_at < self.leader_until
+                <= self.term_started_at + 1200
+                and self.leader_until <= self.sampled_at + self.period_s):
             raise RecordError()
 
 
 @dataclass(frozen=True)
 class RequestRecord:
-    owner: str
+    owner_id: str
     request_id: str
     nonce: str
+    leader_term_id: str | None
+    operation: str
     lease_seconds: float
-    state: str
     grant_id: str | None = None
     grant_revision: int | None = None
 
     def __post_init__(self):
-        for value in (self.owner, self.request_id, self.nonce):
+        for value in (self.owner_id, self.request_id, self.nonce):
             _uuid(value)
-        _positive(self.lease_seconds)
-        if self.state not in ("request", "heartbeat", "finished"):
+        if self.leader_term_id is not None:
+            _uuid(self.leader_term_id)
+        _number(self.lease_seconds, positive=True)
+        if self.operation not in ('acquire', 'heartbeat', 'finish', 'cancel'):
             raise RecordError()
-        if self.state == "request":
+        if self.operation == 'acquire':
             if self.grant_id is not None or self.grant_revision is not None:
                 raise RecordError()
         else:
+            _uuid(self.leader_term_id)
             _uuid(self.grant_id)
             _counter(self.grant_revision)
 
 
 @dataclass(frozen=True)
-class R1Record:
-    leader: LeaderRecord | None = None
-    request: RequestRecord | None = None
+class GrantRecord:
+    owner_id: str
+    request_id: str
+    grant_id: str
+    lease_seconds: float
+    clock_rho: float
+    issuer_term_id: str
+    clock_id: str
+    revision: int
+    nonce: str
+    sampled_at: float
+    valid_from: float
+    valid_until: float
 
     def __post_init__(self):
-        if (self.leader is not None and type(self.leader) is not LeaderRecord
-                or self.request is not None and type(self.request) is not RequestRecord):
+        for value in (self.owner_id, self.request_id, self.grant_id,
+                      self.issuer_term_id, self.clock_id, self.nonce):
+            _uuid(value)
+        _period(self.lease_seconds, self.clock_rho)
+        _counter(self.revision)
+        for value in (self.sampled_at, self.valid_from, self.valid_until):
+            _number(value)
+        if not (self.sampled_at <= self.valid_from < self.valid_until
+                <= self.sampled_at + clock_factor(self.lease_seconds) * self.lease_seconds):
             raise RecordError()
 
 
 @dataclass(frozen=True)
-class GrantRecord:
-    owner: str
+class ReplyRecord:
+    owner_id: str
     request_id: str
-    grant_id: str
-    leader_token: str
-    revision: int
-    lease_s: float
-    clock_rho: float
     nonce: str
+    reason: str
+    status: str = 'declined'
 
     def __post_init__(self):
-        for value in (self.owner, self.request_id, self.grant_id, self.nonce):
+        for value in (self.owner_id, self.request_id, self.nonce):
             _uuid(value)
-        _token(self.leader_token)
-        _counter(self.revision)
-        _lease(self.lease_s, self.clock_rho)
+        if self.status != 'declined' or self.reason not in ('busy', 'expired', 'horizon', 'old_term'):
+            raise RecordError()
+
+
+@dataclass(frozen=True)
+class HandledRequest:
+    owner_id: str
+    request_id: str
+    nonce: str
+    term_id: str
+    operation: str
+    grant_id: str | None
+    outcome: str
+
+    def __post_init__(self):
+        for value in (self.owner_id, self.request_id, self.nonce, self.term_id):
+            _uuid(value)
+        if self.grant_id is not None:
+            _uuid(self.grant_id)
+        if (self.operation not in ('acquire', 'heartbeat', 'finish', 'cancel')
+                or self.outcome not in ('issued', 'expired', 'finished', 'cancelled')):
+            raise RecordError()
+
+
+@dataclass(frozen=True)
+class R1Record:
+    profile: ProtocolProfile
+    record_id: str
+    leader: LeaderRecord | None = None
+    grants: tuple[GrantRecord, ...] = ()
+    reply: ReplyRecord | None = None
+    handled_request: HandledRequest | None = None
+
+    def __post_init__(self):
+        _uuid(self.record_id)
+        if (type(self.profile) is not ProtocolProfile
+                or self.leader is not None and type(self.leader) is not LeaderRecord
+                or type(self.grants) is not tuple or len(self.grants) > 2
+                or any(type(g) is not GrantRecord for g in self.grants)
+                or self.reply is not None and type(self.reply) is not ReplyRecord
+                or self.handled_request is not None and type(self.handled_request) is not HandledRequest
+                or self.grants and self.leader is None):
+            raise RecordError()
+        for g in self.grants:
+            if (g.issuer_term_id != self.leader.term_id or g.clock_id != self.leader.clock_id
+                    or self.leader.leader_until < g.valid_until + self.profile.delta_seconds):
+                raise RecordError()
+        if len(self.grants) == 2:
+            a, b = self.grants
+            guard = self.profile.delta_cmd_seconds * clock_factor(self.profile.delta_cmd_seconds)
+            if a.grant_id == b.grant_id or b.valid_from < a.valid_until + guard:
+                raise RecordError()
+
+
+@dataclass(frozen=True)
+class R2Record:
+    profile_id: str
+    request: RequestRecord | None = None
+
+    def __post_init__(self):
+        _uuid(self.profile_id)
+        if self.request is not None and type(self.request) is not RequestRecord:
+            raise RecordError()
 
 
 def _object(pairs):
@@ -142,28 +225,16 @@ def _object(pairs):
     return result
 
 
-def _invalid_constant(value):
-    raise RecordError()
-
-
 def _load(raw, keys):
-    if not isinstance(raw, str):
-        raise RecordError()
     try:
-        data = json.loads(raw, object_pairs_hook=_object, parse_constant=_invalid_constant)
-    except (ValueError, RecursionError):
+        data = json.loads(raw, object_pairs_hook=_object,
+                          parse_constant=lambda _: (_ for _ in ()).throw(RecordError()))
+    except (ValueError, TypeError, RecursionError):
         raise RecordError() from None
     if (not isinstance(data, dict) or data.keys() != set(keys)
-            or type(data["v"]) is not int or data["v"] != 1):
+            or type(data['v']) is not int or data['v'] != 2):
         raise RecordError()
     return data
-
-
-def _dump(data):
-    try:
-        return json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-    except (ValueError, TypeError):
-        raise RecordError() from None
 
 
 def _record(cls, data):
@@ -175,51 +246,58 @@ def _record(cls, data):
         raise RecordError() from None
 
 
-def encode_r1(record: R1Record) -> str:
-    if type(record) is not R1Record:
-        raise RecordError()
-    if record == R1Record():
-        return ""
-    return _dump({"v": 1, **asdict(record)})
+def _dump(record):
+    return json.dumps({'v': 2, **asdict(record)}, ensure_ascii=False,
+                      allow_nan=False, separators=(',', ':'))
 
 
-def decode_r1(raw: str | None) -> R1Record:
-    if raw is None or raw == "":
-        return R1Record()
-    data = _load(raw, ("v", "leader", "request"))
-    return R1Record(_record(LeaderRecord, data["leader"]) if data["leader"] is not None else None,
-                    _record(RequestRecord, data["request"]) if data["request"] is not None else None)
+_SUFFIX = ' [zc:v2 управление занято '
 
 
-_SUFFIX = " [zc:v1 управление занято "
-
-
-def original_name(raw: str) -> str:
-    """Recover a prefix only after validating its complete grant suffix."""
+def original_name(raw):
     if not isinstance(raw, str):
         raise RecordError()
     prefix, marker, _ = raw.rpartition(_SUFFIX)
     if marker:
-        decode_r2(raw, prefix)
+        decode_r1(raw, prefix)
         return prefix
+    if '[zc:' in raw:
+        raise RecordError()
     return raw
 
 
-def encode_r2(original_name: str, grant: GrantRecord | None) -> str:
-    if not isinstance(original_name, str) or grant is not None and type(grant) is not GrantRecord:
+def encode_r1(name, record):
+    if not isinstance(name, str) or type(record) is not R1Record:
         raise RecordError()
-    if grant is None:
-        return original_name
-    return original_name + _SUFFIX + _dump({"v": 1, **asdict(grant)}) + "]"
+    return name + _SUFFIX + _dump(record) + ']'
 
 
-def decode_r2(raw: str, original_name: str) -> GrantRecord | None:
-    if not isinstance(raw, str) or not isinstance(original_name, str):
-        raise RecordError()
-    if raw == original_name:
+def decode_r1(raw, name):
+    if raw == name:
         return None
-    prefix = original_name + _SUFFIX
-    if not raw.startswith(prefix) or not raw.endswith("]"):
+    prefix = name + _SUFFIX
+    if not isinstance(raw, str) or not raw.startswith(prefix) or not raw.endswith(']'):
         raise RecordError()
-    data = _load(raw[len(prefix):-1], ("v", *GrantRecord.__dataclass_fields__))
-    return _record(GrantRecord, {key: value for key, value in data.items() if key != "v"})
+    data = _load(raw[len(prefix):-1], ('v', *R1Record.__dataclass_fields__))
+    if not isinstance(data['grants'], list):
+        raise RecordError()
+    return R1Record(_record(ProtocolProfile, data['profile']), data['record_id'],
+                    _record(LeaderRecord, data['leader']) if data['leader'] is not None else None,
+                    tuple(_record(GrantRecord, g) for g in data['grants']),
+                    _record(ReplyRecord, data['reply']) if data['reply'] is not None else None,
+                    _record(HandledRequest, data['handled_request'])
+                    if data['handled_request'] is not None else None)
+
+
+def encode_r2(record):
+    if type(record) is not R2Record:
+        raise RecordError()
+    return _dump(record)
+
+
+def decode_r2(raw):
+    if raw is None or raw == '':
+        return None
+    data = _load(raw, ('v', 'profile_id', 'request'))
+    return R2Record(data['profile_id'], _record(RequestRecord, data['request'])
+                    if data['request'] is not None else None)

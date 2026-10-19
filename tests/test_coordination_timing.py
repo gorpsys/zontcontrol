@@ -232,30 +232,30 @@ class WindowTests(unittest.TestCase):
             timing.FreezeGuard(self.clock, 5).expect_resume(float('nan'))
 
 
-class V2LeaseTimingTests(unittest.TestCase):
+class LeaseTimingTests(unittest.TestCase):
     def test_bands_barrier_stop_margin_quarantine_and_continuous_budget(self):
         for period, rho in ((60, .1), (60.01, .05), (300, .05),
                             (300.01, .01), (600, .01), (600.01, .005)):
             with self.subTest(period=period):
-                policy = timing.V2LeaseTiming(period, 5, 5)
+                policy = timing.LeaseTiming(period, 5, 5)
                 self.assertEqual(policy.clock_rho, rho)
                 self.assertEqual(policy.barrier, 10)
                 self.assertEqual(policy.stop_margin, 5)
                 self.assertEqual(policy.quarantine, 5 * clocks.clock_factor(5))
                 self.assertEqual(policy.command_guard, policy.quarantine)
                 self.assertAlmostEqual(policy.lease_s, period * clocks.clock_factor(period))
-                self.assertAlmostEqual(policy.term_budget, clocks.LeaseTiming(period, 1).term_budget)
+                self.assertAlmostEqual(policy.term_budget, 1200 / clocks.clock_factor(1200))
 
     def test_large_command_guard_uses_its_own_rho_and_can_make_period_infeasible(self):
-        policy = timing.V2LeaseTiming(600, 5, 100)
+        policy = timing.LeaseTiming(600, 5, 100)
         self.assertEqual(policy.quarantine, 100 * clocks.clock_factor(100))
         self.assertGreater(policy.quarantine, policy.barrier)
         self.assertNotEqual(policy.quarantine, 100 * clocks.clock_factor(600))
         with self.assertRaises(ValueError):
-            timing.V2LeaseTiming(60, 5, 100)
+            timing.LeaseTiming(60, 5, 100)
 
     def test_deadlines_start_at_send_and_renewal_never_moves_term_limit(self):
-        policy = timing.V2LeaseTiming(300, 5, 5)
+        policy = timing.LeaseTiming(300, 5, 5)
         first_send = 100
         self.assertEqual(policy.lease_deadline(first_send, term_started_at=first_send), 400)
         renewed = policy.lease_deadline(1200, term_started_at=first_send)
@@ -263,11 +263,11 @@ class V2LeaseTimingTests(unittest.TestCase):
         self.assertEqual(policy.lease_deadline(1250, term_started_at=first_send), renewed)
 
     def test_minimum_eight_delta_and_twenty_minute_adjusted_limit(self):
-        timing.V2LeaseTiming(40, 5, 1)
+        timing.LeaseTiming(40, 5, 1)
         for args in ((39.999, 5, 1), (1200, 5, 5), (300, 0, 5),
                      (300, 5, 0), (True, 5, 5), (300, 5, float('inf'))):
             with self.subTest(args=args), self.assertRaises(ValueError):
-                timing.V2LeaseTiming(*args)
-        policy = timing.V2LeaseTiming(300, 5, 5)
+                timing.LeaseTiming(*args)
+        policy = timing.LeaseTiming(300, 5, 5)
         with self.assertRaises(FrozenInstanceError):
             policy.period = 400

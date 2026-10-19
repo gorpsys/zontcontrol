@@ -27,7 +27,7 @@ from zontcontrol.controller.contracts import (
     ValueDescriptor,
 )
 from zontcontrol.controller.transport import FailureKind, TransportError
-from zontcontrol.coordination.models import decode_r2
+from zontcontrol.coordination.models import decode_r1
 from zontcontrol.coordination.statistics import analyze
 
 
@@ -53,7 +53,7 @@ class VirtualHTTP:
         self.before = lambda request: None
         self.after = lambda request, response: None
 
-    def request(self, request):
+    def request(self, request, *, timeout_seconds=None):
         if self.closed:
             raise AssertionError('request after transport close')
         self.requests.append(request)
@@ -132,11 +132,15 @@ class ProductFlowTests(unittest.TestCase):
         for app in reversed(self.apps):
             self.assertTrue(app.close(wait_timeout=2))
 
-    def build(self, catalog=(), *, clock=None, sink=None, period=10):
+    def build(self, catalog=(), *, clock=None, sink=None, period=300):
         data = {
             'config/controller.json': {'contact': 'offline@example.invalid',
                 'http_timeout_seconds': 1, 'coordination': {
-                    'delta_seconds': .02, 'leader_period_seconds': period},
+                    'delta_seconds': .02, 'leader_period_seconds': period,
+                    'delta_cmd_seconds': .02,
+                    'profile_id': 'ea3221c0-2a98-49f0-8705-e81917b9b5a9',
+                    'poll_seconds': .005, 'retry_seconds': .005,
+                    'jitter_fraction': 0, 'renewal_fraction': .33},
                 'statistics': {'path': 'reports/unused.jsonl', 'profile': 'product-offline'}},
             'config/registry.json': {'once_timeouts': {
                 spec.algorithm_id: {'minimum_seconds': .01, 'recommended_seconds': .5}
@@ -151,11 +155,11 @@ class ProductFlowTests(unittest.TestCase):
         self.apps.append(app)
         return app, transport
 
-    def acquire(self, controller, device_id=42, *, track=True):
+    def acquire(self, controller, device_id=42, *, track=True, lease_seconds=60):
         deadline = monotonic() + 2
         while True:
             try:
-                session = controller.try_acquire_control(device_id, lease_seconds=60)
+                session = controller.try_acquire_control(device_id, lease_seconds=lease_seconds)
                 if track:
                     self.sessions.append((controller, session))
                 return session
@@ -195,21 +199,21 @@ class ProductFlowTests(unittest.TestCase):
             lambda controller: BoilerCLI(controller, terminal=terminal, reader=lambda _: {
                 'devices': [42], 'controls': [{'device_id': 42, 'kind': 'toggle_buttons',
                     'element_id': 8832, 'actions': ['trigger']}], 'graphs': [],
-                'grant_wait_seconds': 2}))
+                'grant_wait_seconds': 3}))
         app, transport = self.build((spec,))
         terminal.lines.put('command 42 toggle_buttons 8832 trigger '
                            "'{\"target_state\":true}' --execute")
-        self.assertTrue(transport.on_entered.wait(2))
+        self.assertTrue(transport.on_entered.wait(4))
         self.assertTrue(app.stop('boiler_cli', wait_timeout=2))
         self.assertTrue(app.close(wait_timeout=2))
         self.assertEqual(transport.commands, [(42, {'target_state': True})])
-        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        self.assertTrue(decode_r1(self.server.read_device(42)['name'], PREFIX).grants)
         events = [row['event'] for row in self.rows]
         for event in ('request', 'grant', 'grant_ack', 'command', 'finished'):
             self.assertIn(event, events)
 
     def test_async_progress_status_cancel_and_independent_device_with_http_barrier(self):
-        app, transport = self.build(period=.3)
+        app, transport = self.build()
         owner, other = app.controller(), app.controller()
         entered, resume = Event(), Event()
         self.external_resumes.append(resume)
@@ -250,9 +254,9 @@ class ProductFlowTests(unittest.TestCase):
         other.release_control(granted.session)
 
     def test_contended_requests_timeout_and_succeed_after_release(self):
-        app, transport = self.build(period=.3)
+        app, transport = self.build()
         owner, rival = app.controller(), app.controller()
-        session = self.acquire(owner)
+        session = self.acquire(owner, lease_seconds=.3)
         timed = rival.request_control(42, lease_seconds=60, timeout=.05, poll_seconds=.005)
         denied = self.settled(app, rival, timed)
         self.assertIs(denied.state, State.DENIED)
@@ -260,17 +264,7 @@ class ProductFlowTests(unittest.TestCase):
         self.assertIsNone(denied.session)
         with self.assertRaises(ControlOwnershipRequired):
             rival.execute_command(self.command(rival), denied.session)
-        cleared = Event()
-        self.external_resumes.append(cleared)
-        def observe_clear(request, response):
-            if request.data and json.loads(request.data).get('name') == PREFIX:
-                cleared.set()
-        def await_clear(request):
-            if current_thread().name == 'control-request-42':
-                self.assertTrue(cleared.wait(1))
-        # Keep the new R1 publication behind confirmation of the old finished
-        # request. This scenario tests local contention, independently of R1 RMW.
-        transport.after, transport.before = observe_clear, await_clear
+        original = decode_r1(self.server.read_device(42)['name'], PREFIX).grants[0]
         handle = rival.request_control(42, lease_seconds=60, timeout=2, poll_seconds=.2)
         self.assertNotEqual(handle.request_id, timed.request_id)
         self.assertIs(rival.get_control_request(handle).state, State.REQUESTED)
@@ -281,6 +275,8 @@ class ProductFlowTests(unittest.TestCase):
         owner.release_control(session)
         granted = self.settled(app, rival, handle)
         self.assertIs(granted.state, State.GRANTED)
+        current = decode_r1(self.server.read_device(42)['name'], PREFIX).grants[-1]
+        self.assertGreater(current.valid_from, original.valid_until)
         self.sessions.append((rival, granted.session))
         self.assertIs(rival.get_control_request(timed), denied)
         self.assertEqual(transport.commands, [])
@@ -299,7 +295,7 @@ class ProductFlowTests(unittest.TestCase):
         raw = self.server.read_device(42)['name']
         self.assertTrue(raw.startswith(PREFIX))
         self.assertIn('управление занято', raw)
-        self.assertIsNotNone(decode_r2(raw, PREFIX))
+        self.assertIsNotNone(decode_r1(raw, PREFIX))
         # Reading and preparing on both roots remain available while occupied.
         self.assertEqual([row.device_id for row in rival.list_devices()], [42, 43])
         self.command(rival)
@@ -327,7 +323,7 @@ class ProductFlowTests(unittest.TestCase):
         self.assertTrue(transport.off_entered.wait(2))
         self.assertFalse(app.close(wait_timeout=.01))
         self.assertFalse(transport.closed)
-        self.assertIsNotNone(decode_r2(self.server.read_device(42)['name'], PREFIX))
+        self.assertIsNotNone(decode_r1(self.server.read_device(42)['name'], PREFIX))
         with self.assertRaises(ControlOwnershipRequired):
             app.controller()
         with self.assertRaises(ControlOwnershipRequired):
@@ -344,7 +340,7 @@ class ProductFlowTests(unittest.TestCase):
         self.assertTrue(app.close(wait_timeout=2))
         self.assertTrue(transport.closed)
         self.assertEqual(transport.commands, [(42, {'target_state': False})])
-        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        self.assertTrue(decode_r1(self.server.read_device(42)['name'], PREFIX).grants)
 
     def test_close_between_external_on_and_finally_keeps_cleanup_available(self):
         app, transport = self.build()
@@ -376,7 +372,7 @@ class ProductFlowTests(unittest.TestCase):
         self.assertTrue(transport.closed)
         self.assertEqual(transport.commands,
                          [(42, {'target_state': True}), (42, {'target_state': False})])
-        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        self.assertTrue(decode_r1(self.server.read_device(42)['name'], PREFIX).grants)
 
     def test_close_waits_for_external_device_after_registered_finally(self):
         self.assert_shared_shutdown('registered')
@@ -428,8 +424,8 @@ class ProductFlowTests(unittest.TestCase):
         self.assertTrue(transport.closed)
         self.assertEqual(transport.commands,
                          [(42, {'target_state': True}), (42, {'target_state': False})])
-        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
-        self.assertEqual(self.server.read_device(43)['name'], PREFIX)
+        self.assertTrue(decode_r1(self.server.read_device(42)['name'], PREFIX).grants)
+        self.assertTrue(decode_r1(self.server.read_device(43)['name'], PREFIX).grants)
 
     def test_close_during_external_unknown_on_preserves_outcome_and_finally_without_retry(self):
         app, transport = self.build()
@@ -448,7 +444,7 @@ class ProductFlowTests(unittest.TestCase):
                 finally:
                     owner.release_control(session)
         thread, results, errors = self.external(pulse)
-        self.assertTrue(transport.on_entered.wait(2))
+        self.assertTrue(transport.on_entered.wait(4))
         self.assertFalse(app.close(wait_timeout=.01))
         self.assertFalse(transport.closed)
         transport.on_resume.set()
@@ -462,7 +458,7 @@ class ProductFlowTests(unittest.TestCase):
         self.assertTrue(transport.closed)
         self.assertEqual(transport.commands,
                          [(42, {'target_state': True}), (42, {'target_state': False})])
-        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        self.assertTrue(decode_r1(self.server.read_device(42)['name'], PREFIX).grants)
         self.assertTrue(any(row.get('outcome') == 'unknown' for row in self.rows))
 
     def reset_catalog(self, wait):
@@ -529,7 +525,7 @@ class ProductFlowTests(unittest.TestCase):
             transport.off_resume.set()
             self.assertTrue(app.close(wait_timeout=2))
             self.assertTrue(transport.closed)
-            self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+            self.assertTrue(decode_r1(self.server.read_device(42)['name'], PREFIX).grants)
 
     def test_unknown_on_is_not_retried_and_registered_failure_still_sends_off(self):
         descriptions, archive = self.history_patches()
@@ -541,7 +537,7 @@ class ProductFlowTests(unittest.TestCase):
             self.assertTrue(app.close(wait_timeout=2))
         self.assertEqual(transport.commands,
                          [(42, {'target_state': True}), (42, {'target_state': False})])
-        self.assertEqual(self.server.read_device(42)['name'], PREFIX)
+        self.assertTrue(decode_r1(self.server.read_device(42)['name'], PREFIX).grants)
         self.assertTrue(any(row.get('outcome') == 'unknown' for row in self.rows))
 
     def test_facade_unknown_foreign_forged_and_expired_sessions_never_repeat_effects(self):
@@ -558,7 +554,7 @@ class ProductFlowTests(unittest.TestCase):
         with self.assertRaises(CommandOutcomeUnknown):
             owner.execute_command(command, session)
         self.assertEqual(transport.commands, [(42, {'target_state': True})])
-        self.assertIsNotNone(decode_r2(self.server.read_device(42)['name'], PREFIX))
+        self.assertIsNotNone(decode_r1(self.server.read_device(42)['name'], PREFIX))
         # Expiry is local admission policy; retaining the mutex does not extend R2.
         with patch.object(app._controller._executor, '_clock', return_value=session.expires_at):
             with self.assertRaises(ControlOwnershipRequired):

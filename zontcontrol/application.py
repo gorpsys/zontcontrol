@@ -12,6 +12,7 @@ from collections.abc import Iterable, Mapping, Sequence
 import os
 import signal
 import sys
+import time
 from threading import Event
 from typing import Any, Protocol, Self, cast
 
@@ -59,7 +60,7 @@ def _adapter(environ: Mapping[str, str] | None, reader: JSONReader,
     config = load_controller_config(reader=reader)
     headers = token_headers(config.contact, token)
     try:
-        Statistics(lambda row: None, protocol_version='1', profile=config.statistics.profile)
+        Statistics(lambda row: None, protocol_version='2', profile=config.statistics.profile)
     except ObservationError:
         raise ConfigurationError('config/controller.json', 'Invalid statistics profile') from None
     transport = transport_factory(timeout=config.http_timeout_seconds)
@@ -152,7 +153,7 @@ def create_application(*, environ: Mapping[str, str] | None = None, reader: JSON
                        catalog: Iterable[AlgorithmSpec] = BUILTIN_SPECS,
                        transport_factory: TransportFactory | None = None,
                        statistics_sink: ObservationSink | None = None, clock: Clock | None = None,
-                       uuid_factory: UUIDFactory | None = None) -> Application:
+                       uuid_factory: UUIDFactory | None = None, epoch_sampler=time.time) -> Application:
     """Load fixed cwd/config infrastructure; factories load their module files.
 
     Catalog/transport/sink/clock/UUID generation are offline DI seams. A supplied
@@ -171,7 +172,7 @@ def create_application(*, environ: Mapping[str, str] | None = None, reader: JSON
             path = config.statistics.path
             path.parent.mkdir(parents=True, exist_ok=True)
             sink = JsonlSink(path.open('a', encoding='utf-8'))
-        statistics = Statistics(sink, protocol_version='1', profile=config.statistics.profile)
+        statistics = Statistics(sink, protocol_version='2', profile=config.statistics.profile)
     except BaseException:
         try:
             if statistics_sink is None and sink is not None:
@@ -179,10 +180,19 @@ def create_application(*, environ: Mapping[str, str] | None = None, reader: JSON
         finally:
             _close_transport(transport)
         raise
-    coordination = CoordinationRuntime(
-        adapter, config.coordination, clock, statistics,
-        worker_factory=_create_device_coordinator, uuid_factory=uuid_factory,
-    )
+    try:
+        coordination = CoordinationRuntime(
+            adapter, config.coordination, clock, statistics,
+            worker_factory=_create_device_coordinator, uuid_factory=uuid_factory,
+            epoch_sampler=epoch_sampler,
+        )
+    except BaseException:
+        try:
+            if statistics_sink is None:
+                cast(JsonlSink, sink).close()
+        finally:
+            _close_transport(transport)
+        raise
     executor = CommandExecutor(gate=coordination, clock=clock.now, statistics=statistics,
                                uuid_factory=uuid_factory)
     controller = ControllerService(adapter, executor=executor)

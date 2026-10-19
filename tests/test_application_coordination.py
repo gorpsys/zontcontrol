@@ -27,6 +27,11 @@ from zontcontrol.coordination.models import (
 from zontcontrol.coordination.store import ExecutorStore
 
 
+def first_grant(raw):
+    record = decode_r1(raw, 'Дом')
+    return record.grants[0] if record is not None and record.grants else None
+
+
 class StepClock:
     """Protocol time moves only when a test releases a scheduled wait."""
 
@@ -63,12 +68,14 @@ class MemoryTransport:
         self.commands = []
         self.closed = False
         self.requests = []
+        self.request_trace = []
         self.after = lambda request, response: None
 
-    def request(self, request):
+    def request(self, request, *, timeout_seconds=None):
         if self.closed:
             raise AssertionError('request after transport close')
         self.requests.append(request)
+        self.request_trace.append((request, current_thread().name))
         response = self.respond(request)
         self.after(request, response)
         return response
@@ -80,7 +87,12 @@ class MemoryTransport:
             if path.endswith('/update_device'):
                 self.raw.update({key: value for key, value in body.items() if key != 'device_id'})
                 if 'name' in body:
-                    (self.cleared if body['name'] == 'Дом' else self.granted).set()
+                    record = decode_r1(body['name'], 'Дом')
+                    if record is not None and record.grants:
+                        self.granted.set()
+                    if record is not None and record.handled_request is not None and (
+                            record.handled_request.outcome == 'finished'):
+                        self.cleared.set()
                 return {'ok': True}
             if '/actions/' in path:
                 self.commands.append((path, body))
@@ -102,6 +114,7 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.on_observation = lambda row: None
         data = settings()
         data['config/registry.json']['once_timeouts'] = {}
+        data['config/controller.json']['coordination']['poll_seconds'] = .1
         entered, contexts = Event(), []
         class Sentinel:
             def __init__(self, controller):
@@ -120,6 +133,10 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.owner = self.app.controller()
         self.other = self.app.controller()
         self.addCleanup(self.app.close)
+        def expire_after_test():
+            with self.clock.lock:
+                self.clock.time += 2000
+        self.addCleanup(expire_after_test)
         self.assertTrue(entered.wait(1))
         self.algorithm_context = contexts[0]
 
@@ -129,23 +146,94 @@ class ComposedCoordinationTests(unittest.TestCase):
 
     def test_injected_uuid_sequence_reaches_leader_grant_and_session(self):
         before = self.uuid_generator.call_count
-        handle = self.request()
-        result = self.wait_result(handle, pump=True)
+        read = ExecutorStore.read_r1
+        reads = 0
+        def ordered_read(store, **kwargs):
+            nonlocal reads
+            reads += 1
+            if reads == 2:  # Bootstrap read is first; then wait for candidate WRITE.
+                scheduled = self.clock.waits.get(timeout=1)
+                self.clock.waits.put(scheduled)
+            return read(store, **kwargs)
+        with patch.object(ExecutorStore, 'read_r1', ordered_read):
+            handle = self.request()
+            result = self.wait_result(handle, pump=True)
         self.assertIs(result.state, State.GRANTED)
         gate, _ = self.app._coordination._devices[42]
         store = gate._stores[42]
-        leader, request = store.read_r1().leader, store.read_r1().request
-        grant = store.read_r2()
+        leader, request = store.read_r1().leader, store.read_r2().request
+        grant = store.read_r1().grants[0]
         self.assertEqual(handle.request_id, UUID(int=before + 1))
-        self.assertEqual(leader.owner, str(UUID(int=before + 2)))
+        self.assertEqual(leader.owner_id, str(UUID(int=before + 2)))
         self.assertEqual(request.request_id, str(handle.request_id))
-        self.assertEqual(request.nonce, str(UUID(int=before + 3)))
-        self.assertEqual(grant.grant_id, str(UUID(int=before + 4)))
+        self.assertEqual(request.nonce, str(UUID(int=before + 5)))
+        self.assertEqual(grant.grant_id, str(UUID(int=before + 7)))
         self.assertEqual(grant.request_id, str(handle.request_id))
-        self.assertEqual(result.session.session_id, UUID(int=before + 5))
+        self.assertEqual(result.session.session_id, UUID(int=before + 9))
         self.owner.release_control(result.session)
-        self.assertEqual(self.uuid_generator.call_count, before + 5)
+        self.assertEqual(self.uuid_generator.call_count, before + 10)
         self.assertEqual(self.transport.commands, [])
+
+    def test_role_writers_use_actual_name_and_notes_http_fields(self):
+        handle = self.request()
+        result = self.wait_result(handle, pump=True)
+        self.assertIs(result.state, State.GRANTED)
+        try:
+            fields = set()
+            for request, thread in self.transport.request_trace:
+                if not request.full_url.endswith('/update_device'):
+                    continue
+                body = json.loads(request.data)
+                keys = set(body)-{'device_id'}
+                self.assertEqual(len(keys), 1)
+                field, = keys
+                fields.add(field)
+                if thread.startswith('coordinator-'):
+                    self.assertEqual(field, 'name')
+                    self.assertIsNotNone(decode_r1(body[field], 'Дом').leader)
+                else:
+                    self.assertEqual(thread, 'control-request-42')
+                    self.assertEqual(field, 'notes')
+                    self.assertEqual(decode_r2(body[field]).request.request_id, str(handle.request_id))
+            self.assertEqual(fields, {'name', 'notes'})
+        finally:
+            self.owner.release_control(result.session)
+
+    def test_future_grant_remains_requested_until_usable_without_status_io(self):
+        first = self.acquire()
+        self.owner.release_control(first)
+        handle = self.request(self.other, lease=60, timeout=30)
+        for _ in range(20):
+            if len(decode_r1(self.transport.raw['name'], 'Дом').grants) == 2:
+                break
+            self.clock.advance_wait()
+            scheduled = self.clock.waits.get(timeout=1)
+            self.clock.waits.put(scheduled)
+        grants = decode_r1(self.transport.raw['name'], 'Дом').grants
+        self.assertEqual(len(grants), 2)
+        self.assertGreater(grants[1].valid_from, grants[0].valid_until)
+        before = len(self.transport.requests)
+        pending = self.other.get_control_request(handle)
+        self.assertIs(pending.state, State.REQUESTED)
+        self.assertIsNone(pending.session)
+        self.assertIs(self.other.get_control_request(handle), pending)
+        self.assertEqual(len(self.transport.requests), before)
+        for _ in range(200):
+            with self.app._controller._executor._idle:
+                done = handle in self.app._controller._executor._requests._terminal
+            if done:
+                break
+            self.clock.advance_wait()
+            scheduled = self.clock.waits.get(timeout=1)
+            self.clock.waits.put(scheduled)
+        granted = self.other.get_control_request(handle)
+        self.assertIs(granted.state, State.GRANTED)
+        try:
+            command = self.other.prepare_command(42, ControlKey(42, 'circuit', 10),
+                                                'target-temp', {'target_temp': 22})
+            self.assertTrue(self.other.execute_command(command, granted.session).api_accepted)
+        finally:
+            self.other.release_control(granted.session)
 
     def request(self, controller=None, *, lease=60, timeout=10):
         return (controller or self.owner).request_control(
@@ -188,7 +276,7 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.on_observation = pause
         handle = self.request(timeout=1)
         self.wait_ack_barrier(entered)
-        old = decode_r2(self.transport.raw['name'], 'Дом')
+        old = first_grant(self.transport.raw['name'])
         self.assertEqual(old.request_id, str(handle.request_id))
         if reason is Reason.CANCELLED:
             denied = self.owner.cancel_control_request(handle)
@@ -201,14 +289,15 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertIsNone(denied.session)
         # Replace R2 while accepted local work is still completing. Cleanup of
         # the old request must not announce completion of this foreign grant.
-        foreign = replace(old, owner=str(self.uuid_generator()), request_id=str(self.uuid_generator()),
+        foreign = replace(old, owner_id=str(self.uuid_generator()), request_id=str(self.uuid_generator()),
                           grant_id=str(self.uuid_generator()), nonce=str(self.uuid_generator()))
         with self.transport.lock:
-            self.transport.raw['name'] = encode_r2('Дом', foreign)
+            self.transport.raw['name'] = encode_r1('Дом', replace(
+                decode_r1(self.transport.raw['name'], 'Дом'), grants=(foreign,)))
         resume.set()
         self.join_requests()
-        self.assertEqual(decode_r2(self.transport.raw['name'], 'Дом'), foreign)
-        self.assertEqual(decode_r1(self.transport.raw['notes']).request.state, 'request')
+        self.assertEqual(first_grant(self.transport.raw['name']), foreign)
+        self.assertEqual(decode_r2(self.transport.raw['notes']).request.operation, 'acquire')
         gate = self.app._coordination._devices[42][0]
         self.assertTrue(all(held.finished for held in gate._held.values()))
         # A new public request gets a fresh lower request/nonce, never old ack.
@@ -217,9 +306,9 @@ class ComposedCoordinationTests(unittest.TestCase):
         executor = self.app._controller._executor
         with executor._idle:
             self.assertTrue(executor._idle.wait_for(lambda:
-                decode_r1(self.transport.raw['notes']).request.request_id
+                decode_r2(self.transport.raw['notes']).request.request_id
                     == str(next_handle.request_id), timeout=1))
-        next_record = decode_r1(self.transport.raw['notes']).request
+        next_record = decode_r2(self.transport.raw['notes']).request
         self.assertNotEqual(next_record.nonce, old.nonce)
         self.assertIs(self.owner.get_control_request(next_handle).state, State.REQUESTED)
         self.owner.cancel_control_request(next_handle)
@@ -250,7 +339,7 @@ class ComposedCoordinationTests(unittest.TestCase):
         def pause_finished(request, response):
             if current_thread().name == 'control-request-42' and request.data:
                 body = json.loads(request.data)
-                if 'notes' in body and decode_r1(body['notes']).request.state == 'finished':
+                if 'notes' in body and decode_r2(body['notes']).request.operation == 'finish':
                     finished.append(request)
                     releasing.set()
                     self.assertTrue(released.wait(2))
@@ -299,7 +388,7 @@ class ComposedCoordinationTests(unittest.TestCase):
     def test_async_timeout_does_not_stop_existing_coordinator_or_foreign_grant(self):
         session = self.acquire()
         worker = self.app._coordination._devices[42][1]
-        grant = decode_r2(self.transport.raw['name'], 'Дом')
+        grant = first_grant(self.transport.raw['name'])
         handle = self.request(self.other, lease=5, timeout=1)
         with self.clock.lock:
             self.clock.time += 1
@@ -308,12 +397,13 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.join_requests()
         self.assertFalse(worker.cancelled.is_set())
         self.assertTrue(worker.thread.is_alive())
-        self.assertEqual(decode_r2(self.transport.raw['name'], 'Дом'), grant)
+        self.assertEqual(first_grant(self.transport.raw['name']), grant)
         command = self.owner.prepare_command(42, ControlKey(42, 'circuit', 10),
             'target-temp', {'target_temp': 22})
         self.owner.execute_command(command, session)
         self.assertEqual(len(self.transport.commands), 1)
         self.owner.release_control(session)
+
 
     def test_shutdown_keeps_async_granted_until_local_expiry_without_new_rights(self):
         handle = self.request(lease=5, timeout=4)
@@ -325,7 +415,7 @@ class ComposedCoordinationTests(unittest.TestCase):
                     self.clock.time = max(self.clock.time, session.expires_at)
             self.addCleanup(expire_session)
         self.assertIs(granted.state, State.GRANTED)
-        grant = decode_r2(self.transport.raw['name'], 'Дом')
+        grant = first_grant(self.transport.raw['name'])
         self.assertFalse(self.app.close(wait_timeout=.01))
         self.assertFalse(self.transport.closed)
         self.assertIs(self.owner.cancel_control_request(handle), granted)
@@ -340,13 +430,13 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertTrue(self.transport.closed)
         self.assertEqual(len(self.transport.commands), 1)
         self.assertIs(self.owner.get_control_request(handle), granted)
-        self.assertEqual(decode_r2(self.transport.raw['name'], 'Дом'), grant)
+        self.assertEqual(first_grant(self.transport.raw['name']), grant)
 
     def test_system_exit_at_lower_ack_does_not_leak_long_session_to_short_request(self):
         ack = []
         def interrupt(row):
             if row['event'] == 'grant_ack' and not ack:
-                ack.append(decode_r2(self.transport.raw['name'], 'Дом'))
+                ack.append(first_grant(self.transport.raw['name']))
                 raise SystemExit()
         self.on_observation = interrupt
         first = self.request()
@@ -363,14 +453,16 @@ class ComposedCoordinationTests(unittest.TestCase):
         executor = self.app._controller._executor
         with executor._idle:
             self.assertTrue(executor._idle.wait_for(lambda:
-                decode_r1(self.transport.raw['notes']).request.request_id == str(second.request_id),
+                decode_r2(self.transport.raw['notes']).request.request_id == str(second.request_id),
                 timeout=1))
-        pending = decode_r1(self.transport.raw['notes']).request
+        pending = decode_r2(self.transport.raw['notes']).request
         self.assertNotEqual(pending.nonce, ack[0].nonce)
-        self.assertEqual(decode_r2(self.transport.raw['name'], 'Дом'), ack[0])
+        self.assertEqual(first_grant(self.transport.raw['name']), ack[0])
         self.assertIs(self.owner.get_control_request(second).state, State.REQUESTED)
-        with self.clock.lock:
-            self.clock.time = started + 5
+        while self.clock.now() < started + 5:
+            self.clock.advance_wait()
+            scheduled = self.clock.waits.get(timeout=1)
+            self.clock.waits.put(scheduled)
         short = self.wait_result(second)
         self.assertIs(short.state, State.DENIED)
         self.assertIsNone(short.session)
@@ -384,15 +476,15 @@ class ComposedCoordinationTests(unittest.TestCase):
             self.clock.advance_wait()
             scheduled = self.clock.waits.get(timeout=1)
             self.clock.waits.put(scheduled)
-            if decode_r2(self.transport.raw['name'], 'Дом') is None:
+            if first_grant(self.transport.raw['name']) is None:
                 break
-        self.assertIsNone(decode_r2(self.transport.raw['name'], 'Дом'))
+        self.assertIsNone(first_grant(self.transport.raw['name']))
         third_start = self.clock.now()
         third = self.request(lease=5, timeout=4)
         result = self.wait_result(third, pump=True)
         self.assertIs(result.state, State.GRANTED)
         try:
-            new = decode_r2(self.transport.raw['name'], 'Дом')
+            new = first_grant(self.transport.raw['name'])
             self.assertEqual(new.request_id, str(third.request_id))
             self.assertNotIn(new.request_id, {str(first.request_id), str(second.request_id)})
             self.assertNotEqual(new.nonce, ack[0].nonce)
@@ -409,7 +501,7 @@ class ComposedCoordinationTests(unittest.TestCase):
         # Synchronize on the next poll: its preceding step/readback is complete.
         # R1 is deliberately RMW, so the first request may race the candidate's
         # initial write. The executor's next explicit attempt republishes it.
-        for _ in range(2):
+        for _ in range(12):
             scheduled = self.clock.waits.get(timeout=1)
             self.clock.waits.put(scheduled)
             try:
@@ -439,21 +531,21 @@ class ComposedCoordinationTests(unittest.TestCase):
                         self.assertTrue(resume.wait(2))
                     metadata = adapter.read_metadata
                     read_r1, read_r2 = ExecutorStore.read_r1, ExecutorStore.read_r2
-                    def initial(device_id):
+                    def initial(device_id, **kwargs):
                         calls.append('metadata')
-                        result = metadata(device_id)
+                        result = metadata(device_id, **kwargs)
                         if stage == 'metadata':
                             pause()
                         return result
-                    def r1(store):
+                    def r1(store, **kwargs):
                         calls.append('r1')
-                        result = read_r1(store)
+                        result = read_r1(store, **kwargs)
                         if stage == 'r1':
                             pause()
                         return result
-                    def r2(store):
+                    def r2(store, **kwargs):
                         calls.append('r2')
-                        result = read_r2(store)
+                        result = read_r2(store, **kwargs)
                         if stage == 'r2':
                             pause()
                         return result
@@ -538,7 +630,7 @@ class ComposedCoordinationTests(unittest.TestCase):
         off = self.owner.prepare_command(42, key, 'trigger', {'target_state': False})
         self.assertTrue(self.owner.execute_command(on, session).api_accepted)
         with self.transport.lock:
-            grant = decode_r2(self.transport.raw['name'], 'Дом')
+            grant = first_grant(self.transport.raw['name'])
         self.assertFalse(self.app.close(wait_timeout=.01))
         self.assertFalse(self.transport.closed)
         # Expire the same injected clock used by the real R1/R2 gate and executor.
@@ -548,7 +640,7 @@ class ComposedCoordinationTests(unittest.TestCase):
             self.owner.execute_command(off, session)
         self.assertEqual(len(self.transport.commands), 1)
         with self.transport.lock:
-            self.assertEqual(decode_r2(self.transport.raw['name'], 'Дом'), grant)
+            self.assertEqual(first_grant(self.transport.raw['name']), grant)
         # The algorithm's lease also bounds idle local ownership during shutdown.
         self.assertTrue(self.app.close(wait_timeout=1))
         self.assertTrue(self.transport.closed)
@@ -561,6 +653,13 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.owner.release_control(session)
         self.clock.advance_wait()
         self.assertTrue(self.transport.cleared.wait(1))
+        for _ in range(200):
+            if first_grant(self.transport.raw['name']) is None:
+                break
+            self.clock.advance_wait()
+            scheduled = self.clock.waits.get(timeout=1)
+            self.clock.waits.put(scheduled)
+        self.assertIsNone(first_grant(self.transport.raw['name']))
         gate = self.app._coordination._devices[42][0]
         with patch.object(gate, 'observation_context', side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
@@ -576,9 +675,9 @@ class ComposedCoordinationTests(unittest.TestCase):
     def test_real_gate_requires_confirmed_r1_r2_before_synchronous_command(self):
         session = self.acquire()
         with self.transport.lock:
-            grant = decode_r2(self.transport.raw['name'], 'Дом')
-            leader = decode_r1(self.transport.raw['notes']).leader
-        self.assertEqual(grant.leader_token, leader.token)
+            grant = first_grant(self.transport.raw['name'])
+            leader = decode_r1(self.transport.raw['name'], 'Дом').leader
+        self.assertEqual(grant.issuer_term_id, leader.term_id)
         command = self.owner.prepare_command(42, ControlKey(42, 'circuit', 10),
                                              'target-temp', {'target_temp': 22})
         with self.assertRaises(ControlOwnershipRequired):
@@ -621,10 +720,10 @@ class ComposedCoordinationTests(unittest.TestCase):
         errors = []
         adapter = self.app._controller._adapter
         read_metadata = adapter.read_metadata
-        def blocked(device_id):
+        def blocked(device_id, **kwargs):
             entered.set()
             resume.wait()
-            return read_metadata(device_id)
+            return read_metadata(device_id, **kwargs)
         def acquire():
             try:
                 self.owner.try_acquire_control(42, lease_seconds=10)
@@ -677,12 +776,12 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertTrue(worker.thread.is_alive())
         self.owner.release_control(session)
 
-    def test_changed_leader_rejects_new_send_but_does_not_release_local_owner(self):
+    def test_changed_leader_preserves_cached_grant_and_local_owner(self):
         session = self.acquire()
         with self.transport.lock:
-            record = decode_r1(self.transport.raw['notes'])
-            changed = replace(record.leader, token='a' * 32)
-            self.transport.raw['notes'] = encode_r1(replace(record, leader=changed))
+            record = decode_r1(self.transport.raw['name'], 'Дом')
+            changed = replace(record.leader, term_id=str(self.uuid_generator()))
+            self.transport.raw['name'] = encode_r1('Дом', replace(record, leader=changed, grants=()))
         self.clock.advance_wait()
         scheduled = self.clock.waits.get(timeout=1)
         self.clock.waits.put(scheduled)
@@ -690,11 +789,10 @@ class ComposedCoordinationTests(unittest.TestCase):
         self.assertFalse(self.algorithm_context.cancelled.is_set())
         command = self.owner.prepare_command(42, ControlKey(42, 'circuit', 10),
                                              'target-temp', {'target_temp': 22})
-        with self.assertRaises(ControlOwnershipRequired):
-            self.owner.execute_command(command, session)
+        self.assertTrue(self.owner.execute_command(command, session).api_accepted)
         with self.assertRaises(DeviceControlBusy):
             self.other.try_acquire_control(42, lease_seconds=10)
-        self.assertEqual(self.transport.commands, [])
+        self.assertEqual(len(self.transport.commands), 1)
         self.owner.release_control(session)
 
     def test_device_name_recovery_validates_exact_suffix_before_preserving_prefix(self):
@@ -707,15 +805,107 @@ class ComposedCoordinationTests(unittest.TestCase):
 
     def test_host_services_leader_renewals_without_extending_executor_session(self):
         session = self.acquire()
-        initial = decode_r1(self.transport.raw['notes']).leader
+        self.app._coordination._devices[42][1].leader.renewal_fraction = .0003
+        initial = decode_r1(self.transport.raw['name'], 'Дом').leader
         expires_at = session.expires_at
         for _ in range(3):
             self.clock.advance_wait()
             scheduled = self.clock.waits.get(timeout=1)
             self.clock.waits.put(scheduled)
-        current = decode_r1(self.transport.raw['notes']).leader
-        self.assertEqual(current.token, initial.token)
-        self.assertGreater(current.seq, initial.seq)
+        current = decode_r1(self.transport.raw['name'], 'Дом').leader
+        self.assertEqual(current.term_id, initial.term_id)
+        self.assertGreater(current.revision, initial.revision)
         self.assertIs(self.owner.try_acquire_control(42, lease_seconds=100), session)
         self.assertEqual(session.expires_at, expires_at)
         self.owner.release_control(session)
+
+class ProfileTransitionTests(unittest.TestCase):
+    """Known A→B transitions use ordinary role writers and fixed API budgets."""
+
+    def setup_profiles(self):
+        from tests.fakes.protocol import Scenario
+        from zontcontrol.coordination.models import ProtocolProfile
+        from zontcontrol.coordination.store import LeaderStore, ExecutorStore
+        from zontcontrol.coordination.leader import LeaderElection
+        from zontcontrol.coordination.grants import ExecutorGate, GrantCoordinator
+        from zontcontrol.coordination.timing import LeaseTiming
+        self.s = Scenario(period=60)
+        s = self.s
+        self.a = s.profile
+        self.b = ProtocolProfile(str(s.uid()), 2, 3)
+        self.store = s.make_store(LeaderStore, profile=self.b, previous=self.a)
+        self.executor = s.make_store(ExecutorStore, profile=self.b, previous=self.a)
+        self.leader = LeaderElection(self.store, str(s.uid()), LeaseTiming(300, 2, 3),
+            clock=s.clock, uuid_factory=s.uid, epoch_sampler=lambda: 900000000)
+        self.gate = ExecutorGate({42: self.executor}, clock=s.clock, delta=2, uuid_factory=s.uid)
+        self.coordinator = GrantCoordinator(self.store, self.leader, clock=s.clock, uuid_factory=s.uid)
+
+    def test_known_profile_waits_for_old_lease_and_tail_before_r1_then_r2(self):
+        from zontcontrol.coordination.clock import clock_factor
+        self.setup_profiles()
+        s = self.s
+        s.acquire(seconds=10)
+        original = s.store.read_r1()
+        s.leader.stop()  # All A processes stopped before this configured switch.
+        rid, owner = s.uid(), s.uid()
+        started = s.clock.now()
+        with self.assertRaises(DeviceControlBusy):
+            self.gate.try_acquire(owner, 42, lease_seconds=140, request_id=rid,
+                                  local_deadline=started+140, attempt_deadline=started+120)
+        pending = self.gate._pending[owner, 42]
+        old_nonce = pending.request.nonce
+        self.assertEqual(s.store.read_r2().profile_id, self.a.profile_id)
+        self.assertFalse(self.leader.try_acquire())
+        wait = ((original.leader.leader_until-original.leader.sampled_at)*clock_factor(60)
+                + self.a.delta_cmd_seconds*clock_factor(self.a.delta_cmd_seconds))
+        s.advance(wait-.01, self.leader)
+        self.assertFalse(self.leader.try_acquire())
+        self.assertEqual(s.store.read_r1(), original)
+        s.advance(.02, self.leader)
+        self.assertTrue(self.leader.try_acquire())
+        self.assertEqual(self.store.read_r1().profile, self.b)
+        self.assertEqual(self.store.read_r2().profile_id, self.a.profile_id)
+        with self.assertRaises(DeviceControlBusy):
+            self.gate.try_acquire(owner, 42, lease_seconds=140, request_id=rid,
+                                  local_deadline=started+1000, attempt_deadline=started+1000)
+        self.assertEqual(pending.local_deadline, started+140)
+        self.assertEqual(pending.request.request_id, str(rid))
+        self.assertNotEqual(pending.request.nonce, old_nonce)
+        self.assertEqual(self.store.read_r2().profile_id, self.b.profile_id)
+        self.coordinator.step()
+        with self.assertRaises(DeviceControlBusy):
+            self.gate.try_acquire(owner, 42, lease_seconds=140, request_id=rid)
+        s.advance(pending.interval.usable_from-s.clock.now()+.01, self.leader)
+        session = self.gate.try_acquire(owner, 42, lease_seconds=140, request_id=rid)
+        self.assertLessEqual(session.expires_at, started+140)
+        self.gate.validate(owner, session)
+
+    def test_interruption_between_r1_b_and_r2_b_resumes_without_erasing(self):
+        from zontcontrol.coordination.clock import clock_factor
+        from zontcontrol.coordination.grants import ExecutorGate
+        self.setup_profiles()
+        s = self.s
+        s.acquire(seconds=10)
+        s.leader.stop()
+        self.assertFalse(self.leader.try_acquire())
+        s.advance(60*clock_factor(60)+clock_factor(1)+.01, self.leader)
+        self.assertTrue(self.leader.try_acquire())
+        before = self.store.read_r1()
+        self.leader.stop()
+        restarted = ExecutorGate({42: self.executor}, clock=s.clock, delta=2, uuid_factory=s.uid)
+        with self.assertRaises(DeviceControlBusy):
+            restarted.try_acquire(s.uid(), 42, lease_seconds=60)
+        self.assertEqual(self.store.read_r1(), before)
+        self.assertEqual(self.store.read_r2().profile_id, self.b.profile_id)
+        self.assertEqual(restarted._held, {})
+
+    def test_unknown_profile_is_rejected_without_any_write(self):
+        from zontcontrol.coordination.models import ProtocolProfile
+        from zontcontrol.coordination.store import ExecutorStore
+        self.setup_profiles()
+        unknown = ProtocolProfile(str(self.s.uid()), 1, 1)
+        store = self.s.make_store(ExecutorStore, profile=unknown)
+        before = len(self.s.adapter.writes)
+        with self.assertRaises(RecordError):
+            store.read_r1()
+        self.assertEqual(len(self.s.adapter.writes), before)

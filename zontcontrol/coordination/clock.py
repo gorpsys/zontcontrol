@@ -1,7 +1,6 @@
 """Local BOOTTIME instants and the agreed, period-specific drift policy.
 
 These are conditional timing assumptions, not measured bounds on ZONT or clocks.
-V2 primitives below are not yet connected to the working v1 runtime.
 """
 
 from dataclasses import dataclass
@@ -173,56 +172,3 @@ class BootClock:
 
     def wait(self, cancelled, seconds):
         return cancelled.wait(_duration(seconds))
-
-
-@dataclass(frozen=True)
-class LeaseTiming:
-    """Candidate-selected useful period; serialized L is K(P)*P, at most 1200s."""
-
-    period: float
-    delta: float
-    expected_work: float = 0
-    barrier_jitter: float = 0
-    poll_jitter: float = 0
-
-    def __post_init__(self):
-        for value in (self.period, self.delta):
-            _duration(value, positive=True)
-        for value in (self.expected_work, self.barrier_jitter, self.poll_jitter):
-            _duration(value)
-        minimum = max(8 * self.delta, 3 * self.delta + self.barrier + self.expected_work)
-        if (self.period < minimum or self.lease_s > 1200
-                or self.barrier <= self.delta_factor * self.delta):
-            raise ValueError("Lease cannot cover acquisition, expected work and release")
-
-    @property
-    def clock_rho(self):
-        return clock_rho(self.period)
-
-    @property
-    def lease_s(self):
-        return self.period * clock_factor(self.period)
-
-    @property
-    def valid_for(self):
-        return self.lease_s / clock_factor(self.period)
-
-    @property
-    def renew_after(self):
-        return self.valid_for / 3
-
-    @property
-    def poll_after(self):
-        return self.lease_s / 10 + self.poll_jitter
-
-    @property
-    def delta_factor(self):
-        return clock_factor(self.delta)
-
-    @property
-    def barrier(self):
-        return 2 * self.delta + self.barrier_jitter
-
-    @property
-    def term_budget(self):
-        return 1200 / clock_factor(1200)

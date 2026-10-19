@@ -1,243 +1,212 @@
-"""Conditional Fischer leader role, separate from executor control ownership.
+"""Conditional Fischer role; every name/R1 write passes one bounded guard."""
 
-No CAS, fencing, linearizability or 99.9% reliability is claimed. In particular,
-an executor's stale R1 read/modify/write can replay a leader projection. Exact
-confirmation detects some conflicts but cannot remove this accepted model risk.
-The caller schedules polls/renewals; no thread or automatic retry is hidden here.
-"""
-
-from __future__ import annotations
-
-from collections.abc import Callable
 from dataclasses import replace
-from secrets import token_hex
 from threading import Event, RLock
-from typing import NoReturn, TypeVar, cast
+import time
+from uuid import uuid4
 
 from ..control_types import ControllerError
-from .clock import BootClock, LeaseTiming, _duration
+from .clock import BootClock, LeaderTimeline, _duration, clock_factor
 from .models import LeaderRecord, R1Record, RecordError, _uuid
-from .ports import Clock
-from .statistics import ObservationValue, Observer, error_event, observe
-from .store import LeaderStore
-
-
-_Result = TypeVar('_Result')
+from .statistics import observe
+from .timing import FreezeGuard, OperationWindow, TimingViolation
 
 
 class LeaseLost(Exception):
-    def __init__(self) -> None:
-        super().__init__("Coordinator lease lost or operation window unavailable")
+    def __init__(self):
+        super().__init__('Coordinator lease lost or operation window unavailable')
 
 
 class LeaderElection:
-    """One serialized coordinator role for one device, with cooperative loss.
-
-    role_cancelled belongs only to this role; it must never revoke an algorithm's
-    control session or cancel its finally. A new acquisition creates a new event.
-    The store remains internal to coordination, unavailable to algorithms.
-    """
-
-    def __init__(self, store: LeaderStore, owner: str, timing: LeaseTiming, *,
-                 clock: Clock | None = None, token_factory: Callable[[], str] | None = None,
-                 statistics: Observer | None = None) -> None:
+    def __init__(self, store, owner, timing, *, clock=None, timeline=None,
+                 epoch_sampler=time.time, uuid_factory=None, statistics=None,
+                 poll_seconds=1, retry_seconds=1, jitter_fraction=.1, renewal_fraction=.33):
         _uuid(owner)
-        self._store = store
-        self._owner = owner
-        self.timing = timing
-        self._clock = clock if clock is not None else BootClock()
-        self._token_factory = token_factory or (lambda: token_hex(16))
+        if (store.profile.delta_seconds != timing.delta
+                or store.profile.delta_cmd_seconds != timing.delta_cmd):
+            raise RecordError()
+        self._store, self._owner, self.timing = store, owner, timing
+        self._clock = BootClock() if clock is None else clock
+        self._uuid_factory = uuid4 if uuid_factory is None else uuid_factory
+        self.timeline = timeline if timeline is not None else LeaderTimeline.capture(
+            self._clock, delta=timing.delta, epoch_sampler=epoch_sampler,
+            uuid_factory=self._uuid_factory)
+        self._statistics = statistics
+        self.poll_seconds, self.retry_seconds = poll_seconds, retry_seconds
+        self.jitter_fraction, self.renewal_fraction = jitter_fraction, renewal_fraction
         self._lock = RLock()
         self.role_cancelled = Event()
         self._active = False
-        self.record: LeaderRecord | None = None
-        self.expires_at: float | None = None
-        self.term_expires_at: float | None = None
-        self._observation: tuple[LeaderRecord, float] | None = None
-        self._statistics = statistics
+        self.record = None
+        self.expires_at = None
+        self.term_expires_at = None
+        self.quarantine_until = None
+        self._term_started = None
+        self._observation = None
+        self._wake_guard = FreezeGuard(self._clock, timing.delta)
 
-    def _observe(self, event: str, **fields: ObservationValue) -> None:
-        context: dict[str, ObservationValue] = {'device_id': self._store.device_id, 'run_id': self._owner}
-        if self.record is not None:
-            context['leader_term'] = self.record.token
-        observe(self._statistics, event, **context, **fields)
+    def _observe(self, event, **fields):
+        observe(self._statistics, event, device_id=self._store.device_id,
+                run_id=self._owner, **fields)
 
-    def _lose(self) -> NoReturn:
-        self._observe('leader_lost', outcome='unknown')
+    def _lose(self):
         self._active = False
         self.role_cancelled.set()
         self._observation = None
+        self._observe('leader_lost', outcome='unknown')
         raise LeaseLost() from None
 
-    def stop(self) -> None:
-        """Stop this role, without touching metadata or executor ownership."""
-        # Do not wait for the state lock: a barrier/HTTP may hold it.
+    def stop(self):
         self.role_cancelled.set()
+        self._active = False
 
-    def can_coordinate(self, duration: float) -> bool:
-        """Require the whole local window strictly before both deadlines."""
+    def expect_resume(self, when):
+        self._wake_guard.expect_resume(when)
+
+    def can_coordinate(self, duration):
         _duration(duration)
         with self._lock:
             if not self._active:
                 return False
-            now = self._clock.now()
-            if self.role_cancelled.is_set() or now >= cast(float, self.expires_at):
-                self._active = False
-                self.role_cancelled.set()
+            if (self.role_cancelled.is_set()
+                    or self._clock.now() >= self.expires_at - self.timing.stop_margin):
+                self.stop()
                 return False
-            return now + duration < cast(float, self.expires_at)
+            return self._clock.now() + duration <= self.expires_at - self.timing.stop_margin
 
-    def _require(self, duration: float) -> None:
-        if not self.can_coordinate(duration):
+    def _window(self, seconds=None):
+        self._wake_guard.check()
+        return OperationWindow(self._clock, self.timing.delta if seconds is None else seconds)
+
+    def _read(self, window):
+        record = self._store.read_r1(window=window)
+        window.complete()
+        return record
+
+    def _write(self, record, window, *, deadline, candidate=False):
+        # The process wakeup expectation spans scheduler pauses and planned sleeps.
+        self._wake_guard.check()
+        if self.role_cancelled.is_set():
             self._lose()
+        self._store.write_r1(record, window=window, role_deadline=deadline,
+                             stop_margin=0 if candidate else self.timing.stop_margin)
+        self._wake_guard.expect_resume(self._clock.now())
 
-    def _read(self) -> tuple[R1Record, float, float]:
-        sent = self._clock.now()
-        try:
-            record = self._store.read_r1()
-        except (ControllerError, RecordError) as error:
-            self._observe(error_event(error), outcome='unknown')
-            self._lose()
-        received = self._clock.now()
-        self._observe('rtt', rtt_s=received - sent)
-        if received - sent > self.timing.delta:
-            self._observe('delta_breach', elapsed_s=received - sent, delta_s=self.timing.delta)
-            self._lose()
-        return record, sent, received
-
-    def try_acquire(self, *, cancelled: Event | None = None) -> bool:
-        """Poll once; return False while another projection is unexpired.
-
-        FREE or a conservatively observed expiry permits a single write, then
-        an interruptible W barrier and exact bounded confirmation. Any uncertain
-        write abandons this attempt; it never writes FREE as compensation.
-        """
+    def try_acquire(self, *, cancelled=None):
         with self._lock:
             if cancelled is not None and cancelled.is_set():
                 return False
-            self._observe('leader_attempt')
             if self._active:
-                self._require(0)
+                if not self.can_coordinate(0):
+                    self._lose()
                 return True
             self.role_cancelled = Event()
-            observed, read_send, received = self._read()
-            projection = observed.leader
-            if projection is not None:
-                if self._observation is None or self._observation[0] != projection:
-                    self._observation = (projection, received)
-                    return False
-                if read_send - self._observation[1] < projection.lease_s:
-                    return False
-            own = LeaderRecord(self._owner, self._token_factory(), 0,
-                               self.timing.lease_s, self.timing.clock_rho)
-            sent = self._clock.now()
-            if sent - read_send >= self.timing.delta or self.role_cancelled.is_set():
-                self._lose()
-            self.record = own
-            self.term_expires_at = sent + self.timing.term_budget
-            self.expires_at = min(sent + self.timing.valid_for, cast(float, self.term_expires_at))
+            # A failed guard ends its role. A new candidate starts by observing.
+            self._wake_guard = FreezeGuard(self._clock, self.timing.delta)
             try:
-                self._store.write_r1(R1Record(own, observed.request))
-            except (ControllerError, RecordError) as error:
-                self._observe(error_event(error), outcome='unknown')
+                window = self._window()
+                observed = self._read(window)
+                received = self._clock.now()
+                if observed is not None and observed.leader is not None:
+                    if self._observation is None or self._observation[0] != observed:
+                        self._observation = (observed, received)
+                        return False
+                    old = observed.leader
+                    wait = (old.leader_until - old.sampled_at) * clock_factor(old.period_s)
+                    if observed.profile != self._store.profile:
+                        wait += (observed.profile.delta_cmd_seconds
+                                 * clock_factor(observed.profile.delta_cmd_seconds))
+                    # Use READ send, never its response, as the final endpoint.
+                    if window.started_at - self._observation[1] < wait:
+                        return False
+                term_id = str(self._uuid_factory())
+                record_id = str(self._uuid_factory())
+                sent = self._clock.now()
+                self._term_started = sent
+                self.term_expires_at = sent + self.timing.term_budget
+                self.expires_at = self.timing.lease_deadline(sent, term_started_at=sent)
+                tau = self.timeline.now()
+                own = LeaderRecord(self._owner, term_id, str(self.timeline.clock_id),
+                                   self.timing.period, self.timing.clock_rho, tau,
+                                   tau + self.expires_at - sent, tau)
+                record = R1Record(self._store.profile, record_id, own,
+                    handled_request=observed.handled_request if observed is not None else None)
+                self.record = own
+                self._write(record, window, deadline=self.expires_at, candidate=True)
+                target = self._clock.now() + self.timing.barrier
+                self.expect_resume(target)
+                if self._clock.wait(cancelled if cancelled is not None else self.role_cancelled,
+                                    self.timing.barrier):
+                    self._lose()
+                self._wake_guard.check()
+                if self._clock.now() < target:
+                    self._lose()
+                confirmation = self._window()
+                if (self._read(confirmation) != record or self.role_cancelled.is_set()
+                        or cancelled is not None and cancelled.is_set()
+                        or self._clock.now() >= self.expires_at - self.timing.stop_margin):
+                    self._lose()
+                self._active = True
+                self.quarantine_until = self.timeline.now() + self.timing.quarantine
+                self._wake_guard.expect_resume(self._clock.now())
+                self._observation = None
+                self._observe('leader_acquired', wait_s=self._clock.now() - sent)
+                return True
+            except (ControllerError, RecordError, TimingViolation):
                 self._lose()
-            ack = self._clock.now()
-            if ack - read_send > self.timing.delta:
-                self._observe('delta_breach', elapsed_s=ack - read_send, delta_s=self.timing.delta)
-                self._lose()
-            if self._clock.wait(cancelled if cancelled is not None else self.role_cancelled,
-                                self.timing.barrier):
-                self._lose()
-            # CLOCK_BOOTTIME includes suspend. Recheck elapsed, never trust wait
-            # returning as evidence of either a sufficient barrier or live lease.
-            if self._clock.now() - ack < self.timing.barrier:
-                self._lose()
-            confirmed, _, _ = self._read()
-            if (confirmed.leader != own or self.role_cancelled.is_set()
-                    or cancelled is not None and cancelled.is_set()
-                    or self._clock.now() >= cast(float, self.expires_at)):
-                self._lose()
-            self._active = True
-            self._observation = None
-            self._observe('leader_acquired', wait_s=self._clock.now() - sent)
-            return True
 
-    def _confirm(self, duration: float) -> R1Record:
-        self._require(duration)
-        start = self._clock.now()
-        record, _, _ = self._read()
-        if record.leader != self.record or self._clock.now() - start > duration:
+    def _confirm(self, window):
+        if not self.can_coordinate(window.remaining):
             self._lose()
-        self._require(0)
+        record = self._read(window)
+        if record is None or record.leader != self.record or record.profile != self._store.profile:
+            self._lose()
         return record
 
-    def confirm(self, duration: float) -> R1Record:
-        """Bounded R1 confirmation; duration covers this entire caller window."""
-        _duration(duration)
+    def confirm(self, duration):
         with self._lock:
-            return self._confirm(duration)
-
-    def coordinate(self, operation: Callable[[R1Record], _Result], duration: float) -> _Result:
-        """Confirm R1 and run an internal operation under one state lock.
-
-        duration includes confirmation, pauses, send and completion. The caller
-        supplies an operation budget; no executor grants are issued here.
-        """
-        _duration(duration, positive=True)
-        with self._lock:
-            start = self._clock.now()
-            record = self._confirm(duration)
-            if self._clock.now() - start >= duration:
-                self._lose()
             try:
-                result = operation(record)
-            except (ControllerError, RecordError) as error:
-                self._observe(error_event(error), outcome='unknown')
+                window = self._window(min(duration, self.timing.delta))
+                record = self._confirm(window)
+                self._wake_guard.expect_resume(self._clock.now())
+                return record
+            except (ControllerError, RecordError, TimingViolation):
                 self._lose()
-            if self._clock.now() - start > duration:
-                self._observe('delta_breach', elapsed_s=self._clock.now() - start, delta_s=duration)
-                self._lose()
-            self._require(0)
-            return result
 
-    def renew(self) -> None:
-        """One renewal attempt using the old budget and original term cap."""
+    def coordinate(self, operation, duration):
+        """Internal callback gets record and original operation window."""
         with self._lock:
-            sent = None
-            renewed = replace(self.record, seq=self.record.seq + 1) if self.record else None
+            try:
+                window = self._window(min(duration, self.timing.delta))
+                record = self._confirm(window)
+                result = operation(record, window)
+                window.complete(role_deadline=self.expires_at, stop_margin=self.timing.stop_margin)
+                self._wake_guard.expect_resume(self._clock.now())
+                return result
+            except (ControllerError, RecordError, TimingViolation):
+                self._lose()
 
-            def write(record: R1Record) -> None:
-                nonlocal sent
+    def publish(self, record, window):
+        """Only called inside coordinate, under its role lock and original window."""
+        self._write(record, window, deadline=self.expires_at)
+
+    def renew(self):
+        with self._lock:
+            def write(record, window):
+                record_id = str(self._uuid_factory())
                 sent = self._clock.now()
-                self._store.write_r1(R1Record(renewed, record.request))
-
-            self.coordinate(write, self.timing.delta)
-            self.record = renewed
-            self.expires_at = min(cast(float, sent) + self.timing.valid_for,
-                                  cast(float, self.term_expires_at))
+                deadline = self.timing.lease_deadline(sent, term_started_at=self._term_started)
+                tau = self.timeline.now()
+                renewed = replace(self.record, revision=self.record.revision + 1,
+                                  sampled_at=tau, leader_until=tau + deadline - sent)
+                self._write(replace(record, record_id=record_id, leader=renewed), window,
+                            deadline=self.expires_at)
+                return renewed, deadline
+            renewed, deadline = self.coordinate(write, self.timing.delta)
+            self.record, self.expires_at = renewed, deadline
             self._observe('leader_renewed')
 
-    def release(self) -> None:
-        """Release after caller has settled grants and service in-flight work.
-
-        No new grants may be issued during this call. The role ends before FREE
-        is sent, including when its outcome is unknown; a second FREE is refused.
-        """
-        with self._lock:
-            start = self._clock.now()
-            record = self._confirm(self.timing.delta)
-            if self._clock.now() - start >= self.timing.delta:
-                self._lose()
-            self._active = False
-            self.role_cancelled.set()
-            self._observation = None
-            try:
-                self._store.write_r1(R1Record(request=record.request))
-            except (ControllerError, RecordError) as error:
-                self._observe(error_event(error), outcome='unknown')
-                self._lose()
-            if self._clock.now() - start > self.timing.delta:
-                self._observe('delta_breach', elapsed_s=self._clock.now() - start,
-                              delta_s=self.timing.delta)
-                self._lose()
-            self._observe('leader_released')
+    def release(self):
+        """Natural expiry preserves old leader horizon, grants and command tails."""
+        self.stop()
+        self._observe('leader_released')

@@ -2,8 +2,14 @@
   "contact": "owner@example.invalid",
   "http_timeout_seconds": 15,
   "coordination": {
-    "delta_seconds": 1,
-    "leader_period_seconds": 60
+    "delta_seconds": 5,
+    "delta_cmd_seconds": 5,
+    "leader_period_seconds": 300,
+    "profile_id": "99c733ec-f8d4-42fc-9cdb-376d46a4bd31",
+    "poll_seconds": 0.2,
+    "retry_seconds": 0.5,
+    "jitter_fraction": 0.1,
+    "renewal_fraction": 0.33
   },
   "statistics": {
     "path": "reports/orchestration.jsonl",

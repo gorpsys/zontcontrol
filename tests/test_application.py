@@ -21,7 +21,11 @@ from zontcontrol.autonomy.contracts import AlgorithmState
 def settings(disabled=()):
     return {
         'config/controller.json': {'contact': 'owner@example.invalid', 'http_timeout_seconds': 15,
-            'coordination': {'delta_seconds': .01, 'leader_period_seconds': 1},
+            'coordination': {'delta_seconds': .01, 'leader_period_seconds': 300,
+                             'delta_cmd_seconds': .01,
+                             'profile_id': 'ea3221c0-2a98-49f0-8705-e81917b9b5a9',
+                             'poll_seconds': .005, 'retry_seconds': .005,
+                             'jitter_fraction': 0, 'renewal_fraction': .33},
             'statistics': {'path': 'reports/test.jsonl', 'profile': 'offline'}},
         'config/registry.json': {'disabled_modules': list(disabled),
             'once_timeouts': {'sample': {'minimum_seconds': .1, 'recommended_seconds': 1}}},
@@ -56,13 +60,13 @@ class ApplicationTests(unittest.TestCase):
         transport = Mock()
         app = self.build(catalog=(spec,), transport_factory=lambda **kwargs: transport)
         self.addCleanup(app.close)
-        self.assertEqual(owners, [UUID(int=1)])
+        self.assertEqual(owners, [UUID(int=2)])
         consumer = app.controller()
-        self.assertEqual(consumer._control._owner, UUID(int=2))
+        self.assertEqual(consumer._control._owner, UUID(int=3))
         app.run_once('sample')
         context, = contexts
-        self.assertEqual((context.instance_id, context.run_id), (UUID(int=3), UUID(int=4)))
-        self.assertEqual(owners, [UUID(int=1), UUID(int=5)])
+        self.assertEqual((context.instance_id, context.run_id), (UUID(int=4), UUID(int=5)))
+        self.assertEqual(owners, [UUID(int=2), UUID(int=6)])
 
         session = ControlSession(42, UUID(int=100), consumer._control._executor._clock() + 60)
         with patch.object(app._coordination, 'try_acquire', return_value=session) as acquire, \
@@ -70,12 +74,12 @@ class ApplicationTests(unittest.TestCase):
                 patch.object(app._coordination, 'release'):
             result = consumer.acquire_control(42, lease_seconds=60, timeout=5)
             self.assertIs(result.state, ControlRequestState.GRANTED)
-            self.assertEqual(result.request_id, UUID(int=6))
+            self.assertEqual(result.request_id, UUID(int=7))
             self.assertIs(result.session, session)
-            self.assertEqual(acquire.call_args.args, (UUID(int=2), 42))
-            self.assertEqual(acquire.call_args.kwargs['request_id'], UUID(int=6))
+            self.assertEqual(acquire.call_args.args, (UUID(int=3), 42))
+            self.assertEqual(acquire.call_args.kwargs['request_id'], UUID(int=7))
             consumer.release_control(session)
-        self.assertEqual(self.uuid_generator.call_count, 6)
+        self.assertEqual(self.uuid_generator.call_count, 7)
         transport.request.assert_not_called()
 
     def test_config_errors_before_transport_and_no_token_diagnostics(self):
@@ -104,6 +108,20 @@ class ApplicationTests(unittest.TestCase):
                         reader=lambda path: data[str(path)],
                         uuid_factory=self.uuid_generator)
                 transport.assert_not_called()
+
+    def test_ambiguous_epoch_snapshot_closes_transport_before_returning_error(self):
+        from tests.fakes.clock import FakeClock
+        from zontcontrol.coordination.timing import TimingViolation
+        clock = FakeClock()
+        transport = Mock()
+        def delayed_epoch():
+            clock.advance(.02)
+            return 1700000000
+        with self.assertRaises(TimingViolation):
+            self.build(clock=clock, epoch_sampler=delayed_epoch,
+                       transport_factory=lambda **kwargs: transport)
+        transport.close.assert_called_once_with()
+        transport.request.assert_not_called()
 
     def test_disabled_builtins_read_no_module_files_and_perform_no_requests(self):
         data = settings(disabled=('boiler_cli', 'boiler_reset'))
