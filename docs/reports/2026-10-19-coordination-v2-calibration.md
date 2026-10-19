@@ -35,6 +35,14 @@ Scheduler детерминированный, сериализует событ�
 wire-строк; каждый вызов объектов протокола и port I/O всё равно исполняется.
 Равенство cached/uncached трасс проверено unittest.
 
+Этот scheduler сам вызывает объекты протокола, без CoordinatorWorker.
+Исправление runtime-пробуждения после W и step не меняет его трассы, поэтому
+полная матрица revision 3 не пересчитывалась. Worker проверен отдельно:
+P=40, Delta=Delta_cmd=5, poll=14, jitter=0, renewal=1/4; W=10 и два
+последовательных окна step по 5 с сохраняют один term с четырьмя продлениями.
+Отдельный тест проверяет ограничение положительного sleep после jitter.
+Матрица не подтверждает статистику нового runtime scheduler на настоящем API.
+
 ```sh
 python3 scripts/calibrate_coordination.py --output reports/coordination-v2 --workers 16
 python3 scripts/calibrate_coordination.py --fault-only --output reports/coordination-v2

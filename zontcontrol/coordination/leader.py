@@ -42,6 +42,7 @@ class LeaderElection:
         self.term_expires_at = None
         self.quarantine_until = None
         self._term_started = None
+        self._renewed_at = None
         self._observation = None
         self._wake_guard = self._new_wake_guard()
 
@@ -66,6 +67,16 @@ class LeaderElection:
 
     def expect_resume(self, when):
         self._wake_guard.expect_resume(when)
+
+    @property
+    def renewal_due_at(self):
+        with self._lock:
+            if not self._active:
+                return None
+            # Acquisition spends W before returning; grant handling can also
+            # renew this role. Anchor only on a confirmed WRITE's send time.
+            return min(self._renewed_at + self.timing.period * self.renewal_fraction,
+                       self.expires_at - self.timing.stop_margin - self.timing.delta)
 
     def can_coordinate(self, duration):
         _duration(duration)
@@ -151,6 +162,7 @@ class LeaderElection:
                         or self._clock.now() >= self.expires_at - self.timing.stop_margin):
                     self._lose()
                 self._active = True
+                self._renewed_at = sent
                 self.quarantine_until = self.timeline.now() + self.timing.quarantine
                 self._wake_guard.expect_resume(self._clock.now())
                 self._observation = None
@@ -205,9 +217,10 @@ class LeaderElection:
                                   sampled_at=tau, leader_until=tau + deadline - sent)
                 self._write(replace(record, record_id=record_id, leader=renewed), window,
                             deadline=self.expires_at)
-                return renewed, deadline
-            renewed, deadline = self.coordinate(write, self.timing.delta)
+                return renewed, deadline, sent
+            renewed, deadline, sent = self.coordinate(write, self.timing.delta)
             self.record, self.expires_at = renewed, deadline
+            self._renewed_at = sent
             self._observe('leader_renewed')
 
     def release(self):

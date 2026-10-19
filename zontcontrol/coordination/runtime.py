@@ -32,7 +32,6 @@ class CoordinatorWorker:
         self.thread = Thread(target=self._work, name=f'coordinator-{store.device_id}', daemon=False)
 
     def _work(self) -> None:
-        renewed_at = self.clock.now()
         try:
             while not self.cancelled.is_set():
                 try:
@@ -40,24 +39,25 @@ class CoordinatorWorker:
                         if not self.leader.try_acquire(cancelled=self.cancelled):
                             self._wait(self.leader.retry_seconds)
                             continue
-                        renewed_at = self.clock.now()
                     if self.cancelled.is_set():
                         break
-                    if self.clock.now() - renewed_at >= self.leader.timing.period * self.leader.renewal_fraction:
+                    renewal_due = self.leader.renewal_due_at
+                    if renewal_due is not None and self.clock.now() >= renewal_due:
                         self.leader.renew()
-                        renewed_at = self.clock.now()
                     self.coordinator.step()
                 except (LeaseLost, ControllerError, RecordError, TimingViolation):
                     # Role loss never reaches algorithm cancellation or finally.
                     observe(self.statistics, 'error', device_id=self.store.device_id,
                             outcome='unknown')
-                self._wait(self.leader.poll_seconds)
+                self._wait(self.leader.poll_seconds, deadline=self.leader.renewal_due_at)
         finally:
             # Preserve the published leader horizon and all command tails.
             self.leader.stop()
 
-    def _wait(self, seconds):
+    def _wait(self, seconds, *, deadline=None):
         seconds *= 1 + random.uniform(0, self.leader.jitter_fraction)
+        if deadline is not None:
+            seconds = min(seconds, max(0, deadline - self.clock.now()))
         self.leader.expect_resume(self.clock.now() + seconds)
         self.clock.wait(self.cancelled, seconds)
 

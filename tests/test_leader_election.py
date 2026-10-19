@@ -10,6 +10,7 @@ from tests.fakes.protocol import Scenario
 from zontcontrol.coordination.clock import BootClock, clock_factor, clock_rho
 from zontcontrol.coordination.leader import LeaseLost
 from zontcontrol.coordination.models import HandledRequest, RecordError
+from zontcontrol.coordination.runtime import CoordinatorWorker
 from zontcontrol.coordination.timing import LeaseTiming, OperationWindow
 
 
@@ -74,6 +75,111 @@ class TimingTests(unittest.TestCase):
         self.assertGreater(clock_factor(timing.delta), clock_factor(timing.period))
         self.assertGreater(timing.barrier, clock_factor(timing.delta) * 60)
         self.assertNotEqual(timing.term_budget, 1200 / clock_factor(60))
+
+
+class WorkerTests(unittest.TestCase):
+    def test_poll_with_jitter_wakes_at_confirmed_renewal_deadline(self):
+        s = Scenario(period=40, ready=False)
+        s.leader.poll_seconds = 14
+        s.leader.jitter_fraction = .25
+        s.leader.renewal_fraction = .25
+        worker = CoordinatorWorker(s.store, s.leader, s.coordinator, s.clock, None)
+        step, wait = s.coordinator.step, s.clock.wait
+        steps, waits = [], []
+
+        def bounded_step():
+            result = step()
+            steps.append((s.clock.now(), s.leader.record.revision))
+            if len(steps) == 3:
+                worker.cancelled.set()
+            return result
+
+        def planned_wait(event, seconds):
+            waits.append((s.clock.now(), seconds))
+            return wait(event, seconds)
+
+        with patch.object(s.coordinator, 'step', side_effect=bounded_step), \
+                patch.object(s.clock, 'wait', side_effect=planned_wait), \
+                patch('zontcontrol.coordination.runtime.random.uniform', return_value=.25):
+            worker._work()
+
+        self.assertEqual(steps, [(102, 0), (110, 1), (120, 2)])
+        self.assertEqual(waits[:3], [(100, 2), (102, 8), (110, 10)])
+        self.assertEqual(s.leader.expires_at, 160)
+
+    def test_first_renewal_accounts_for_barrier_and_two_bounded_step_windows(self):
+        from zontcontrol.coordination.grants import GrantCoordinator
+        from zontcontrol.coordination.leader import LeaderElection
+        from zontcontrol.coordination.models import ProtocolProfile
+        from zontcontrol.coordination.statistics import Statistics
+        from zontcontrol.coordination.store import LeaderStore
+
+        s = Scenario(ready=False)
+        profile = ProtocolProfile(s.profile.profile_id, 5, 5)
+        store = s.make_store(LeaderStore, profile=profile)
+        events = []
+        statistics = Statistics(events.append, protocol_version='2', profile='test')
+        leader = LeaderElection(store, str(s.uid()), LeaseTiming(40, 5, 5),
+            clock=s.clock, epoch_sampler=s.clock.epoch_now, uuid_factory=s.uid,
+            statistics=statistics, poll_seconds=14, jitter_fraction=0, renewal_fraction=.25)
+        coordinator = GrantCoordinator(store, leader, clock=s.clock, uuid_factory=s.uid)
+        worker = CoordinatorWorker(store, leader, coordinator, s.clock, statistics)
+        read_r1, read_r2, step = store.read_r1, store.read_r2, coordinator.step
+        confirmation_pending = False
+        in_step = False
+        steps, waits = [], []
+        wait = s.clock.wait
+
+        def delayed_r2(**kwargs):
+            nonlocal confirmation_pending
+            result = read_r2(**kwargs)
+            if in_step:
+                s.clock.advance(5)  # coordinate(inspect) uses its complete legal Delta.
+                confirmation_pending = True
+            return result
+
+        def delayed_r1(**kwargs):
+            nonlocal confirmation_pending
+            result = read_r1(**kwargs)
+            if confirmation_pending:
+                confirmation_pending = False
+                s.clock.advance(5)  # Separate confirm uses a second legal Delta.
+            return result
+
+        def bounded_step():
+            nonlocal in_step
+            started = s.clock.now()
+            steps.append((started, leader.record.revision, leader.record.term_id))
+            in_step = True
+            try:
+                return step()
+            finally:
+                in_step = False
+                if len(steps) == 4:
+                    worker.cancelled.set()
+
+        def planned_wait(event, seconds):
+            waits.append((s.clock.now(), seconds))
+            return wait(event, seconds)
+
+        with patch.object(store, 'read_r1', side_effect=delayed_r1), \
+                patch.object(store, 'read_r2', side_effect=delayed_r2), \
+                patch.object(coordinator, 'step', side_effect=bounded_step), \
+                patch.object(s.clock, 'wait', side_effect=planned_wait):
+            worker._work()
+
+        self.assertEqual(waits[0], (100, 10))  # Full Fischer W, without shortening.
+        self.assertEqual([at for at, _, _ in steps], [110, 120, 130, 140])
+        self.assertEqual([revision for _, revision, _ in steps], [1, 2, 3, 4])
+        self.assertEqual(len({term for _, _, term in steps}), 1)
+        self.assertEqual([e['event'] for e in events].count('leader_acquired'), 1)
+        self.assertEqual([e['event'] for e in events].count('leader_renewed'), 4)
+        self.assertEqual([e for e in events if e['event'] in
+                          ('error', 'leader_lost', 'delta_breach')], [])
+        self.assertFalse(any(e['event'] == 'freeze' and e['exceeded'] for e in events))
+        self.assertEqual(s.clock.now(), 150)
+        self.assertEqual(leader.expires_at, 180)
+        self.assertEqual(s.server.out_of_model_faults, ())
 
 
 class ElectionTests(unittest.TestCase):
@@ -143,6 +249,22 @@ class ElectionTests(unittest.TestCase):
         self.assertEqual(self.leader.expires_at, self.s.clock.now() + 1000)
         self.assertEqual(self.leader.term_expires_at, cap)
         self.assertEqual(self.s.store.read_r1().handled_request, marker)
+
+    def test_renewal_schedule_changes_only_after_confirmed_send(self):
+        self.s.adapter.write_delay = .25
+        self.leader.try_acquire()
+        self.assertEqual(self.leader.renewal_due_at, 430)
+        self.assertTrue(self.leader.try_acquire())
+        self.assertEqual(self.leader.renewal_due_at, 430)
+        self.s.advance(20)
+        sent = self.s.clock.now()
+        self.leader.renew()
+        self.assertEqual(self.leader.renewal_due_at, sent + 330)
+        self.assertEqual(self.s.clock.now(), sent + .25)
+        self.s.adapter.write_mode = 'lose_response'
+        with self.assertRaises(LeaseLost):
+            self.leader.renew()
+        self.assertIsNone(self.leader.renewal_due_at)
 
     def test_late_renewal_cannot_move_twenty_minute_cap(self):
         self.leader.try_acquire()
