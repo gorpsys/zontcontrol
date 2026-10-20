@@ -11,6 +11,7 @@ make setup
 make check
 make package
 make package-check
+make cloud-package-check
 ```
 
 make setup создаёт .venv и устанавливает пакет в editable-режиме.
@@ -29,6 +30,8 @@ python3 -m unittest discover -s tests -v
 | check | lint + test |
 | package | Wheel в dist/ |
 | package-check | Smoke установленного wheel вне checkout, без ZONT |
+| yandex-archive | Минимальный once ZIP в build/yandex-function.zip; нужен ZONT_CONTACT |
+| cloud-package-check | Проверка состава/manifest и offline ZIP smoke вне checkout |
 | clean | Удаление только build/, dist/, zontcontrol.egg-info/ |
 
 Полноценный сторонний линтер и coverage gate пока не подключены.
@@ -54,7 +57,9 @@ make package сначала удаляет генерируемые build/dist/e
 [Project checks](../.github/workflows/checks.yml) запускается для PR,
 push master и вручную. Обязательные имена checks: Lint и Offline checks.
 Последний сначала проверяет номер выпуска относительно базы PR/тегов, затем
-Python 3.11 и 3.12, сборку/установку wheel и CLI вне checkout.
+Python 3.11 и 3.12, минимальный облачный ZIP, сборку/установку wheel и CLI
+вне checkout. ZIP проверяется внутри прежнего Offline checks, без нового
+обязательного имени check.
 [Release tag](../.github/workflows/release-tag.yml) отдельно публикует
 аннотированный тег после push master, не обращаясь к ZONT и не выполняя деплой.
 Токены ZONT для CI не нужны, тесты не обращаются к реальному устройству.
@@ -158,19 +163,46 @@ validate_recalibration перезаписывает reports/recalibration-83days
 
 ## Облачный запуск и деплой
 
-Сейчас доступны локальный CLI, wheel и офлайн-CI. Cloud handler, ZIP и
-workflow деплоя пока планируются. [План](../docs/plans/yandex-cloud.md)
-разделяет handler, упаковку, отдельные ресурсы, OIDC и облачную приёмку.
-Требования — [контракт](../docs/agents/deployment.md), параметры —
-[шаблон](../deploy/yandex.example.json). null — ещё не настроено.
+Реализованы handler и минимальный stdlib ZIP для boiler_reset once.
+Сборка не обращается к ZONT или облаку и не читает токен. Контакт задаётся
+через ZONT_CONTACT; это не секрет, но рабочий email владельца в Git не хранится.
+Для офлайн-примера используйте синтетический контакт:
 
-После реализации ожидается make yandex-archive -> build/yandex-function.zip,
-публикация из текущего master через GitHub OIDC, runtime SA и Lockbox.
-Ресурсные ID, function name, secret и доверенный repository задаются отдельно;
-значения autorepeater не копируются. Прежде чем включать автоматический
-деплой, потребуется первая ручная публикация и проверка ACTIVE/конфигурации,
-затем import-only и read-only приёмка. Локальный boiler_reset уже реализован;
-облачное включение сброса требует отдельной приёмки и не следует из CI.
+```sh
+ZONT_CONTACT=cloud-package@example.invalid make yandex-archive
+make cloud-package-check
+```
+
+Архив build/yandex-function.zip содержит явный allowlist Python-модулей
+once-сценария, корневой handler.py, три config/*.json и build-manifest.json.
+CLI, charts, get_token, __main__, тесты, scripts и локальные данные исключены.
+Исходные конфиги берутся только из deploy/cloud-config/*.json. Сборщик
+подставляет контакт, затем использует существующие валидаторы контроллера,
+регистратора и boiler_reset. Симлинки разрешённых исходников/профиля запрещены.
+Рабочие config/*.json не читаются. Пустой/некорректный контакт, конфиг или
+неполный набор исходников прерывают сборку до замены предыдущего ZIP.
+
+Manifest schema_version=1 содержит app_version, source_sha из HEAD, dirty
+и files — SHA256 каждого member, кроме manifest. CLOUD_PACKAGE_SHA, если
+задан, должен совпадать с полным HEAD. Локальная сборка допускает dirty=true;
+для будущего деплоя нужен dirty=false и SHA выбранного коммита. Временный
+архив проверяется на состав, типы файлов, CRC, хеши и точные байты, затем
+атомарно заменяет результат. build/ вне Git; make package/clean удаляет его.
+
+make cloud-package-check сам собирает временный ZIP с синтетическим
+контактом, сверяет его с checkout и запускает импорт/один настоящий once
+с подставным Controller вне checkout. Дочерний Python работает с -I -S,
+без ZONT_TOKEN, site-packages и сети. Облачный handler только импортируется;
+его production-вызов для диагностики не выполняется.
+
+Workflow деплоя и облачная активация ещё не реализованы.
+[Согласованный план](../docs/plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md)
+задаёт публикацию актуального master через GitHub OIDC и общие ресурсы
+autorepeater с отдельными function/deploy SA/секретом. Требования —
+[контракт](../docs/agents/deployment.md); [пример параметров](../deploy/yandex.example.json)
+будет обновлён вместе с deploy workflow. Таймер создаётся и включается
+после успешного первого автоматического деплоя и отдельного подтверждения
+владельца. Сборка/CI не означают публикации или разрешения плановых сбросов.
 
 ## Версии и выпуск
 

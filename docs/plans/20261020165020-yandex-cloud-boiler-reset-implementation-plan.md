@@ -34,7 +34,7 @@ CLI, continuous, получение токена и исследовательс
 | --- | --- | --- |
 | Cloud | b1gbga988v36vq19lmb7, workflow образца | Использовать тот же |
 | Folder | b1gdgrp5bnth11phova8, yc function get | Использовать тот же |
-| Функция образца | d4e6d0l53hkivgrmfano, python-function | Не менять |
+| Функция образца | d4e6d0l53hkivgrmfano, t-invest (переименована владельцем из python-function) | Не менять |
 | Функция ZONT | Имя zontcontrol, ID ещё не выдан | Создать отдельную, закрытую |
 | Deploy SA образца | ajela8pd8l3bjeupa04s, ci-cd-github-sa | Не менять |
 | Deploy SA ZONT | Имя ci-cd-zontcontrol-sa, ID ещё не выдан | Создать отдельный |
@@ -345,15 +345,15 @@ CLI вызывается с --retry 0. Команды с неопределён�
 - Create: tests/test_yandex_archive.py, tests/test_cloud_package.py.
 - Modify: Makefile, .github/workflows/checks.yml, scripts/README.md.
 
-- [ ] Добавить yandex-archive/cloud-package-check, allowlist, конфиги из
+- [x] Добавить yandex-archive/cloud-package-check, allowlist, конфиги из
   deploy/cloud-config, подстановку контакта и manifest/atomic ZIP replacement.
-- [ ] Проверять expected SHA/dirty, байты/состав/CRC и недопустимые symlinks;
+- [x] Проверять expected SHA/dirty, байты/состав/CRC и недопустимые symlinks;
   не упаковывать локальный config, CLI, secrets и посторонние файлы.
-- [ ] Написать тесты состава/исключений, отсутствия контакта, неверного конфига,
+- [x] Написать тесты состава/исключений, отсутствия контакта, неверного конфига,
   SHA/manifest drift и сохранения прежнего ZIP при ошибке сборки.
-- [ ] Добавить offline ZIP import/once smoke вне checkout; проверить отсутствие
+- [x] Добавить offline ZIP import/once smoke вне checkout; проверить отсутствие
   CLI и любых сетевых обращений. Включить smoke в Offline checks 3.11/3.12.
-- [ ] Выполнить make check, make cloud-package-check, make package-check.
+- [x] Выполнить make check, make cloud-package-check, make package-check.
 
 ### Task 4: Адаптировать gate и автоматический deploy
 

@@ -1,4 +1,4 @@
-.PHONY: setup lint test check release-check package package-check clean
+.PHONY: setup lint test check release-check package package-check yandex-archive cloud-package-check clean
 
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 VENV_PYTHON ?= python3
@@ -23,6 +23,12 @@ package: clean
 
 package-check: package
 	"$(PYTHON)" -m tests.test_installed_package --wheel dist/*.whl
+
+yandex-archive:
+	"$(PYTHON)" -m scripts.build_yandex_archive
+
+cloud-package-check:
+	"$(PYTHON)" -m scripts.check_cloud_package
 
 clean:
 	"$(PYTHON)" -m scripts.clean_build
