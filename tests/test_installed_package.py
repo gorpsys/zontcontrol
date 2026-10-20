@@ -16,7 +16,7 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 import venv
 import zipfile
 

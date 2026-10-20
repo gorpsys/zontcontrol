@@ -158,7 +158,7 @@ class ApplicationTests(unittest.TestCase):
             self.assertEqual(app.list_continuous(), ())
 
 
-    def test_close_without_sessions_and_invalid_timeout(self):
+    def test_shared_controller_close_is_idempotent_and_rejects_invalid_timeout(self):
         transport = Mock()
         app = self.build(transport_factory=lambda **kw: transport)
         self.addCleanup(app.close)

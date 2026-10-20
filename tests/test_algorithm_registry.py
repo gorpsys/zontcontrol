@@ -381,7 +381,7 @@ class RegistryTests(unittest.TestCase):
 
 
     def test_invalid_close_timeout_does_not_begin_shutdown(self):
-        begin, close = Mock(), Mock()
+        close = Mock()
         registry, _ = self.registry([spec()], close=close)
         for timeout in (-1, True, '1', float('inf'), float('nan')):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
