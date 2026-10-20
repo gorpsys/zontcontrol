@@ -24,6 +24,7 @@ from zontcontrol.controller.contracts import (
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 from zontcontrol.monitor import assess_history
 from tests.fakes.clock import FakeClock
+from tests.test_heating_regressions import canonical_dates, load_cases
 from tests.test_monitor import packet
 
 
@@ -105,26 +106,15 @@ class BoilerResetTests(unittest.TestCase):
         self.controller.read_history.assert_called_once()
 
     def test_adapter_decision_equals_existing_fixture_without_recalculation(self):
-        for case in ('pattern', 'old', 'missing', 'reset', 'truncated', 'old_gap'):
-            with self.subTest(case=case):
-                data = packet()
-                device = data['devices'][0]
-                if case == 'old':
-                    device['circuits'][0]['series']['worktime'].append({
-                        'time': (history().end - timedelta(minutes=5)).isoformat(), 'value': 0})
-                elif case == 'missing':
-                    device['temperature_sensors'][0]['points'] = []
-                elif case == 'reset':
-                    device['web_elements'][0]['series']['state'] += [
-                        {'time': (history().end - timedelta(seconds=40)).isoformat(), 'value': 1},
-                        {'time': (history().end - timedelta(seconds=10)).isoformat(), 'value': 0}]
-                elif case == 'truncated':
-                    device['time_truncated'] = True
-                elif case == 'old_gap':
-                    device['temperature_sensors'][0]['points'][5]['value'] = None
-                converted = history_packet(history(data), load_config(reader=self.reader))
-                self.assertEqual(assess_history(converted, circuit_id=20496),
-                                 assess_history(data, circuit_id=20496))
+        selected = {'confirmed', 'old_incident_current_normal', 'missing_sensor',
+                    'subminute_pulse', 'truncated', 'old_gap_recovered'}
+        for case in load_cases():
+            if case['name'] not in selected:
+                continue
+            with self.subTest(case=case['name']):
+                converted = history_packet(history(case['packet']), load_config(reader=self.reader))
+                self.assertEqual(canonical_dates(assess_history(converted, circuit_id=20496)),
+                                 canonical_dates(case['expected']))
 
     def test_unknown_warning_and_old_events_do_not_send_commands(self):
         for state in ('unknown', 'warning', 'normal', 'suppressed'):

@@ -1,0 +1,4886 @@
+{
+  "description": "Synthetic inputs and full results captured before typed input; changes replace paths in base_packet.",
+  "baseline_commit": "9f157f8e4ca15891dd9bdd7c80eb6d2880031714",
+  "base_packet": {
+    "fetched_at": "2026-10-01T00:45:00+00:00",
+    "requested_period": {
+      "start": "2026-10-01T00:00:00+00:00",
+      "end": "2026-10-01T00:45:00+00:00"
+    },
+    "devices": [
+      {
+        "id": 42,
+        "time_truncated": false,
+        "temperature_sensors": [
+          {
+            "id": 8207,
+            "points": [
+              {
+                "time": "2026-10-01T00:00:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:01:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:02:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:03:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:04:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:05:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:06:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:07:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:08:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:09:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:10:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:11:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:12:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:13:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:14:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:15:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:16:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:17:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:18:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:19:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:20:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:21:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:22:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:23:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:24:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:25:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:26:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:27:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:28:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:29:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:30:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:31:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:32:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:33:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:34:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:35:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:36:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:37:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:38:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:39:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:40:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:41:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:42:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:43:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:44:00+00:00",
+                "value": 23.5
+              },
+              {
+                "time": "2026-10-01T00:45:00+00:00",
+                "value": 23.5
+              }
+            ]
+          },
+          {
+            "id": 8429,
+            "points": [
+              {
+                "time": "2026-10-01T00:00:00+00:00",
+                "value": 40.0
+              },
+              {
+                "time": "2026-10-01T00:01:00+00:00",
+                "value": 39.8
+              },
+              {
+                "time": "2026-10-01T00:02:00+00:00",
+                "value": 39.6
+              },
+              {
+                "time": "2026-10-01T00:03:00+00:00",
+                "value": 39.4
+              },
+              {
+                "time": "2026-10-01T00:04:00+00:00",
+                "value": 39.2
+              },
+              {
+                "time": "2026-10-01T00:05:00+00:00",
+                "value": 39.0
+              },
+              {
+                "time": "2026-10-01T00:06:00+00:00",
+                "value": 38.8
+              },
+              {
+                "time": "2026-10-01T00:07:00+00:00",
+                "value": 38.6
+              },
+              {
+                "time": "2026-10-01T00:08:00+00:00",
+                "value": 38.4
+              },
+              {
+                "time": "2026-10-01T00:09:00+00:00",
+                "value": 38.2
+              },
+              {
+                "time": "2026-10-01T00:10:00+00:00",
+                "value": 38.0
+              },
+              {
+                "time": "2026-10-01T00:11:00+00:00",
+                "value": 37.8
+              },
+              {
+                "time": "2026-10-01T00:12:00+00:00",
+                "value": 37.6
+              },
+              {
+                "time": "2026-10-01T00:13:00+00:00",
+                "value": 37.4
+              },
+              {
+                "time": "2026-10-01T00:14:00+00:00",
+                "value": 37.2
+              },
+              {
+                "time": "2026-10-01T00:15:00+00:00",
+                "value": 37.0
+              },
+              {
+                "time": "2026-10-01T00:16:00+00:00",
+                "value": 36.8
+              },
+              {
+                "time": "2026-10-01T00:17:00+00:00",
+                "value": 36.6
+              },
+              {
+                "time": "2026-10-01T00:18:00+00:00",
+                "value": 36.4
+              },
+              {
+                "time": "2026-10-01T00:19:00+00:00",
+                "value": 36.2
+              },
+              {
+                "time": "2026-10-01T00:20:00+00:00",
+                "value": 36.0
+              },
+              {
+                "time": "2026-10-01T00:21:00+00:00",
+                "value": 35.8
+              },
+              {
+                "time": "2026-10-01T00:22:00+00:00",
+                "value": 35.6
+              },
+              {
+                "time": "2026-10-01T00:23:00+00:00",
+                "value": 35.4
+              },
+              {
+                "time": "2026-10-01T00:24:00+00:00",
+                "value": 35.2
+              },
+              {
+                "time": "2026-10-01T00:25:00+00:00",
+                "value": 35.0
+              },
+              {
+                "time": "2026-10-01T00:26:00+00:00",
+                "value": 34.8
+              },
+              {
+                "time": "2026-10-01T00:27:00+00:00",
+                "value": 34.6
+              },
+              {
+                "time": "2026-10-01T00:28:00+00:00",
+                "value": 34.4
+              },
+              {
+                "time": "2026-10-01T00:29:00+00:00",
+                "value": 34.2
+              },
+              {
+                "time": "2026-10-01T00:30:00+00:00",
+                "value": 34.0
+              },
+              {
+                "time": "2026-10-01T00:31:00+00:00",
+                "value": 33.8
+              },
+              {
+                "time": "2026-10-01T00:32:00+00:00",
+                "value": 33.6
+              },
+              {
+                "time": "2026-10-01T00:33:00+00:00",
+                "value": 33.4
+              },
+              {
+                "time": "2026-10-01T00:34:00+00:00",
+                "value": 33.2
+              },
+              {
+                "time": "2026-10-01T00:35:00+00:00",
+                "value": 33.0
+              },
+              {
+                "time": "2026-10-01T00:36:00+00:00",
+                "value": 32.8
+              },
+              {
+                "time": "2026-10-01T00:37:00+00:00",
+                "value": 32.6
+              },
+              {
+                "time": "2026-10-01T00:38:00+00:00",
+                "value": 32.4
+              },
+              {
+                "time": "2026-10-01T00:39:00+00:00",
+                "value": 32.2
+              },
+              {
+                "time": "2026-10-01T00:40:00+00:00",
+                "value": 32.0
+              },
+              {
+                "time": "2026-10-01T00:41:00+00:00",
+                "value": 31.799999999999997
+              },
+              {
+                "time": "2026-10-01T00:42:00+00:00",
+                "value": 31.6
+              },
+              {
+                "time": "2026-10-01T00:43:00+00:00",
+                "value": 31.4
+              },
+              {
+                "time": "2026-10-01T00:44:00+00:00",
+                "value": 31.2
+              },
+              {
+                "time": "2026-10-01T00:45:00+00:00",
+                "value": 31.0
+              }
+            ]
+          }
+        ],
+        "circuits": [
+          {
+            "id": 20496,
+            "series": {
+              "target_temp": [
+                {
+                  "time": "2026-10-01T00:00:00+00:00",
+                  "value": 23.5
+                }
+              ],
+              "setpoint_temp": [
+                {
+                  "time": "2026-10-01T00:00:00+00:00",
+                  "value": 60
+                }
+              ],
+              "worktime": [
+                {
+                  "time": "2026-10-01T00:00:00+00:00",
+                  "value": 60
+                }
+              ],
+              "target_sensor_id": [
+                {
+                  "time": "2026-10-01T00:00:00+00:00",
+                  "value": 8207
+                }
+              ]
+            }
+          }
+        ],
+        "web_elements": [
+          {
+            "id": 8832,
+            "series": {
+              "state": [
+                {
+                  "time": "2026-10-01T00:00:00+00:00",
+                  "value": 0
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "confirmed",
+      "changes": [],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "warning_hot_coolant",
+      "changes": [
+        {
+          "path": [
+            "fetched_at"
+          ],
+          "value": "2026-10-01T00:18:00+00:00"
+        },
+        {
+          "path": [
+            "requested_period",
+            "end"
+          ],
+          "value": "2026-10-01T00:18:00+00:00"
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 23.5
+            }
+          ]
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 78.0
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 77.8
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 77.6
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 77.4
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 77.2
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 77.0
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 76.8
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 76.6
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 76.4
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 76.2
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 76.0
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 75.8
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 75.6
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 75.4
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 75.2
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 75.0
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 74.8
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 74.6
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 74.4
+            }
+          ]
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "circuits",
+            0,
+            "series",
+            "setpoint_temp",
+            0,
+            "value"
+          ],
+          "value": 85
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:18:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:18:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "warning",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 18,
+        "latest_valid_sample": "2026-10-01T00:18:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "warning",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 74.4,
+            "coolant_target": 85,
+            "effective_target": 85,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "normal_heating",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            1,
+            "value"
+          ],
+          "value": 40.6
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            2,
+            "value"
+          ],
+          "value": 41.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            3,
+            "value"
+          ],
+          "value": 41.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            4,
+            "value"
+          ],
+          "value": 42.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            5,
+            "value"
+          ],
+          "value": 43.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            6,
+            "value"
+          ],
+          "value": 43.6
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            7,
+            "value"
+          ],
+          "value": 44.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            8,
+            "value"
+          ],
+          "value": 44.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            9,
+            "value"
+          ],
+          "value": 45.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            10,
+            "value"
+          ],
+          "value": 46.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            11,
+            "value"
+          ],
+          "value": 46.6
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            12,
+            "value"
+          ],
+          "value": 47.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            13,
+            "value"
+          ],
+          "value": 47.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            14,
+            "value"
+          ],
+          "value": 48.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            15,
+            "value"
+          ],
+          "value": 49.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            16,
+            "value"
+          ],
+          "value": 49.6
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            17,
+            "value"
+          ],
+          "value": 50.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            18,
+            "value"
+          ],
+          "value": 50.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            19,
+            "value"
+          ],
+          "value": 51.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            20,
+            "value"
+          ],
+          "value": 52.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            21,
+            "value"
+          ],
+          "value": 52.6
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            22,
+            "value"
+          ],
+          "value": 53.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            23,
+            "value"
+          ],
+          "value": 53.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            24,
+            "value"
+          ],
+          "value": 54.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            25,
+            "value"
+          ],
+          "value": 55.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            26,
+            "value"
+          ],
+          "value": 55.6
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            27,
+            "value"
+          ],
+          "value": 56.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            28,
+            "value"
+          ],
+          "value": 56.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            29,
+            "value"
+          ],
+          "value": 57.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            30,
+            "value"
+          ],
+          "value": 58.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            31,
+            "value"
+          ],
+          "value": 58.599999999999994
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            32,
+            "value"
+          ],
+          "value": 59.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            33,
+            "value"
+          ],
+          "value": 59.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            34,
+            "value"
+          ],
+          "value": 60.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            35,
+            "value"
+          ],
+          "value": 61.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            36,
+            "value"
+          ],
+          "value": 61.599999999999994
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            37,
+            "value"
+          ],
+          "value": 62.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            38,
+            "value"
+          ],
+          "value": 62.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            39,
+            "value"
+          ],
+          "value": 63.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            40,
+            "value"
+          ],
+          "value": 64.0
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            41,
+            "value"
+          ],
+          "value": 64.6
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            42,
+            "value"
+          ],
+          "value": 65.2
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            43,
+            "value"
+          ],
+          "value": 65.8
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            44,
+            "value"
+          ],
+          "value": 66.4
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            45,
+            "value"
+          ],
+          "value": 67.0
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "normal",
+        "anomaly": false,
+        "decision_reason": "no_current_pattern",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "recovery",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            40,
+            "value"
+          ],
+          "value": 50
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            41,
+            "value"
+          ],
+          "value": 51
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            42,
+            "value"
+          ],
+          "value": 52
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            43,
+            "value"
+          ],
+          "value": 53
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            44,
+            "value"
+          ],
+          "value": 54
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points",
+            45,
+            "value"
+          ],
+          "value": 55
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "normal",
+        "anomaly": false,
+        "decision_reason": "no_current_pattern",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:40:00+00:00",
+            "reason": "heating_response_returned",
+            "heat_returned": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "old_incident_current_normal",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "circuits",
+            0,
+            "series",
+            "worktime"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 60
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 0
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "normal",
+        "anomaly": false,
+        "decision_reason": "no_current_pattern",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:41:00+00:00",
+            "reason": "request_ended_or_target_reached",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "intentional_shutdown",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 0
+            },
+            {
+              "time": "2026-10-01T00:44:00+00:00",
+              "value": 1
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "suppressed",
+        "anomaly": false,
+        "decision_reason": "intentional_shutdown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": true,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:44:00+00:00",
+            "reason": "reset_or_restart_grace",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "subminute_pulse",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 0
+            },
+            {
+              "time": "2026-10-01T00:42:20+00:00",
+              "value": 1
+            },
+            {
+              "time": "2026-10-01T00:42:30+00:00",
+              "value": 0
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "suppressed",
+        "anomaly": false,
+        "decision_reason": "restart_grace",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:43:00+00:00",
+            "reason": "reset_or_restart_grace",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "restart_grace",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 0
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 1
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 0
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "suppressed",
+        "anomaly": false,
+        "decision_reason": "restart_grace",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:40:00+00:00",
+            "reason": "reset_or_restart_grace",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "reset_unknown_null",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state",
+            0,
+            "value"
+          ],
+          "value": null
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "reset_state_unknown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": null,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "reset_unknown_string",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state",
+            0,
+            "value"
+          ],
+          "value": "0"
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "reset_state_unknown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": null,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "reset_missing",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements"
+          ],
+          "value": []
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "reset_state_unknown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": false,
+        "reset_active_at_period_end": null,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "reset_empty",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state"
+          ],
+          "value": []
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "reset_state_unknown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": null,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "reset_bool_off",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state",
+            0,
+            "value"
+          ],
+          "value": false
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "reset_bool_on",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state",
+            0,
+            "value"
+          ],
+          "value": true
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "suppressed",
+        "anomaly": false,
+        "decision_reason": "intentional_shutdown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": true,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "reset_float_off",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state",
+            0,
+            "value"
+          ],
+          "value": 0.0
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "reset_state_unknown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": null,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "reset_float_on",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state",
+            0,
+            "value"
+          ],
+          "value": 1.0
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "reset_state_unknown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": null,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "invalid_reset_then_off",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 0
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 2
+            },
+            {
+              "time": "2026-10-01T00:44:00+00:00",
+              "value": 0
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:40:00+00:00",
+            "reason": "reset_state_unknown",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "missing_sensor",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors"
+          ],
+          "value": [
+            {
+              "id": 8429,
+              "points": [
+                {
+                  "time": "2026-10-01T00:00:00+00:00",
+                  "value": 40.0
+                },
+                {
+                  "time": "2026-10-01T00:01:00+00:00",
+                  "value": 39.8
+                },
+                {
+                  "time": "2026-10-01T00:02:00+00:00",
+                  "value": 39.6
+                },
+                {
+                  "time": "2026-10-01T00:03:00+00:00",
+                  "value": 39.4
+                },
+                {
+                  "time": "2026-10-01T00:04:00+00:00",
+                  "value": 39.2
+                },
+                {
+                  "time": "2026-10-01T00:05:00+00:00",
+                  "value": 39.0
+                },
+                {
+                  "time": "2026-10-01T00:06:00+00:00",
+                  "value": 38.8
+                },
+                {
+                  "time": "2026-10-01T00:07:00+00:00",
+                  "value": 38.6
+                },
+                {
+                  "time": "2026-10-01T00:08:00+00:00",
+                  "value": 38.4
+                },
+                {
+                  "time": "2026-10-01T00:09:00+00:00",
+                  "value": 38.2
+                },
+                {
+                  "time": "2026-10-01T00:10:00+00:00",
+                  "value": 38.0
+                },
+                {
+                  "time": "2026-10-01T00:11:00+00:00",
+                  "value": 37.8
+                },
+                {
+                  "time": "2026-10-01T00:12:00+00:00",
+                  "value": 37.6
+                },
+                {
+                  "time": "2026-10-01T00:13:00+00:00",
+                  "value": 37.4
+                },
+                {
+                  "time": "2026-10-01T00:14:00+00:00",
+                  "value": 37.2
+                },
+                {
+                  "time": "2026-10-01T00:15:00+00:00",
+                  "value": 37.0
+                },
+                {
+                  "time": "2026-10-01T00:16:00+00:00",
+                  "value": 36.8
+                },
+                {
+                  "time": "2026-10-01T00:17:00+00:00",
+                  "value": 36.6
+                },
+                {
+                  "time": "2026-10-01T00:18:00+00:00",
+                  "value": 36.4
+                },
+                {
+                  "time": "2026-10-01T00:19:00+00:00",
+                  "value": 36.2
+                },
+                {
+                  "time": "2026-10-01T00:20:00+00:00",
+                  "value": 36.0
+                },
+                {
+                  "time": "2026-10-01T00:21:00+00:00",
+                  "value": 35.8
+                },
+                {
+                  "time": "2026-10-01T00:22:00+00:00",
+                  "value": 35.6
+                },
+                {
+                  "time": "2026-10-01T00:23:00+00:00",
+                  "value": 35.4
+                },
+                {
+                  "time": "2026-10-01T00:24:00+00:00",
+                  "value": 35.2
+                },
+                {
+                  "time": "2026-10-01T00:25:00+00:00",
+                  "value": 35.0
+                },
+                {
+                  "time": "2026-10-01T00:26:00+00:00",
+                  "value": 34.8
+                },
+                {
+                  "time": "2026-10-01T00:27:00+00:00",
+                  "value": 34.6
+                },
+                {
+                  "time": "2026-10-01T00:28:00+00:00",
+                  "value": 34.4
+                },
+                {
+                  "time": "2026-10-01T00:29:00+00:00",
+                  "value": 34.2
+                },
+                {
+                  "time": "2026-10-01T00:30:00+00:00",
+                  "value": 34.0
+                },
+                {
+                  "time": "2026-10-01T00:31:00+00:00",
+                  "value": 33.8
+                },
+                {
+                  "time": "2026-10-01T00:32:00+00:00",
+                  "value": 33.6
+                },
+                {
+                  "time": "2026-10-01T00:33:00+00:00",
+                  "value": 33.4
+                },
+                {
+                  "time": "2026-10-01T00:34:00+00:00",
+                  "value": 33.2
+                },
+                {
+                  "time": "2026-10-01T00:35:00+00:00",
+                  "value": 33.0
+                },
+                {
+                  "time": "2026-10-01T00:36:00+00:00",
+                  "value": 32.8
+                },
+                {
+                  "time": "2026-10-01T00:37:00+00:00",
+                  "value": 32.6
+                },
+                {
+                  "time": "2026-10-01T00:38:00+00:00",
+                  "value": 32.4
+                },
+                {
+                  "time": "2026-10-01T00:39:00+00:00",
+                  "value": 32.2
+                },
+                {
+                  "time": "2026-10-01T00:40:00+00:00",
+                  "value": 32.0
+                },
+                {
+                  "time": "2026-10-01T00:41:00+00:00",
+                  "value": 31.799999999999997
+                },
+                {
+                  "time": "2026-10-01T00:42:00+00:00",
+                  "value": 31.6
+                },
+                {
+                  "time": "2026-10-01T00:43:00+00:00",
+                  "value": 31.4
+                },
+                {
+                  "time": "2026-10-01T00:44:00+00:00",
+                  "value": 31.2
+                },
+                {
+                  "time": "2026-10-01T00:45:00+00:00",
+                  "value": 31.0
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 0,
+        "latest_valid_sample": null,
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "bad_current_sensor",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points",
+            45,
+            "value"
+          ],
+          "value": "bad"
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:45:00+00:00",
+            "reason": "telemetry_gap_or_invalid",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "wrong_target_sensor",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "circuits",
+            0,
+            "series",
+            "target_sensor_id",
+            0,
+            "value"
+          ],
+          "value": 999
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "invalid_worktime",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "circuits",
+            0,
+            "series",
+            "worktime"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 60
+            },
+            {
+              "time": "2026-10-01T00:45:00+00:00",
+              "value": 80
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:45:00+00:00",
+            "reason": "invalid_worktime",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "truncated",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "time_truncated"
+          ],
+          "value": true
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "truncated_history",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "short_window",
+      "changes": [
+        {
+          "path": [
+            "requested_period",
+            "start"
+          ],
+          "value": "2026-10-01T00:42:00+00:00"
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:42:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 3,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "old_gap_recovered",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points",
+            5,
+            "value"
+          ],
+          "value": null
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 44,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:23:00+00:00",
+            "evidence_since": "2026-10-01T00:10:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 35.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "stale_temperature",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 23.5
+            }
+          ]
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 40.0
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 39.8
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 39.6
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 39.4
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 39.2
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 39.0
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 38.8
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 38.6
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 38.4
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 38.2
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 38.0
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 37.8
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 37.6
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 37.4
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 37.2
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 37.0
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 36.8
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 36.6
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 36.4
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 36.2
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 36.0
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 35.8
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 35.6
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 35.4
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 35.2
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 35.0
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 34.8
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 34.6
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 34.4
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 34.2
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 34.0
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 33.8
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 33.6
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 33.4
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 33.2
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 33.0
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 32.8
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 32.6
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 32.4
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 32.2
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 40,
+        "latest_valid_sample": "2026-10-01T00:39:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          },
+          {
+            "type": "ended",
+            "time": "2026-10-01T00:41:00+00:00",
+            "reason": "telemetry_gap_or_invalid",
+            "heat_returned": false
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "temperature_age_90_seconds",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:30+00:00",
+              "value": 23.5
+            }
+          ]
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 40.0
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 39.8
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 39.6
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 39.4
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 39.2
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 39.0
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 38.8
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 38.6
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 38.4
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 38.2
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 38.0
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 37.8
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 37.6
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 37.4
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 37.2
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 37.0
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 36.8
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 36.6
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 36.4
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 36.2
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 36.0
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 35.8
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 35.6
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 35.4
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 35.2
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 35.0
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 34.8
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 34.6
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 34.4
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 34.2
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 34.0
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 33.8
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 33.6
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 33.4
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 33.2
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 33.0
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 32.8
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 32.6
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 32.4
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 32.2
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 32.0
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 31.799999999999997
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 31.6
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 31.4
+            },
+            {
+              "time": "2026-10-01T00:43:30+00:00",
+              "value": 31.4
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:43:30+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "temperature_age_120_seconds",
+      "changes": [
+        {
+          "path": [
+            "fetched_at"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "requested_period",
+            "end"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:30+00:00",
+              "value": 23.5
+            }
+          ]
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 40.0
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 39.8
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 39.6
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 39.4
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 39.2
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 39.0
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 38.8
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 38.6
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 38.4
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 38.2
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 38.0
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 37.8
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 37.6
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 37.4
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 37.2
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 37.0
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 36.8
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 36.6
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 36.4
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 36.2
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 36.0
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 35.8
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 35.6
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 35.4
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 35.2
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 35.0
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 34.8
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 34.6
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 34.4
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 34.2
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 34.0
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 33.8
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 33.6
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 33.4
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 33.2
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 33.0
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 32.8
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 32.6
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 32.4
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 32.2
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 32.0
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 31.799999999999997
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 31.6
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 31.4
+            },
+            {
+              "time": "2026-10-01T00:43:30+00:00",
+              "value": 31.4
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:30+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:30+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:43:30+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "temperature_age_over_120_seconds",
+      "changes": [
+        {
+          "path": [
+            "fetched_at"
+          ],
+          "value": "2026-10-01T00:45:30.000001+00:00"
+        },
+        {
+          "path": [
+            "requested_period",
+            "end"
+          ],
+          "value": "2026-10-01T00:45:30.000001+00:00"
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:30+00:00",
+              "value": 23.5
+            }
+          ]
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 40.0
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 39.8
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 39.6
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 39.4
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 39.2
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 39.0
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 38.8
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 38.6
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 38.4
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 38.2
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 38.0
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 37.8
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 37.6
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 37.4
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 37.2
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 37.0
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 36.8
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 36.6
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 36.4
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 36.2
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 36.0
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 35.8
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 35.6
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 35.4
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 35.2
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 35.0
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 34.8
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 34.6
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 34.4
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 34.2
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 34.0
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 33.8
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 33.6
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 33.4
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 33.2
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 33.0
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 32.8
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 32.6
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 32.4
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 32.2
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 32.0
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 31.799999999999997
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 31.6
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 31.4
+            },
+            {
+              "time": "2026-10-01T00:43:30+00:00",
+              "value": 31.4
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:30.000001+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:30.000001+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:43:30+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "points_before_start",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-09-30T23:59:00+00:00",
+              "value": 23.5
+            }
+          ]
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            1,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-09-30T23:59:00+00:00",
+              "value": 40.0
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "unknown",
+        "anomaly": null,
+        "decision_reason": "insufficient_or_invalid_telemetry",
+        "valid_temperature_samples": 0,
+        "latest_valid_sample": "2026-09-30T23:59:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [],
+        "automatic_control": false,
+        "incident_pending": false
+      }
+    },
+    {
+      "name": "duplicate_timestamp_last_wins",
+      "changes": [
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:44:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:45:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:45:00+00:00",
+              "value": 22
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:00+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:00+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "subsecond_input_order",
+      "changes": [
+        {
+          "path": [
+            "fetched_at"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "requested_period",
+            "end"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "temperature_sensors",
+            0,
+            "points"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:01:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:02:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:03:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:04:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:05:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:06:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:07:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:08:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:09:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:10:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:11:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:12:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:13:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:14:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:15:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:16:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:17:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:18:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:19:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:20:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:21:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:22:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:23:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:24:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:25:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:26:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:27:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:28:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:29:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:30:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:31:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:32:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:33:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:34:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:35:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:36:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:37:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:38:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:39:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:40:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:41:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:42:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:43:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:44:00+00:00",
+              "value": 23.5
+            },
+            {
+              "time": "2026-10-01T00:45:00.900000+00:00",
+              "value": 24
+            },
+            {
+              "time": "2026-10-01T00:45:00.100000+00:00",
+              "value": 22
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:30+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:30+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "reset_after_last_minute",
+      "changes": [
+        {
+          "path": [
+            "fetched_at"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "requested_period",
+            "end"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 0
+            },
+            {
+              "time": "2026-10-01T00:45:20+00:00",
+              "value": 1
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:30+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:30+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "suppressed",
+        "anomaly": false,
+        "decision_reason": "intentional_shutdown",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": true,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    },
+    {
+      "name": "reset_after_end",
+      "changes": [
+        {
+          "path": [
+            "fetched_at"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "requested_period",
+            "end"
+          ],
+          "value": "2026-10-01T00:45:30+00:00"
+        },
+        {
+          "path": [
+            "devices",
+            0,
+            "web_elements",
+            0,
+            "series",
+            "state"
+          ],
+          "value": [
+            {
+              "time": "2026-10-01T00:00:00+00:00",
+              "value": 0
+            },
+            {
+              "time": "2026-10-01T00:45:50+00:00",
+              "value": 1
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "fetched_at": "2026-10-01T00:45:30+00:00",
+        "requested_period": {
+          "start": "2026-10-01T00:00:00+00:00",
+          "end": "2026-10-01T00:45:30+00:00"
+        },
+        "device_id": 42,
+        "circuit_id": 20496,
+        "state_at_period_end": "confirmed_pattern",
+        "anomaly": true,
+        "decision_reason": "current_no_heating_response",
+        "valid_temperature_samples": 45,
+        "latest_valid_sample": "2026-10-01T00:45:00+00:00",
+        "reset_history_available": true,
+        "reset_active_at_period_end": false,
+        "events": [
+          {
+            "type": "confirmed_pattern",
+            "time": "2026-10-01T00:18:00+00:00",
+            "evidence_since": "2026-10-01T00:05:00+00:00",
+            "air": 23.5,
+            "air_target": 23.5,
+            "coolant": 36.4,
+            "coolant_target": 60,
+            "effective_target": 60,
+            "minutes_without_response": 13.0,
+            "reset_state_known": true
+          }
+        ],
+        "automatic_control": false,
+        "incident_pending": true
+      }
+    }
+  ]
+}

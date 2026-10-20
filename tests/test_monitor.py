@@ -106,10 +106,36 @@ class MonitorTests(unittest.TestCase):
             with self.subTest(offset=offset):
                 data = packet()
                 data["requested_period"]["end"] = (START + timedelta(minutes=45, seconds=30)).isoformat()
+                data["fetched_at"] = data["requested_period"]["end"]
                 data["devices"][0]["web_elements"][0]["series"]["state"].append({
                     "time": (START + timedelta(minutes=45, seconds=offset)).isoformat(), "value": 1})
                 result = assess_history(data, circuit_id=20496)
                 self.assertIs(result["anomaly"], expected)
+
+    def test_float_reset_is_known_in_samples_but_unknown_at_period_end(self):
+        data = packet()
+        data["devices"][0]["web_elements"][0]["series"]["state"] = [point(0, 0.0)]
+        samples = list(history_samples(data["devices"][0], START, START + timedelta(minutes=45),
+                                       circuit_id=20496, air_id=8207, coolant_id=8429))
+        self.assertIs(samples[-1].reset_active, False)
+        result = assess_history(data, circuit_id=20496)
+        self.assertIsNone(result["reset_active_at_period_end"])
+        self.assertEqual(result["decision_reason"], "reset_state_unknown")
+
+    def test_second_index_uses_input_order_within_the_same_second(self):
+        data = packet()
+        data["requested_period"]["end"] = (START + timedelta(minutes=45, seconds=30)).isoformat()
+        data["fetched_at"] = data["requested_period"]["end"]
+        data["devices"][0]["temperature_sensors"][0]["points"][-1:] = [
+            {"time": (START + timedelta(minutes=45, microseconds=900000)).isoformat(), "value": 24},
+            {"time": (START + timedelta(minutes=45, microseconds=100000)).isoformat(), "value": 22},
+        ]
+        samples = list(history_samples(data["devices"][0], START,
+                                       datetime.fromisoformat(data["requested_period"]["end"]),
+                                       circuit_id=20496, air_id=8207, coolant_id=8429))
+        # Baseline behavior: both source times are truncated to the grid second.
+        # The later input wins, even though its exact measurement time is earlier.
+        self.assertEqual(samples[-1].air, 22)
 
     def test_short_window_or_invalid_current_worktime_is_unknown(self):
         for case in ("short", "worktime"):
