@@ -351,7 +351,8 @@ def main():
     report = enrich_report(report, manifest, series, args.output)
     write_report(args.output, report)
     print(json.dumps({key: report[key] for key in ("period", "minute_decisions", "confirmed_segment_count",
-                                                  "segment_length_counts", "client_boundary_crosschecks")}, ensure_ascii=False))
+                                                  "segment_length_counts", "input_policy_comparisons",
+                                                  "input_policy_differences")}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

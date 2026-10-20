@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from scripts.heating_archive import from_archive_packet
+from zontcontrol.heating import HeatingPoint, HeatingSeries
 
 
 START = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -44,11 +45,17 @@ class ArchiveHeatingAdapterTests(unittest.TestCase):
         for name, value in zip(('air', 'coolant', 'air_target', 'coolant_target', 'worktime',
                                 'target_sensor_id', 'reset'), (20, None, 23, 82, 60, 7, False)):
             row = getattr(result, name)
-            self.assertEqual((row.points[0].measured_at, row.points[0].value,
-                              row.points[0].quality), (START, value, 'good'))
-            self.assertEqual((row.source, row.unit, row.value_type, row.kind), (None,) * 4)
-            self.assertEqual(row.incomplete_reasons, ())
+            self.assertEqual(row, HeatingSeries(points=(HeatingPoint(START, value, 'good'),)), name)
         self.assertEqual(data, original)
+
+    def test_invalid_archive_keeps_structural_cause_for_local_diagnostics(self):
+        data = packet()
+        del data['requested_period']
+        with self.assertRaises(ValueError) as raised:
+            from_archive_packet(data, **BINDINGS)
+        self.assertEqual(raised.exception.args, ('Invalid heating archive packet',))
+        self.assertIsInstance(raised.exception.__cause__, KeyError)
+        self.assertEqual(raised.exception.__cause__.args, ('requested_period',))
 
     def test_exact_stable_order_duplicates_and_original_initial_time(self):
         data = packet()

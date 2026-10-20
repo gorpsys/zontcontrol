@@ -129,11 +129,11 @@ class ControllerHeatingAdapterTests(unittest.TestCase):
                                  'worktime', 'target_sensor_id', 'reset'), rows):
             with self.subTest(name=name):
                 target = getattr(adapted, name)
-                self.assertEqual(target.points, tuple(HeatingPoint(p.measured_at, p.value,
-                                 p.quality.value) for p in source.points))
-                self.assertEqual((target.source, target.unit, target.value_type, target.kind,
-                                  target.incomplete_reasons), (source.source, source.unit,
-                                  source.value_type.value, source.kind.value, source.incomplete_reasons))
+                self.assertEqual(target, HeatingSeries(
+                    points=tuple(HeatingPoint(p.measured_at, p.value, p.quality.value)
+                                 for p in source.points),
+                    source=source.source, unit=source.unit, value_type=source.value_type.value,
+                    kind=source.kind.value, incomplete_reasons=source.incomplete_reasons))
         self.assertEqual(original.series, rows)
         self.assertEqual(original.series[0].points[0].value, 21.125)
 

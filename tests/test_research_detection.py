@@ -1,9 +1,11 @@
 """Research callers use the same causal typed history, without network access."""
 
 from copy import deepcopy
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from dataclasses import asdict
 import gzip
+from io import StringIO
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -186,6 +188,27 @@ class ResearchDetectionTests(unittest.TestCase):
                                           Path(self.directory.name) / 'truncated.json')
         self.assertTrue(assess.call_args.args[0].time_truncated)
         self.assertEqual(report['minute_decisions'], {'unknown': 1})
+
+    def test_backtest_main_writes_reports_and_prints_input_policy_summary(self):
+        output = Path(self.directory.name) / 'backtest-main.json'
+        stdout = StringIO()
+        argv = ['backtest_profile', '--input', str(self.root),
+                '--from', (END - timedelta(minutes=1)).isoformat(), '--to', END.isoformat(),
+                '--reset-inactive-before', self.manifest['start'], '--output', str(output)]
+        with patch('sys.argv', argv), redirect_stdout(stdout):
+            backtest_profile.main()
+        report = json.loads(output.read_text())
+        summary = json.loads(stdout.getvalue().splitlines()[-1])
+        self.assertEqual(summary, {
+            'period': report['period'], 'minute_decisions': {'confirmed_pattern': 1},
+            'confirmed_segment_count': 1, 'segment_length_counts': {'1-5': 1},
+            'input_policy_comparisons': 1,
+            'input_policy_differences': [{'time': END.isoformat(), 'frames_state': 'confirmed_pattern',
+                                          'normalized_history_state': 'unknown'}]})
+        self.assertEqual(report['input_policy_differences'], summary['input_policy_differences'])
+        self.assertTrue(output.with_suffix('.md').is_file())
+        with gzip.open(output.with_name(output.stem + '-minutes.csv.gz'), 'rt') as stream:
+            self.assertEqual(len(stream.read().splitlines()), 2)
 
     def test_recalibration_reports_different_policies_without_claiming_equivalence(self):
         with patch.object(validate_recalibration, 'assess_history', wraps=assess_history) as assess:

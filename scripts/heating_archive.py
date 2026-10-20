@@ -81,5 +81,5 @@ def from_archive_packet(packet: dict, *, device_id: int, circuit_id: int,
             reset=_series(reset_rows['state'], reset) if 'state' in reset_rows else None,
             time_truncated=device['time_truncated'],
             incomplete_reasons=_reasons(packet.get('incomplete_reasons', ())))
-    except (KeyError, TypeError, ValueError, OverflowError):
-        raise ValueError('Invalid heating archive packet') from None
+    except (KeyError, TypeError, ValueError, OverflowError) as error:
+        raise ValueError('Invalid heating archive packet') from error
