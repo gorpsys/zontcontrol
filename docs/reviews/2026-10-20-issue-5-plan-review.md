@@ -1,6 +1,6 @@
 # Холодное ревью плана issue #5
 
-Проверен [план предметного входа](../plans/20261020120717-typed-heating-input-implementation-plan.md)
+Проверен [план предметного входа](../plans/completed/20261020120717-typed-heating-input-implementation-plan.md)
 на коде master 9f157f8. Отдельный субагент получил только код, план и
 документацию, без контекста переписки и GitHub. Исходные ignored reports
 не читал, API/управление и WunderReview не запускал.
