@@ -308,18 +308,18 @@ CLI вызывается с --retry 0. Команды с неопределён�
   tests/test_installed_package.py (console script).
 - Modify: AGENTS.md, docs/agents/deployment.md (зафиксировать новые границы).
 
-- [ ] Ввести BOILER_RESET_SPEC и ленивый builtin_specs, изменить default
+- [x] Ввести BOILER_RESET_SPEC и ленивый builtin_specs, изменить default
   create_application, сохранив локальные оба алгоритма и явный DI-каталог.
-- [ ] Добавить stdlib local/YC loggers и безопасные события BoilerReset,
+- [x] Добавить stdlib local/YC loggers и безопасные события BoilerReset,
   не меняя вычисления, команды, finally и lifecycle.
-- [ ] Вызвать configure_local_logging() в application.main. Проверить оба
+- [x] Вызвать configure_local_logging() в application.main. Проверить оба
   входа CLI (console script и python -m zontcontrol), а также отсутствие
   настройки при импорте/create_application и независимость cloud logger.
-- [ ] Написать тесты отсутствия CLI import при явном once-каталоге,
+- [x] Написать тесты отсутствия CLI import при явном once-каталоге,
   прежних локальных defaults и валидации конфигов до сетевых запросов.
-- [ ] Проверить формат уровней/stdout/idempotence/Unicode, отсутствие secrets
+- [x] Проверить формат уровней/stdout/idempotence/Unicode, отсутствие secrets
   и произвольных exception messages, ошибки on/off без ложного success.
-- [ ] Обновить архитектурную документацию по постановке и выполнить make check.
+- [x] Обновить архитектурную документацию по постановке и выполнить make check.
 
 ### Task 2: Добавить handler и облачный профиль
 

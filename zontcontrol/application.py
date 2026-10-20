@@ -16,7 +16,7 @@ from threading import Event
 from typing import Protocol, Self
 
 from . import __version__
-from .autonomy.catalog import BUILTIN_SPECS
+from .autonomy.catalog import builtin_specs
 from .autonomy.contracts import (
     AlgorithmError, AlgorithmRegistration, AlgorithmResult, AlgorithmSpec, Mode, validate_catalog,
 )
@@ -31,6 +31,7 @@ from .controller.contracts import Controller, ControllerError
 from .controller.service import ControllerService, ReadControllerService
 from .controller.transport import HttpTransport
 from .controller.zont import ZontAdapter
+from .logging_config import configure_local_logging
 
 
 class TransportFactory(Protocol):
@@ -132,7 +133,7 @@ class Application:
 
 
 def create_application(*, environ: Mapping[str, str] | None = None, reader: JSONReader = read_json,
-                       catalog: Iterable[AlgorithmSpec] = BUILTIN_SPECS,
+                       catalog: Iterable[AlgorithmSpec] | None = None,
                        transport_factory: TransportFactory | None = None) -> Application:
     """Compose one account controller and independent algorithm threads.
 
@@ -143,7 +144,7 @@ def create_application(*, environ: Mapping[str, str] | None = None, reader: JSON
     """
     _credentials(os.environ if environ is None else environ)
     registry_config = load_registry_config(reader=reader)
-    catalog = tuple(catalog)
+    catalog = tuple(builtin_specs() if catalog is None else catalog)
     validate_catalog(catalog, registry_config)
     transport, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
     controller = ControllerService(adapter)
@@ -159,6 +160,7 @@ def create_application(*, environ: Mapping[str, str] | None = None, reader: JSON
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_local_logging()
     parser = argparse.ArgumentParser(description='ZONT algorithm host (one process)')
     parser.add_argument('--version', action='version', version=f'zontcontrol {__version__}')
     commands = parser.add_subparsers(dest='action', required=True)

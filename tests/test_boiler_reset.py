@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import datetime, timedelta
 import json
+import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -12,7 +13,7 @@ from unittest.mock import Mock, patch
 from zontcontrol.algorithms.boiler_reset import (
     BoilerReset, CONFIG_PATH, MINIMUM_SECONDS, PULSE_SECONDS, load_config,
 )
-from zontcontrol.autonomy.catalog import BUILTIN_SPECS
+from zontcontrol.autonomy.catalog import BOILER_RESET_SPEC
 from zontcontrol.autonomy.contracts import Mode, ResultStatus, RunContext
 from zontcontrol.autonomy.registry import AlgorithmRegistry
 from zontcontrol.config import ConfigurationError, OnceTimeout, RegistryConfig
@@ -60,6 +61,54 @@ def history(data=None):
 
 
 class BoilerResetTests(unittest.TestCase):
+    def test_broken_diagnostics_cannot_prevent_reset_or_finally_off(self):
+        class BrokenHandler(logging.Handler):
+            def emit(self, record):
+                raise RuntimeError('synthetic output failure')
+        handler = BrokenHandler()
+        logger = logging.getLogger('zontcontrol.algorithms.boiler_reset')
+        level = logger.level
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        self.addCleanup(logger.setLevel, level)
+        self.addCleanup(logger.removeHandler, handler)
+        result = self.module().run_once(self.context)
+        self.assertTrue(result.value['reset_performed'])
+        self.assertEqual(self.events, ['on', ('wait', 40), 'off'])
+
+    def test_logging_records_attempts_and_api_acceptance_without_physical_success(self):
+        with self.assertLogs('zontcontrol', level='INFO') as captured:
+            self.module().run_once(self.context)
+        records = captured.records
+        self.assertEqual([record.event for record in records], ['once_started',
+            'reset_on_sending', 'reset_off_attempt', 'reset_off_api_accepted', 'once_finished'])
+        self.assertTrue(records[-1].reset_performed)
+        self.assertEqual(records[-1].state, 'confirmed_pattern')
+        self.assertEqual(records[-1].elapsed_ms, 40000)
+        self.assertTrue(all(record.device_id == 42 for record in records))
+        self.assertNotIn('recovered', ' '.join(record.getMessage() for record in records))
+
+    def test_logging_failures_never_claim_success_or_include_exception_payload(self):
+        for failed in ('on', 'off', 'both'):
+            def command(command):
+                self.execute(command)
+                target = dict(command.arguments)['target_state']
+                if failed == 'both' or target == (failed == 'on'):
+                    raise RuntimeError('private-exception-payload')
+            self.events.clear()
+            self.controller.execute_command.side_effect = command
+            with self.subTest(failed=failed), self.assertLogs('zontcontrol', level='INFO') as captured:
+                with self.assertRaises(RuntimeError):
+                    self.module().run_once(self.context)
+            names = [record.event for record in captured.records]
+            self.assertIn('once_failed', names)
+            self.assertNotIn('once_finished', names)
+            self.assertEqual('reset_off_api_accepted' in names, failed == 'on')
+            self.assertEqual(self.events.count('on'), 1)
+            self.assertEqual(self.events.count('off'), 1)
+            self.assertNotIn('private', ' '.join(captured.output))
+            self.assertTrue(all(not record.exc_info for record in captured.records))
+
     def setUp(self):
         self.clock = FakeClock(wall_start=history().end)
         self.context = RunContext('boiler_reset', Event(), None)
@@ -290,7 +339,7 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(times, [0, 180, 240])
 
     def test_registrar_continuous_outlives_once_budget_and_pause_only_follows_reset(self):
-        spec = next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_reset')
+        spec = BOILER_RESET_SPEC
         waits, contexts = [], []
         def wait(context, seconds):
             contexts.append(context)
@@ -315,7 +364,7 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(self.events, ['on', 'off'] * 2)
 
     def test_registrar_once_uses_builtin_module_and_returns_after_single_pulse(self):
-        spec = replace(BUILTIN_SPECS[0], factory=lambda controller: self.module())
+        spec = replace(BOILER_RESET_SPEC, factory=lambda controller: self.module())
         config = RegistryConfig(frozenset(), False, {'boiler_reset': OnceTimeout(
             MINIMUM_SECONDS, MINIMUM_SECONDS)})
         registry = AlgorithmRegistry(config, self.controller, clock=self.clock.now)
@@ -326,7 +375,7 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(self.clock.now(), 40)
 
     def test_builtin_spec_is_explicit_dual_mode_and_minimum_includes_cleanup(self):
-        spec = next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_reset')
+        spec = BOILER_RESET_SPEC
         self.assertEqual(spec.modes, frozenset({Mode.ONCE, Mode.CONTINUOUS}))
         self.assertEqual(spec.minimum_seconds, MINIMUM_SECONDS)
         self.assertGreater(spec.minimum_seconds, PULSE_SECONDS + 30)

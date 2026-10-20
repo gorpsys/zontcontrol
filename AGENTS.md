@@ -58,7 +58,13 @@
 
 ## Облако
 
-Планируются Yandex Cloud Functions и GitHub OIDC. Ресурсы autorepeater не
-переносить: идентификаторы zontcontrol отдельные. Следовать
-[контракту деплоя](docs/agents/deployment.md). Сборка/CI/план не означают
-деплой или разрешение автоматически сбрасывать котёл в облаке.
+Цель — Yandex Cloud Functions, GitHub OIDC и boiler_reset once раз в 15 минут
+с настоящим импульсом при confirmed_pattern. Отдельные функция, deploy SA и
+секрет z_token; cloud/folder, bucket, federation, runtime SA/invoker и журнал
+переиспользуются из autorepeater по решению владельца. Исходные ресурсы
+не менять. Следовать [контракту деплоя](docs/agents/deployment.md) и
+[согласованному плану](docs/plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
+Каждый ручной запрос yc отдельно подтверждается владельцем; согласованный
+автоматический workflow не требует подтверждений каждой команды.
+Таймер создаётся и включается только после первого успешного деплоя и
+отдельного подтверждения владельца. Сборка/CI/план не означают активацию.

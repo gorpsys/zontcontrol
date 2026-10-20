@@ -15,7 +15,7 @@ from unittest.mock import Mock
 from zontcontrol.algorithms.boiler_cli import (
     BoilerCLI, Terminal as RealTerminal, load_config, UPDATE_SECONDS,
 )
-from zontcontrol.autonomy.catalog import BUILTIN_SPECS
+from zontcontrol.autonomy.catalog import builtin_specs
 from zontcontrol.autonomy.contracts import AlgorithmBusy, AlgorithmState, Mode, RunContext
 from zontcontrol.autonomy.registry import AlgorithmRegistry
 from zontcontrol.config import ConfigurationError, RegistryConfig
@@ -116,7 +116,7 @@ class BoilerCLITests(unittest.TestCase):
 
     def test_headless_registration_failed_and_disabled_never_reads_config(self):
         self.terminal.active = False
-        spec = next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_cli')
+        spec = next(s for s in builtin_specs() if s.algorithm_id == 'boiler_cli')
         self.assertEqual(spec.modes, frozenset({Mode.CONTINUOUS}))
         self.assertTrue(RegistryConfig(frozenset(), False, {}).should_autostart(spec))
         registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), self.controller)
@@ -133,7 +133,7 @@ class BoilerCLITests(unittest.TestCase):
         self.reader.assert_not_called()
 
     def test_registration_autostarts_stop_restart_and_once_is_unavailable(self):
-        spec = next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_cli')
+        spec = next(s for s in builtin_specs() if s.algorithm_id == 'boiler_cli')
         made = []
         def factory(controller):
             module = self.module()
@@ -174,7 +174,7 @@ class BoilerCLITests(unittest.TestCase):
             release.wait(2)
             return self.snapshot
         self.controller.read_current.side_effect = slow
-        spec = replace(next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_cli'),
+        spec = replace(next(s for s in builtin_specs() if s.algorithm_id == 'boiler_cli'),
                        factory=lambda c: self.module())
         registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), self.controller)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
