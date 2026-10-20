@@ -1,8 +1,4 @@
-"""Account facade. Its adapter is injected; reads never acquire control.
-
-This module does not depend on the prototype client. The shared executor owns
-admission and release; a DI-bound facade supplies the consumer identity.
-"""
+"""Account data, command validation and direct synchronous execution."""
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
@@ -14,7 +10,7 @@ from ..inventory import (
     control_descriptors, control_elements, current_value, device_info, value_descriptors,
 )
 from .contracts import (
-    CommandResult, ControlKey, ControlOwnershipRequired, DeviceUnavailable, HistoryResult,
+    CommandResult, ControlKey, DeviceUnavailable, HistoryResult,
     HistorySeries, InvalidArguments, Quality, Snapshot, UnsupportedAction, ValidatedCommand,
     ValueKey, ValueReading,
 )
@@ -38,31 +34,24 @@ def _safe_data(method):
     return call
 
 
-class ControllerService:
-    """Account reads/previews and DI-bound control, with bounded archive work.
+class ReadControllerService:
+    """Account reads/previews with bounded archive work.
 
     At most 31 daily parts by default. Empty/missing parts and inconsistent
     boundary points are reported, never repaired from current device state.
-    clock supplies aware UTC wall time for response provenance, not lease time.
+    clock supplies aware UTC wall time for response provenance.
     """
 
-    def __init__(self, adapter, *, executor=None, clock=None, history_chunk=timedelta(days=1),
+    def __init__(self, adapter, *, clock=None, history_chunk=timedelta(days=1),
                  max_history_parts=31):
         if (not isinstance(history_chunk, timedelta) or history_chunk < timedelta(seconds=1)
                 or history_chunk.microseconds or type(max_history_parts) is not int
                 or max_history_parts <= 0):
             raise InvalidArguments()
         self._adapter = adapter
-        self._executor = executor
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._history_chunk = history_chunk
         self._max_history_parts = max_history_parts
-
-    def for_consumer(self):
-        """Composition-root DI: issue one private identity per consumer instance."""
-        if self._executor is None:
-            raise ControlOwnershipRequired()
-        return _ConsumerController(self, self._executor.bind())
 
     @_safe_data
     def prepare_command(self, device_id, control_key, action, arguments):
@@ -209,57 +198,10 @@ class ControllerService:
                              ('time_truncated',) if truncated else ())
 
 
-class _ConsumerController:
-    """Trusted module interface; caller identity is fixed by the DI binding."""
+class ControllerService(ReadControllerService):
+    """Commands have no device lock, ownership session or background worker."""
 
-    def __init__(self, service, control):
-        self._service = service
-        self._control = control
-
-    def list_devices(self):
-        return self._service.list_devices()
-
-    def describe_values(self, device_id):
-        return self._service.describe_values(device_id)
-
-    def read_current(self, device_id, value_keys=None):
-        return self._service.read_current(device_id, value_keys)
-
-    def read_history(self, device_id, value_keys, start, end):
-        return self._service.read_history(device_id, value_keys, start, end)
-
-    def list_controls(self, device_id):
-        return self._service.list_controls(device_id)
-
-    def prepare_command(self, device_id, control_key, action, arguments):
-        return self._service.prepare_command(device_id, control_key, action, arguments)
-
-    def try_acquire_control(self, device_id, *, lease_seconds):
-        return self._control.try_acquire_control(device_id, lease_seconds=lease_seconds)
-
-    def request_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
-        return self._control.request_control(device_id, lease_seconds=lease_seconds,
-                                             timeout=timeout, poll_seconds=poll_seconds,
-                                             cancelled=cancelled)
-
-    def get_control_request(self, request):
-        return self._control.get_control_request(request)
-
-    def cancel_control_request(self, request):
-        return self._control.cancel_control_request(request)
-
-    def acquire_control(self, device_id, *, lease_seconds, timeout, poll_seconds=1, cancelled=None):
-        return self._control.acquire_control(device_id, lease_seconds=lease_seconds,
-                                             timeout=timeout, poll_seconds=poll_seconds,
-                                             cancelled=cancelled)
-
-    def release_control(self, control_session):
-        return self._control.release_control(control_session)
-
-    def execute_command(self, command, control_session):
-        if not isinstance(command, ValidatedCommand):
-            raise InvalidArguments()
-        self._control.execute(command, control_session,
-                              lambda: self._service._prepare(command, require_online=True),
-                              self._service._adapter.send_command)
-        return CommandResult(command, self._service._clock())
+    def execute_command(self, command: ValidatedCommand) -> CommandResult:
+        prepared = self._prepare(command, require_online=True)
+        self._adapter.send_command(prepared)
+        return CommandResult(command, self._clock())

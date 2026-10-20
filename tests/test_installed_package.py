@@ -7,6 +7,7 @@ process has neither the checkout on sys.path nor credentials in its environment.
 
 import ast
 from importlib import import_module, metadata, util
+import inspect
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,7 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import Mock, patch
-from uuid import UUID
+from unittest.mock import patch
 import venv
 import zipfile
 
@@ -39,11 +39,9 @@ class PackageContentsTests(unittest.TestCase):
         required = {'zontcontrol.application', 'zontcontrol.controller.auth',
             'zontcontrol.controller.contracts', 'zontcontrol.controller.transport',
             'zontcontrol.controller.zont', 'zontcontrol.controller.service',
-            'zontcontrol.controller.ownership', 'zontcontrol.coordination.clock',
-            'zontcontrol.coordination.grants', 'zontcontrol.coordination.leader',
-            'zontcontrol.coordination.statistics', 'zontcontrol.autonomy.registry',
-            'zontcontrol.autonomy.runtime', 'zontcontrol.algorithms.boiler_reset',
-            'zontcontrol.algorithms.boiler_cli', 'zontcontrol.algorithms.charts'}
+            'zontcontrol.autonomy.registry', 'zontcontrol.autonomy.runtime',
+            'zontcontrol.algorithms.boiler_reset', 'zontcontrol.algorithms.boiler_cli',
+            'zontcontrol.algorithms.charts'}
         with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
             modules = {item.name for item in pkgutil.walk_packages(
                 zontcontrol.__path__, prefix='zontcontrol.')}
@@ -58,6 +56,14 @@ class PackageContentsTests(unittest.TestCase):
             forbidden = {node.name for node in ast.walk(tree)
                          if isinstance(node, (ast.ClassDef, ast.FunctionDef))}
             self.assertFalse({'ZontClient', 'apply_command'} & forbidden, path.name)
+
+    def test_source_and_wheel_expose_the_same_direct_command_contract(self):
+        from zontcontrol.controller.contracts import API_VERSION, Controller
+        self.assertEqual(API_VERSION, 2)
+        self.assertEqual(tuple(inspect.signature(Controller.execute_command).parameters),
+                         ('self', 'command'))
+        for module in ('coordination', 'controller.ownership', 'controller.requests'):
+            self.assertIsNone(util.find_spec('zontcontrol.'+module))
 
 
 @unittest.skipUnless(INSTALLED, 'installed wheel suite: make package-check')
@@ -109,9 +115,7 @@ class InstalledPackageTests(unittest.TestCase):
         from zontcontrol.autonomy.contracts import AlgorithmState
         from zontcontrol.config import ConfigurationError, load_controller_config, load_registry_config
 
-        controller = {'contact': 'installed@example.invalid', 'http_timeout_seconds': 7,
-            'coordination': {'delta_seconds': 1, 'leader_period_seconds': 60},
-            'statistics': {'path': 'reports/offline.jsonl', 'profile': 'installed-offline'}}
+        controller = {'contact': 'installed@example.invalid', 'http_timeout_seconds': 7}
         registry = {'disabled_modules': [], 'once_timeouts': {
             'boiler_reset': {'minimum_seconds': 170, 'recommended_seconds': 180}}}
         reset = {'device_id': 2042, 'circuit_id': 10, 'air_sensor_id': 7,
@@ -133,16 +137,12 @@ class InstalledPackageTests(unittest.TestCase):
                 with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')), \
                         patch('zontcontrol.application.HttpTransport') as transport, \
                         patch('zontcontrol.algorithms.boiler_cli.Terminal.available', return_value=False):
-                    uuid_source = Mock(side_effect=(UUID(int=value) for value in range(1, 100)))
-                    with create_application(environ={'ZONT_TOKEN': 'synthetic-offline'},
-                                            statistics_sink=lambda _: None,
-                                            uuid_factory=uuid_source) as app:
+                    with create_application(environ={'ZONT_TOKEN': 'synthetic-offline'}) as app:
                         rows = {row.spec.algorithm_id: row for row in app.list_algorithms()}
                         self.assertIs(rows['boiler_reset'].state, AlgorithmState.REGISTERED)
                         self.assertIs(rows['boiler_cli'].state, AlgorithmState.FAILED)
                         self.assertEqual(app._controller._adapter._transport, transport.return_value)
                     transport.return_value.request.assert_not_called()
-                    self.assertEqual(uuid_source.call_count, 2)
                 for name, load in (('boiler_reset', reset_config), ('boiler_cli', cli_config),
                                    ('registry', load_registry_config),
                                    ('controller', load_controller_config)):

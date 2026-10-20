@@ -16,6 +16,7 @@ from zontcontrol.controller.contracts import (
 )
 from zontcontrol.controller.transport import HttpTransport
 from zontcontrol.controller.zont import ZontAdapter
+from tests.fakes.clock import FakeClock
 
 
 class ZontAdapterTests(unittest.TestCase):
@@ -29,61 +30,28 @@ class ZontAdapterTests(unittest.TestCase):
 
     def test_widget_read_filters_by_explicit_device(self):
         self.answer(devices=[{"id": 42, "name": "Дом"}])
-        self.assertEqual(self.adapter.devices(42, fields="sensors,circuits,modes")[0]["id"], 42)
+        self.assertEqual(self.adapter.devices(42)[0]["id"], 42)
         request = self.opener.open.call_args.args[0]
         self.assertEqual(request.get_method(), "GET")
         self.assertEqual(parse_qs(urlsplit(request.full_url).query),
-                         {"device_ids": ["42"], "fields": ["sensors,circuits,modes"]})
+                         {"device_ids": ["42"]})
         self.assertEqual(request.get_header("X-zont-token"), "test-token")
 
-    def test_full_metadata_read_selects_device_and_does_not_turn_null_into_empty(self):
-        self.answer(devices=[{"id": 1, "name": "Другой", "notes": "private"},
-                             {"id": 42, "name": "Дом", "notes": None, "password": "private"}])
-        self.assertEqual(self.adapter.read_metadata(42), {"name": "Дом", "notes": None})
-        request = self.opener.open.call_args.args[0]
-        self.assertEqual(request.full_url, "https://my.zont.online/api/devices")
-        self.assertEqual(json.loads(request.data), {"load_io": False})
-        self.assertEqual(self.opener.open.call_args.kwargs["timeout"], 2)
 
-    def test_metadata_update_contains_one_field_and_device_id(self):
-        for field in ("notes", "name"):
-            self.opener.open.reset_mock()
-            self.answer()
-            self.adapter.update_metadata(42, field, "Дом [zc:тест]")
-            request = self.opener.open.call_args.args[0]
-            self.assertEqual(request.full_url, "https://my.zont.online/api/update_device")
-            self.assertEqual(json.loads(request.data), {"device_id": 42, field: "Дом [zc:тест]"})
-            self.opener.open.assert_called_once()
+    def test_command_body_arriving_after_budget_is_unknown_without_retry(self):
+        clock = FakeClock()
+        adapter = ZontAdapter(HttpTransport(timeout=2, opener=self.opener, clock=clock.now), {})
 
-    def test_metadata_field_read_preserves_exact_value_and_rejects_other_fields(self):
-        self.answer(devices=[{"id": 42, "name": " Дом  ", "notes": None}])
-        self.assertEqual(self.adapter.read_metadata_field(42, "name"), " Дом  ")
-        self.answer(devices=[{"id": 42, "name": " Дом  ", "notes": None}])
-        self.assertIsNone(self.adapter.read_metadata_field(42, "notes"))
-        self.opener.open.reset_mock()
-        with self.assertRaises(InvalidArguments):
-            self.adapter.read_metadata_field(42, "heating")
-        self.opener.open.assert_not_called()
+        class LateBody(io.BytesIO):
+            def read(self, size):
+                clock.advance(2.1)
+                return super().read(size)
 
-    def test_invalid_metadata_never_reaches_network(self):
-        for args in ((0, "notes", ""), (True, "notes", ""), (42, "other", ""),
-                     (42, "notes", None), (42, "name", {})):
-            with self.subTest(args=args), self.assertRaises(InvalidArguments):
-                self.adapter.update_metadata(*args)
-        self.opener.open.assert_not_called()
-
-    def test_timeout_after_application_is_unknown_and_not_retried(self):
-        state = {"notes": "old"}
-
-        def apply_then_timeout(request, **kwargs):
-            state.update(json.loads(request.data))
-            raise TimeoutError("secret")
-
-        self.opener.open.side_effect = apply_then_timeout
+        self.opener.open.return_value = LateBody(b'{"ok":true}')
         with self.assertRaises(CommandOutcomeUnknown):
-            self.adapter.update_metadata(42, "notes", "new")
-        self.assertEqual(state["notes"], "new")
+            adapter.send_command(prepare_command('set-switch', 42, 31, target_state=True))
         self.opener.open.assert_called_once()
+
 
     def test_deep_response_after_write_is_unknown_and_read_is_typed(self):
         raw = b'{"ok":true,"nested":' + b'[' * 20000 + b']' * 20000 + b'}'
@@ -93,7 +61,7 @@ class ZontAdapterTests(unittest.TestCase):
         self.opener.open.assert_called_once()
         self.opener.open.return_value = io.BytesIO(raw)
         with self.assertRaises(InvalidArguments):
-            self.adapter.read_metadata(42)
+            self.adapter.full_device(42)
 
     def test_read_and_write_failures_map_by_outcome_not_error_text(self):
         cases = [(HTTPError("secret", 401, "secret", {}, None), AuthenticationError),
@@ -108,9 +76,9 @@ class ZontAdapterTests(unittest.TestCase):
                     self.opener.open.side_effect = error
                     with self.assertRaises(expected) as caught:
                         if write:
-                            self.adapter.update_metadata(42, "notes", "new")
+                            self.adapter.send_command(prepare_command('set-switch', 42, 31, target_state=True))
                         else:
-                            self.adapter.read_metadata(42)
+                            self.adapter.full_device(42)
                     self.assertNotIn("secret", str(caught.exception))
                     self.opener.open.assert_called_once()
 
@@ -121,7 +89,7 @@ class ZontAdapterTests(unittest.TestCase):
             self.opener.open.reset_mock()
             self.opener.open.return_value = io.BytesIO(raw)
             with self.subTest(raw=raw), self.assertRaises(expected):
-                self.adapter.update_metadata(42, "name", "new")
+                self.adapter.send_command(prepare_command('set-switch', 42, 31, target_state=True))
             self.opener.open.assert_called_once()
 
     def test_missing_duplicate_or_invalid_device_response_is_rejected(self):
@@ -199,11 +167,7 @@ class ZontAdapterTests(unittest.TestCase):
         self.assertEqual(state, {"target_state": False})
         self.opener.open.assert_called_once()
 
-    def test_full_metadata_and_history_validate_response_shapes(self):
-        for notes in (False, 1, {}):
-            self.answer(devices=[{"id": 42, "name": "Дом", "notes": notes}])
-            with self.subTest(notes=notes), self.assertRaises(InvalidArguments):
-                self.adapter.read_metadata(42)
+    def test_history_validate_response_shapes(self):
         start = datetime(2026, 10, 1, tzinfo=timezone.utc)
         for responses in (None, [], [None], [{"device_id": 99, "ok": True}],
                           [{"device_id": 42, "ok": False}],
@@ -213,7 +177,6 @@ class ZontAdapterTests(unittest.TestCase):
                 self.adapter.load_history(42, start, start + timedelta(minutes=45))
         self.opener.open.reset_mock()
         for operation in (lambda: self.adapter.full_device(True),
-                          lambda: self.adapter.full_device(42, load_io=1),
                           lambda: self.adapter.devices(0),
                           lambda: self.adapter.load_history(42, start, start),
                           lambda: self.adapter.load_history(42, start, start, include_controls=1)):

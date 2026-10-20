@@ -13,7 +13,6 @@ from zontcontrol.autonomy.contracts import (
 from zontcontrol.config import (
     ConfigurationError, load_controller_config, load_registry_config, read_json,
 )
-from zontcontrol.algorithms.boiler_cli import load_config as load_cli_config
 
 
 def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
@@ -23,18 +22,7 @@ def spec(algorithm_id='reset', modes=frozenset({Mode.ONCE, Mode.CONTINUOUS}),
 
 
 class ConfigurationTests(unittest.TestCase):
-    def test_cli_existing_json_uses_default_and_new_wait_is_module_owned(self):
-        self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
-                                     'lease_seconds': 20})
-        self.assertEqual(load_cli_config(root=self.root).grant_wait_seconds, 10)
-        for value in (0, True, 21, '5'):
-            self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
-                'lease_seconds': 20, 'grant_wait_seconds': value})
-            with self.subTest(value=value), self.assertRaises(ConfigurationError):
-                load_cli_config(root=self.root)
-        self.write('boiler_cli.json', {'devices': [42], 'controls': [], 'graphs': [],
-                                     'lease_seconds': 20, 'grant_wait_seconds': 5})
-        self.assertEqual(load_cli_config(root=self.root).grant_wait_seconds, 5)
+
 
     def setUp(self):
         self.directory = TemporaryDirectory()
@@ -55,9 +43,7 @@ class ConfigurationTests(unittest.TestCase):
         return load_registry_config(root=self.root)
 
     def controller(self, **overrides):
-        value = {'contact': 'owner@example.invalid', 'http_timeout_seconds': 15,
-                 'coordination': {'delta_seconds': 1, 'leader_period_seconds': 60},
-                 'statistics': {'path': 'reports/orchestration.jsonl', 'profile': 'unmeasured'}}
+        value = {'contact': 'owner@example.invalid', 'http_timeout_seconds': 15}
         value.update(overrides)
         self.write('controller.json', value)
         return load_controller_config(root=self.root)
@@ -75,8 +61,6 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config.disabled_modules, frozenset())
         controller = self.controller()
         self.assertEqual(controller.http_timeout_seconds, 15)
-        self.assertEqual(controller.coordination.timing.clock_rho, .1)
-        self.assertEqual(controller.statistics.profile, 'unmeasured')
         with self.assertRaisesRegex(ConfigurationError, 'controller.json'):
             load_controller_config(root=self.root, reader=reader)
 
@@ -91,6 +75,7 @@ class ConfigurationTests(unittest.TestCase):
                 path.write_bytes(raw.encode('utf-8', errors='surrogateescape'))
                 with self.assertRaisesRegex(ConfigurationError, 'module.json'):
                     read_json(path)
+
 
     def test_controller_validation_precedes_any_effect_and_hides_values(self):
         invalid = [
@@ -202,7 +187,6 @@ class ConfigurationTests(unittest.TestCase):
             self.assertFalse(config.autostart_dual_mode)
         config = load_controller_config(reader=lambda _path: read_json(
             project / 'config/controller.example.json'))
-        self.assertEqual(config.statistics.profile, 'unmeasured-example')
 
     def test_modes_spec_and_autostart_contract(self):
         config = self.registry()

@@ -12,16 +12,13 @@ import math
 import re
 from threading import Event
 from typing import Protocol, TypeAlias
-from uuid import UUID
 
 from ..controller.contracts import Controller
 
 
 CAPABILITIES = frozenset({
     'list_devices', 'describe_values', 'read_current', 'read_history',
-    'list_controls', 'prepare_command', 'try_acquire_control',
-    'request_control', 'get_control_request', 'cancel_control_request', 'acquire_control',
-    'release_control', 'execute_command',
+    'list_controls', 'prepare_command', 'execute_command',
 })
 
 
@@ -101,8 +98,6 @@ class RunContext:
     """
 
     algorithm_id: str
-    instance_id: UUID
-    run_id: UUID
     cancelled: Event
     deadline: float | None
 
@@ -111,7 +106,7 @@ class RunContext:
 
 
 class OnceAlgorithm(Protocol):
-    """Cancellation asks for finally, never revokes accepted work/ownership."""
+    """Cancellation asks for finally; accepted commands finish normally."""
 
     def run_once(self, context: RunContext) -> AlgorithmResult: ...
 
@@ -129,7 +124,7 @@ class AlgorithmFactory(Protocol):
     """Config validation/construction only; execution belongs to run methods.
 
     Registration probes and discards an instance. Every launch constructs a
-    fresh instance with its own consumer binding in the runtime worker.
+    fresh instance with the shared controller in the runtime worker.
     Constructors must not start background work or send control commands.
     """
 

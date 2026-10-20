@@ -11,7 +11,6 @@ from dataclasses import dataclass, replace
 from threading import Event, Lock, Thread
 from time import monotonic
 
-from ..control_types import UUIDFactory
 from ..config import ConfigurationError, RegistryConfig
 from .contracts import (
     CAPABILITIES, AlgorithmBusy, AlgorithmError, AlgorithmFailed,
@@ -32,28 +31,22 @@ class _Slot:
 class AlgorithmRegistry:
     """One application catalog; the composition root owns the shared facade.
 
-    controller_factory is normally ControllerService.for_consumer, issuing a
-    private binding for each constructed consumer. begin_close_controller closes
-    admission before cancellation; close_controller drains the shared facade and
-    closes its resources only after every worker and finally have finished.
+    controller is passed directly to each module.
+    close_controller closes resources only after every worker and finally.
     close(wait_timeout) bounds the caller's wait, never the workers' lifetime.
     """
 
-    def __init__(self, config, controller_factory, *, available_capabilities=CAPABILITIES,
-                 clock=monotonic, begin_close_controller=None, close_controller=None,
-                 uuid_factory: UUIDFactory | None = None):
-        if (not isinstance(config, RegistryConfig) or not callable(controller_factory)
+    def __init__(self, config, controller, *, available_capabilities=CAPABILITIES,
+                 clock=monotonic, close_controller=None):
+        if (not isinstance(config, RegistryConfig)
                 or not callable(clock) or not isinstance(available_capabilities, frozenset)
                 or not available_capabilities <= CAPABILITIES
-                or begin_close_controller is not None and not callable(begin_close_controller)
                 or close_controller is not None and not callable(close_controller)):
             raise ValueError('Invalid registry dependencies')
         self._config = config
-        self._controller_factory = controller_factory
+        self._controller = controller
         self._capabilities = available_capabilities
         self._clock = clock
-        self._uuid_factory = uuid_factory
-        self._begin_close_controller = begin_close_controller
         self._close_controller = close_controller
         self._lock = Lock()
         self._slots = {}
@@ -96,10 +89,9 @@ class AlgorithmRegistry:
                     continue
                 construct = self._factory(slot.spec)
                 slot.runtime = AlgorithmRuntime(replace(slot.spec, factory=construct),
-                                                self._controller_factory, clock=self._clock,
-                                                uuid_factory=self._uuid_factory)
+                                                self._controller, clock=self._clock)
                 try:
-                    construct(self._controller_factory())
+                    construct(self._controller)
                 except Exception as error:
                     # ConfigurationError is the safe, module-owned diagnostic.
                     with self._lock:
@@ -216,26 +208,13 @@ class AlgorithmRegistry:
                 self._registration_done.set()
             if not self._close_started:
                 self._close_started = True
-                try:
-                    # This DI hook only closes local admission: no waiting or I/O.
-                    if self._begin_close_controller is not None:
-                        self._begin_close_controller()
-                except BaseException:
-                    self._close_failed = True
-                else:
-                    self._shutdown = Thread(target=self._finish_close,
-                                            name='registry-close', daemon=False)
-                    self._shutdown.start()
+                self._shutdown = Thread(target=self._finish_close,
+                                        name='registry-close', daemon=False)
+                self._shutdown.start()
             runtimes = [slot.runtime for slot in self._slots.values() if slot.runtime is not None]
-            hook_failed = self._close_failed and self._shutdown is None
         # Publish cancellation before returning, even with a zero wait timeout.
         for runtime in runtimes:
             runtime.close(wait_timeout=0)
-        if hook_failed:
-            # A failed early hook has no shutdown worker to publish the result.
-            # Resources remain open for cleanup; the hook is never retried.
-            self._shutdown_done.set()
-            raise RuntimeError('Shared controller shutdown failed') from None
         if not self._shutdown_done.wait(wait_timeout):
             return False
         if self._close_failed:

@@ -1,7 +1,6 @@
 """Internal ZONT operations; no consumer facade or ownership policy here.
 
-Methods return raw API data for the normalization layer. Metadata reads project
-only notes/name; writes change exactly one of those fields. POST reads are
+Methods return raw API data for the normalization layer. POST reads are
 explicitly distinguished from effects when translating transport failures.
 """
 
@@ -71,47 +70,21 @@ class ZontAdapter:
         except TransportError as error:
             raise_controller_error(error, write=write)
 
-    def devices(self, device_id=None, *, fields=None):
+    def devices(self, device_id=None):
         query = {}
         if device_id is not None:
             _device_id(device_id)
             query["device_ids"] = device_id
-        if fields is not None:
-            if not isinstance(fields, str) or not fields.strip():
-                raise InvalidArguments()
-            query["fields"] = fields
         suffix = "?" + urlencode(query) if query else ""
         return _devices(self._request(f"{API_URL}/devices{suffix}"), device_id)
 
-    def full_device(self, device_id, *, load_io=True):
+    def full_device(self, device_id):
         _device_id(device_id)
-        if type(load_io) is not bool:
-            raise InvalidArguments()
-        data = self._request(f"{FULL_API_URL}/devices", body={"load_io": load_io})
+        data = self._request(f"{FULL_API_URL}/devices", body={"load_io": True})
         return _devices(data, device_id)[0]
 
-    def read_metadata(self, device_id):
-        device = self.full_device(device_id, load_io=False)
-        if (not isinstance(device.get("name"), str) or "notes" not in device
-                or device["notes"] is not None and not isinstance(device["notes"], str)):
-            raise InvalidArguments()
-        return {"name": device["name"], "notes": device["notes"]}
-
-    def update_metadata(self, device_id, field, value):
-        _device_id(device_id)
-        if field not in ("notes", "name") or not isinstance(value, str):
-            raise InvalidArguments()
-        self._request(f"{FULL_API_URL}/update_device", body={"device_id": device_id, field: value},
-                      write=True)
-
-    def read_metadata_field(self, device_id, field):
-        """Project a single coordination register without interpreting its content."""
-        if field not in ("notes", "name"):
-            raise InvalidArguments()
-        return self.read_metadata(device_id)[field]
-
     def send_command(self, command: PreparedCommand):
-        """Internal send primitive; the executor must enforce ownership first."""
+        """Send one command already validated by the controller."""
         if not isinstance(command, PreparedCommand):
             raise InvalidArguments()
         data = self._request(command.preview(API_URL)["url"], body=command.body, write=True)

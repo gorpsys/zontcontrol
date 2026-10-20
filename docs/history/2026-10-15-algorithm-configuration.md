@@ -30,7 +30,7 @@ HTTP-таймаута: --contact, затем ZONT_CONTACT, затем controller
 Предпросмотр/help/version сохраняют независимость от конфигов, токена и сети.
 
 Замечание №3 закрыто обновлением
-[архитектуры](../agents/architecture.md#6-конфигурация-регистратора-и-модулей)
+[архитектуры](../agents/architecture.md)
 и этапов 9, 11–16
 [плана](../plans/completed/20261015005915-architecture-alignment-implementation-plan.md).
 Код не изменялся, обращения к ZONT и деплоя не было.

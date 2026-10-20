@@ -1,14 +1,13 @@
 """Continuous terminal consumer of the controller API; no transport or registry.
 
 The module owns its fixed JSON, minute schedule and interruptible terminal poll.
-Only an explicit command --execute acquires ownership, for that command alone.
+Only an explicit command --execute sends a control command.
 The reader is joined before releasing the terminal, including on stop or EOF.
 """
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import math
 import os
 from pathlib import Path
 import select
@@ -23,8 +22,7 @@ from zoneinfo import ZoneInfo
 from .charts import GraphSpec, SeriesSpec, chart_path, render_charts
 from ..config import ConfigurationError, read_json
 from ..controller.contracts import (
-    ControlKey, ControllerError, ControlRequestReason, ControlRequestState,
-    DeviceControlBusy, InvalidArguments, ValueKey, ValueType,
+    ControlKey, ControllerError, InvalidArguments, ValueKey, ValueType,
 )
 
 
@@ -58,10 +56,8 @@ class BoilerCLIConfig:
     devices: tuple[int, ...]
     controls: tuple[AllowedControl, ...]
     graphs: tuple[GraphSpec, ...]
-    lease_seconds: float
     output_directory: Path
     display_timezone: str
-    grant_wait_seconds: float
 
 
 def load_config(*, root=Path('.'), reader=None):
@@ -69,7 +65,7 @@ def load_config(*, root=Path('.'), reader=None):
     data = (reader or read_json)(path)
     try:
         _keys(data, ('devices', 'controls', 'graphs'),
-              ('lease_seconds', 'grant_wait_seconds', 'output_directory', 'display_timezone'))
+              ('output_directory', 'display_timezone'))
         devices = data['devices']
         _require(isinstance(devices, list) and bool(devices)
                  and all(type(item) is int and item > 0 for item in devices)
@@ -98,18 +94,13 @@ def load_config(*, root=Path('.'), reader=None):
             _require(graph.device_id in devices)
             graphs.append(graph)
         _require(len({(item.device_id, item.graph_id) for item in graphs}) == len(graphs))
-        lease = data.get('lease_seconds', 60)
-        _require(type(lease) in (int, float) and math.isfinite(lease) and 0 < lease <= 1200)
-        grant_wait = data.get('grant_wait_seconds', min(30, lease / 2))
-        _require(type(grant_wait) in (int, float) and math.isfinite(grant_wait)
-                 and 0 < grant_wait <= lease)
         directory = data.get('output_directory', 'charts')
         _require(isinstance(directory, str) and bool(directory.strip()) and '\0' not in directory)
         zone = data.get('display_timezone', 'UTC')
         _require(isinstance(zone, str))
         ZoneInfo(zone)
-        return BoilerCLIConfig(tuple(devices), tuple(controls), tuple(graphs), lease,
-                               Path(root) / directory, zone, grant_wait)
+        return BoilerCLIConfig(tuple(devices), tuple(controls), tuple(graphs),
+                               Path(root) / directory, zone)
     except (ValueError, TypeError, KeyError, ControllerError, OverflowError):
         raise ConfigurationError(path, 'Invalid boiler_cli devices, controls, graphs or parameters') from None
 
@@ -305,30 +296,8 @@ class BoilerCLI:
                     f'{command.action} {dict(command.arguments)}')
         if not execute or context.cancelled.is_set():
             return
-        result = self._controller.acquire_control(
-            key.device_id, lease_seconds=self.config.lease_seconds,
-            timeout=self.config.grant_wait_seconds,
-            poll_seconds=min(1, self.config.grant_wait_seconds), cancelled=context.cancelled)
-        if result.state is not ControlRequestState.GRANTED:
-            if result.reason is ControlRequestReason.CONTROLLER_ERROR:
-                raise result.make_error()
-            if result.reason in (ControlRequestReason.CANCELLED, ControlRequestReason.SHUTDOWN):
-                self._write('Control request cancelled.' if result.reason is ControlRequestReason.CANCELLED
-                            else 'Controller shutting down.')
-                return
-            raise DeviceControlBusy()
-        session = result.session
-        try:
-            if context.cancelled.is_set():
-                return
-            try:
-                self._controller.execute_command(command, session)
-            except ControllerError as error:
-                self._write(str(error))
-            else:
-                self._write('API accepted command; physical outcome not established')
-        finally:
-            self._controller.release_control(session)
+        self._controller.execute_command(command)
+        self._write('API accepted command; physical outcome not established')
 
     def _graph(self, parts):
         view = bool(parts and parts[-1] == '--view')

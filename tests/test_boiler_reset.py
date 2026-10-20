@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 from threading import Event
 import unittest
 from unittest.mock import Mock, patch
-from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.algorithms.boiler_reset import (
     BoilerReset, CONFIG_PATH, MINIMUM_SECONDS, PULSE_SECONDS, load_config, history_packet,
@@ -18,19 +17,14 @@ from zontcontrol.autonomy.contracts import Mode, ResultStatus, RunContext
 from zontcontrol.autonomy.registry import AlgorithmRegistry
 from zontcontrol.config import ConfigurationError, OnceTimeout, RegistryConfig
 from zontcontrol.controller.contracts import (
-    CommandOutcomeUnknown, ControlKey, ControlOwnershipRequired, ControlSession,
-    ControlRequestResult, ControlRequestState, ControlRequestReason, ControlRequestErrorCode,
-    DeviceControlBusy, DeviceInfo, DeviceUnavailable, HistoryPoint, HistoryResult,
-    HistorySeries, Quality, RateLimited, SeriesKind, Snapshot, ValidatedCommand, ValueDescriptor,
-    ValueKey, ValueReading, ValueType,
+    CommandOutcomeUnknown, ControlKey, DeviceUnavailable, DeviceInfo, DeviceUnavailable,
+    HistoryPoint, HistoryResult, HistorySeries, Quality, SeriesKind, Snapshot,
+    ValidatedCommand, ValueDescriptor, ValueKey, ValueReading, ValueType,
 )
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
-from zontcontrol.controller.ownership import CommandExecutor
-from zontcontrol.coordination.statistics import Statistics
 from zontcontrol.monitor import assess_history
 from tests.fakes.clock import FakeClock
 from tests.test_monitor import packet
-from tests.test_control_ownership import LocalTestGate
 
 
 SETTINGS = dict(device_id=42, circuit_id=20496, air_sensor_id=8207,
@@ -65,9 +59,8 @@ def history(data=None):
 
 class BoilerResetTests(unittest.TestCase):
     def setUp(self):
-        self.uuid_generator = uuid_generator()
         self.clock = FakeClock(wall_start=history().end)
-        self.context = RunContext('boiler_reset', self.uuid_generator(), self.uuid_generator(), Event(), None)
+        self.context = RunContext('boiler_reset', Event(), None)
         self.events = []
         self.controller = Mock()
         self.controller.read_history.return_value = history()
@@ -80,78 +73,13 @@ class BoilerResetTests(unittest.TestCase):
         self.controller.read_current.return_value = Snapshot(42, self.clock.wall_now(), (
             ValueReading(self.reset, False, ValueType.BOOLEAN, None, 'virtual', None,
                          self.clock.wall_now(), Quality.UNKNOWN),))
-        self.session = ControlSession(42, self.uuid_generator(), 1000)
-        self.controller.acquire_control.side_effect = self.acquire_result
-        self.controller.release_control.side_effect = lambda session: self.events.append('release')
         self.controller.prepare_command.side_effect = lambda device, key, action, arguments: (
             ValidatedCommand(key, action, tuple(arguments.items())))
         self.controller.execute_command.side_effect = self.execute
         self.reader = Mock(return_value=dict(SETTINGS))
 
-    def acquire(self, device, *, lease_seconds):
-        self.events.append('acquire')
-        self.assertEqual(device, 42)
-        self.assertGreater(lease_seconds, 40 + 30)
-        return self.session
 
-    def acquire_result(self, device, *, lease_seconds, timeout, poll_seconds, cancelled):
-        self.assertEqual(timeout, self.reader.return_value.get('grant_wait_seconds', 30))
-        self.assertEqual(poll_seconds, self.reader.return_value.get('grant_poll_seconds', 1))
-        self.assertIsInstance(cancelled, Event)
-        return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.GRANTED,
-                                    session=self.acquire(device, lease_seconds=lease_seconds))
-
-    def test_acquire_uses_one_sync_request_with_module_budget(self):
-        self.reader.return_value.update(grant_wait_seconds=8, grant_poll_seconds=.5)
-        module = self.module()
-        module.run_once(self.context)
-        self.controller.acquire_control.assert_called_once_with(
-            42, lease_seconds=118, timeout=8, poll_seconds=.5, cancelled=self.context.cancelled)
-        self.controller.try_acquire_control.assert_not_called()
-        self.assertEqual(self.events, ['acquire', 'on', ('wait', 40), 'off', 'release'])
-
-    def test_denied_acquire_has_no_impulse_and_keeps_refusal_semantics(self):
-        for reason in (ControlRequestReason.CANCELLED, ControlRequestReason.SHUTDOWN,
-                       ControlRequestReason.TIMEOUT, ControlRequestReason.LEASE_EXPIRED):
-            with self.subTest(reason=reason):
-                self.events.clear()
-                self.controller.acquire_control.side_effect = None
-                self.controller.acquire_control.return_value = ControlRequestResult(
-                    self.uuid_generator(), 42, ControlRequestState.DENIED, reason=reason)
-                if reason in (ControlRequestReason.CANCELLED, ControlRequestReason.SHUTDOWN):
-                    result = self.module().run_once(self.context)
-                    self.assertFalse(result.value['reset_performed'])
-                    self.assertEqual(result.value['reason'], 'cancelled')
-                    self.assertEqual(result.value['assessment']['state_at_period_end'],
-                                     'confirmed_pattern')
-                else:
-                    with self.assertRaises(DeviceControlBusy):
-                        self.module().run_once(self.context)
-                self.controller.execute_command.assert_not_called()
-                self.controller.release_control.assert_not_called()
-                self.assertEqual(self.events, [])
-        self.assertEqual(self.controller.acquire_control.call_count, 4)
-        self.controller.try_acquire_control.assert_not_called()
-
-    def test_controller_error_raises_fresh_typed_error_without_normal_or_command(self):
-        result = ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.DENIED,
-            reason=ControlRequestReason.CONTROLLER_ERROR,
-            error_code=ControlRequestErrorCode.RATE_LIMITED)
-        self.controller.acquire_control.side_effect = None
-        self.controller.acquire_control.return_value = result
-        errors = []
-        for _ in range(2):
-            with self.assertRaises(RateLimited) as caught:
-                self.module().run_once(self.context)
-            errors.append(caught.exception)
-        self.assertIsNot(errors[0], errors[1])
-        self.assertEqual(result.error_code, ControlRequestErrorCode.RATE_LIMITED)
-        self.assertFalse(hasattr(result, 'error'))
-        self.controller.execute_command.assert_not_called()
-        self.controller.release_control.assert_not_called()
-
-    def execute(self, command, session):
-        self.assertIs(session, self.session)
+    def execute(self, command):
         self.assertEqual(command.control_key, ControlKey(42, 'toggle_buttons', 8832))
         self.events.append('on' if dict(command.arguments)['target_state'] else 'off')
 
@@ -164,11 +92,11 @@ class BoilerResetTests(unittest.TestCase):
                            wall_clock=self.clock.wall_now, wait=kwargs.pop('wait', self.wait),
                            **kwargs)
 
-    def test_confirmed_current_pattern_owns_whole_pulse_and_once_has_no_pause(self):
+    def test_confirmed_current_pattern_runs_whole_pulse_and_once_has_no_pause(self):
         result = self.module().run_once(self.context)
         self.assertIs(result.status, ResultStatus.SUCCESS)
         self.assertTrue(result.value['reset_performed'])
-        self.assertEqual(self.events, ['acquire', 'on', ('wait', 40), 'off', 'release'])
+        self.assertEqual(self.events, ['on', ('wait', 40), 'off'])
         self.reader.assert_called_once_with(CONFIG_PATH)
         args = self.controller.read_history.call_args.args
         self.assertEqual(args[0], 42)
@@ -198,7 +126,7 @@ class BoilerResetTests(unittest.TestCase):
                 self.assertEqual(assess_history(converted, circuit_id=20496),
                                  assess_history(data, circuit_id=20496))
 
-    def test_unknown_warning_and_old_events_do_not_acquire(self):
+    def test_unknown_warning_and_old_events_do_not_send_commands(self):
         for state in ('unknown', 'warning', 'normal', 'suppressed'):
             with self.subTest(state=state), patch(
                     'zontcontrol.algorithms.boiler_reset.assess_history', return_value={
@@ -264,22 +192,22 @@ class BoilerResetTests(unittest.TestCase):
             replace(current.values[0], value=True),))
         result = self.module().run_once(self.context)
         self.assertIs(result.status, ResultStatus.SUPPRESSED)
-        self.assertEqual(self.events, ['acquire', 'release'])
+        self.assertEqual(self.events, [])
 
     def test_offline_or_unknown_reset_never_attempt_on_or_off(self):
         self.controller.list_devices.return_value = (DeviceInfo(42, 'virtual', None, False),)
         with self.assertRaises(DeviceUnavailable):
             self.module().run_once(self.context)
-        self.assertEqual(self.events, ['acquire', 'release'])
+        self.assertEqual(self.events, [])
         self.events.clear()
         self.controller.list_devices.return_value = (DeviceInfo(42, 'virtual', None, True),)
         current = self.controller.read_current.return_value
         self.controller.read_current.return_value = replace(current, values=(
             replace(current.values[0], value=None, quality=Quality.MISSING),))
         self.assertIs(self.module().run_once(self.context).status, ResultStatus.UNKNOWN)
-        self.assertEqual(self.events, ['acquire', 'release'])
+        self.assertEqual(self.events, [])
 
-    def test_stop_or_exception_during_wait_attempts_immediate_off_and_releases(self):
+    def test_stop_or_exception_during_wait_attempts_immediate_off(self):
         for fail in (False, True):
             def interrupted(context, seconds):
                 if fail:
@@ -294,13 +222,13 @@ class BoilerResetTests(unittest.TestCase):
                         self.module(wait=interrupted).run_once(self.context)
                 else:
                     self.module(wait=interrupted).run_once(self.context)
-                self.assertEqual(self.events, ['acquire', 'on', 'off', 'release'])
+                self.assertEqual(self.events, ['on', 'off'])
                 self.assertEqual(self.clock.now(), 0)
 
-    def test_unknown_on_is_not_retried_and_off_error_is_visible_then_release(self):
-        for off_error in (None, ControlOwnershipRequired()):
-            def command(command, session):
-                self.execute(command, session)
+    def test_unknown_on_is_not_retried_and_off_error_is_visible(self):
+        for off_error in (None, DeviceUnavailable()):
+            def command(command):
+                self.execute(command)
                 if dict(command.arguments)['target_state']:
                     raise CommandOutcomeUnknown()
                 if off_error:
@@ -308,185 +236,50 @@ class BoilerResetTests(unittest.TestCase):
             self.events.clear()
             self.controller.execute_command.side_effect = command
             with self.subTest(off_error=off_error), self.assertRaises(
-                    ControlOwnershipRequired if off_error else CommandOutcomeUnknown):
+                    DeviceUnavailable if off_error else CommandOutcomeUnknown):
                 self.module().run_once(self.context)
-            self.assertEqual(self.events, ['acquire', 'on', 'off', 'release'])
+            self.assertEqual(self.events, ['on', 'off'])
 
     def test_preparation_failure_and_stop_before_on_have_no_off(self):
         self.controller.prepare_command.side_effect = DeviceUnavailable()
         with self.assertRaises(DeviceUnavailable):
             self.module().run_once(self.context)
-        self.assertEqual(self.events, ['acquire', 'release'])
+        self.assertEqual(self.events, [])
+
+    def test_long_wait_still_attempts_off_without_a_lease_deadline(self):
+        def delayed(context, seconds):
+            self.clock.advance(1000)
+            context.cancelled.set()
+            return True
+        self.module(wait=delayed).run_once(self.context)
+        self.assertEqual(self.events, ['on', 'off'])
+
+    def test_cancel_during_on_still_attempts_off(self):
+        def send(command):
+            self.execute(command)
+            if dict(command.arguments)['target_state']:
+                self.context.cancelled.set()
+        self.controller.execute_command.side_effect = send
+        self.module().run_once(self.context)
+        self.assertEqual(self.events, ['on', ('wait', 40), 'off'])
         self.events.clear()
         self.context.cancelled.set()
         self.module().run_once(self.context)
         self.assertEqual(self.events, [])
 
-    def test_pending_grant_poll_is_interruptible_and_never_sends_on(self):
-        def stop(device, *, lease_seconds, timeout, poll_seconds, cancelled):
-            self.assertIs(cancelled, self.context.cancelled)
-            cancelled.set()
-            return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.DENIED,
-                                        reason=ControlRequestReason.CANCELLED)
-        self.controller.acquire_control.side_effect = stop
-        self.module().run_once(self.context)
-        self.controller.acquire_control.assert_called_once()
-        self.controller.try_acquire_control.assert_not_called()
-        self.controller.execute_command.assert_not_called()
-        self.controller.release_control.assert_not_called()
-
-    def test_pending_grant_has_own_deadline_and_unchanged_requested_lease(self):
-        def timeout(device, *, lease_seconds, timeout, poll_seconds, cancelled):
-            self.clock.advance(timeout)
-            return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.DENIED,
-                                        reason=ControlRequestReason.TIMEOUT)
-        self.controller.acquire_control.side_effect = timeout
-        with self.assertRaises(DeviceControlBusy):
-            self.module().run_once(self.context)
-        self.assertEqual(self.clock.now(), 30)
-        self.controller.acquire_control.assert_called_once_with(
-            42, lease_seconds=140, timeout=30, poll_seconds=1, cancelled=self.context.cancelled)
-        self.assertEqual(self.events, [])
-        self.controller.execute_command.assert_not_called()
-
-    def test_pending_grant_can_arrive_then_only_one_pulse_is_sent(self):
-        def grant(device, **kwargs):
-            self.clock.advance(1)
-            return self.acquire_result(device, **kwargs)
-        self.controller.acquire_control.side_effect = grant
-        self.module().run_once(self.context)
-        self.assertEqual(self.events, ['acquire', 'on', ('wait', 40), 'off', 'release'])
-        self.assertEqual(self.clock.now(), 41)
-        self.controller.acquire_control.assert_called_once()
-
-    def test_pending_grant_timeout_is_not_retried_by_module(self):
-        self.controller.acquire_control.side_effect = [
-            ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.DENIED,
-                                 reason=ControlRequestReason.TIMEOUT),
-            ControlRequestResult(self.uuid_generator(), 42, ControlRequestState.GRANTED, session=self.session)]
-        with self.assertRaises(DeviceControlBusy):
-            self.module().run_once(self.context)
-        self.controller.acquire_control.assert_called_once()
-        self.controller.execute_command.assert_not_called()
-
-    def test_stop_during_acquisition_releases_immediately_without_further_reads(self):
-        def acquire(device, **kwargs):
-            self.context.cancelled.set()
-            return ControlRequestResult(self.uuid_generator(), device, ControlRequestState.GRANTED,
-                                        session=self.session)
-        self.controller.acquire_control.side_effect = acquire
-        self.module().run_once(self.context)
-        self.controller.list_devices.assert_not_called()
-        self.controller.read_current.assert_not_called()
-        self.assertEqual(self.events, ['release'])
-
-    def test_off_uses_real_executor_admission_and_expired_or_lost_grant_is_error(self):
-        for cause in ('expiry', 'grant_lost'):
-            with self.subTest(cause=cause):
-                gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
-                executor = CommandExecutor(gate=gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
-                binding = executor.bind()
-                self.controller.acquire_control.side_effect = binding.acquire_control
-                self.controller.release_control.side_effect = binding.release_control
-                sends = []
-                self.controller.execute_command.side_effect = lambda command, session: binding.execute(
-                    command, session, lambda: command,
-                    lambda prepared: sends.append(dict(prepared.arguments)['target_state']))
-                def disrupt(context, seconds):
-                    if cause == 'expiry':
-                        self.clock.advance(200)
-                    else:
-                        gate.allowed = False
-                    context.cancelled.set()
-                    return True
-                self.context.cancelled.clear()
-                with self.assertRaises(ControlOwnershipRequired):
-                    self.module(wait=disrupt).run_once(self.context)
-                self.assertEqual(sends, [True])
-                self.assertEqual(len(gate.releases), 1)
-                self.assertEqual(gate.sessions, {})
-
-    def test_cancel_during_accepted_on_completes_it_and_off_uses_same_owned_session(self):
-        gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
-        executor = CommandExecutor(gate=gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
-        binding = executor.bind()
-        self.controller.acquire_control.side_effect = binding.acquire_control
-        self.controller.release_control.side_effect = binding.release_control
-        sends = []
-        def send(command):
-            sends.append(dict(command.arguments)['target_state'])
-            self.assertTrue(gate.sessions)
-            if sends == [True]:
-                self.context.cancelled.set()
-            return True
-        self.controller.execute_command.side_effect = lambda command, session: binding.execute(
-            command, session, lambda: command, send)
-        self.module().run_once(self.context)
-        self.assertEqual(sends, [True, False])
-        self.assertEqual(len(gate.releases), 1)
-        self.assertEqual(gate.sessions, {})
-
-    def test_new_reset_binding_after_unknown_release_waits_for_expiry(self):
-        gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
-        executor = CommandExecutor(gate=gate, clock=self.clock.now, uuid_factory=self.uuid_generator)
-        gate.release = Mock(side_effect=[CommandOutcomeUnknown(), None])
-        sends = []
-        def bind():
-            binding = executor.bind()
-            self.controller.acquire_control.side_effect = binding.acquire_control
-            self.controller.release_control.side_effect = binding.release_control
-            self.controller.execute_command.side_effect = lambda command, session: binding.execute(
-                command, session, lambda: command,
-                lambda command: sends.append(dict(command.arguments)['target_state']))
-            return binding
-        bind()
-        with self.assertRaises(CommandOutcomeUnknown):
-            self.module().run_once(self.context)
-        replacement = bind()
-        with self.assertRaises(DeviceControlBusy):
-            replacement.try_acquire_control(42, lease_seconds=140)
-        self.assertEqual(gate.release.call_count, 1)
-        self.clock.advance(140)
-        self.module().run_once(self.context)
-        self.assertEqual(sends, [True, False, True, False])
-        self.assertEqual(gate.release.call_count, 2)
-
-    def test_finally_off_failure_is_observed_and_never_retried(self):
-        gate = LocalTestGate(self.clock, uuid_factory=self.uuid_generator)
-        rows = []
-        executor = CommandExecutor(gate=gate, clock=self.clock.now,
-            statistics=Statistics(rows.append, protocol_version='1', profile='offline'),
-            uuid_factory=self.uuid_generator)
-        binding = executor.bind()
-        self.controller.acquire_control.side_effect = binding.acquire_control
-        self.controller.release_control.side_effect = binding.release_control
-        sends = []
-        def send(command):
-            sends.append(dict(command.arguments)['target_state'])
-            if sends[-1] is False:
-                raise RateLimited()
-        self.controller.execute_command.side_effect = lambda command, session: binding.execute(
-            command, session, lambda: command, send)
-        with self.assertRaises(RateLimited):
-            self.module().run_once(self.context)
-        self.assertEqual(sends, [True, False])
-        self.assertEqual(len(gate.releases), 1)
-        cleanup = [row for row in rows if row['event'] == 'cleanup' and row['phase'] == 'command']
-        self.assertEqual(len(cleanup), 1)
-        self.assertEqual(cleanup[0]['outcome'], 'failure')
 
     def test_continuous_pause_starts_after_off_without_ownership_or_once_deadline(self):
         calls = []
         def wait(context, seconds):
             calls.append(seconds)
             if seconds == 300:
-                self.assertEqual(self.events[-1], 'release')
+                self.assertEqual(self.events[-1], 'off')
                 context.cancelled.set()
                 return True
             return self.clock.wait(context.cancelled, seconds)
         self.module(wait=wait).run_continuous(self.context)
         self.assertEqual(calls, [40, 300])
-        self.assertEqual(self.events, ['acquire', 'on', 'off', 'release'])
+        self.assertEqual(self.events, ['on', 'off'])
 
     def test_continuous_uses_monotonic_slots_skips_overruns_and_has_no_extra_pause(self):
         times = []
@@ -515,8 +308,7 @@ class BoilerResetTests(unittest.TestCase):
         spec = replace(spec, factory=lambda controller: self.module(wait=wait))
         config = RegistryConfig(frozenset(), False, {'boiler_reset': OnceTimeout(
             MINIMUM_SECONDS, MINIMUM_SECONDS)})
-        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now,
-        uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(config, self.controller, clock=self.clock.now)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         registry.register_all([spec])
         handle = registry.start('boiler_reset')
@@ -526,14 +318,13 @@ class BoilerResetTests(unittest.TestCase):
         self.assertEqual(waits, [40, 300, 40, 300])
         self.assertGreater(self.clock.now(), MINIMUM_SECONDS)
         self.assertTrue(all(context.deadline is None for context in contexts))
-        self.assertEqual(self.events, ['acquire', 'on', 'off', 'release'] * 2)
+        self.assertEqual(self.events, ['on', 'off'] * 2)
 
     def test_registrar_once_uses_builtin_module_and_returns_after_single_pulse(self):
         spec = replace(BUILTIN_SPECS[0], factory=lambda controller: self.module())
         config = RegistryConfig(frozenset(), False, {'boiler_reset': OnceTimeout(
             MINIMUM_SECONDS, MINIMUM_SECONDS)})
-        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now,
-        uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(config, self.controller, clock=self.clock.now)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         registry.register_all([spec])
         result = registry.run_once('boiler_reset')

@@ -16,7 +16,6 @@ from types import MappingProxyType
 from typing import Any, NoReturn, TypeAlias, cast
 
 from .autonomy.contracts import AlgorithmSpec, Mode, valid_id
-from .coordination import LeaseTiming
 
 
 JSONReader: TypeAlias = Callable[[Path], dict[str, Any]]
@@ -142,28 +141,9 @@ class RegistryConfig:
 
 
 @dataclass(frozen=True)
-class CoordinationConfig:
-    delta_seconds: float
-    leader_period_seconds: float
-
-    @property
-    def timing(self) -> LeaseTiming:
-        # The agreed rho table is selected by LeaseTiming using original periods.
-        return LeaseTiming(self.leader_period_seconds, self.delta_seconds)
-
-
-@dataclass(frozen=True)
-class StatisticsConfig:
-    path: Path
-    profile: str
-
-
-@dataclass(frozen=True)
 class ControllerConfig:
     contact: str
     http_timeout_seconds: float
-    coordination: CoordinationConfig
-    statistics: StatisticsConfig
 
 
 def load_registry_config(*, root: PathInput = Path('.'), reader: JSONReader = read_json
@@ -195,17 +175,10 @@ def load_controller_config(*, root: PathInput = Path('.'), reader: JSONReader = 
     path = Path(root) / 'config/controller.json'
     data = reader(path)
     try:
-        _keys(data, ('contact', 'http_timeout_seconds', 'coordination', 'statistics'))
+        _keys(data, ('contact', 'http_timeout_seconds'))
         contact = _text(data['contact'])
         if not contact.isascii() or any(ord(c) == 127 for c in contact):
             raise ValueError()
-        timeout = _number(data['http_timeout_seconds'], maximum=120)
-        _keys(data['coordination'], ('delta_seconds', 'leader_period_seconds'))
-        coordination = CoordinationConfig(**data['coordination'])
-        coordination.timing  # Validate lease feasibility before constructing any transport.
-        _keys(data['statistics'], ('path', 'profile'))
-        statistics = StatisticsConfig(Path(_text(data['statistics']['path'])),
-                                      _text(data['statistics']['profile']))
-        return ControllerConfig(contact, timeout, coordination, statistics)
+        return ControllerConfig(contact, _number(data['http_timeout_seconds'], maximum=120))
     except (TypeError, ValueError, OverflowError):
-        raise ConfigurationError(path, 'Invalid controller settings') from None
+        raise ConfigurationError(path, 'Invalid contact or HTTP timeout; see controller.example.json') from None

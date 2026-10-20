@@ -46,7 +46,7 @@ CLI-флаги, JSON и точки входа не требуется сохра
 Источники договорённостей:
 
 - [Архитектура](../../agents/architecture.md) и [решения №1–10](../../reviews/2026-10-14-autonomy-architecture-resolution.md).
-- [Выбор лидера](../../reference/leader-election.md), [принятый риск](../../reference/orchestration-risk.md).
+- [Выбор лидера](../../history/leader-election.md), [принятый риск](../../history/orchestration-risk.md).
 - [boiler_reset](../../reference/boiler-reset.md), [детектор](../../reference/anomaly-detection.md).
 - [Текущие контракты](../../agents/contracts.md), [разработка](../../agents/development.md).
 - [Тест name](../../reports/2026-10-14-zont-name-live-probe.md), [тест notes](../../reports/2026-10-14-zont-notes-live-probe.md).

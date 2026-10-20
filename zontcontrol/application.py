@@ -1,7 +1,7 @@
 """Process composition root and registrar entrypoint.
 
-Only this boundary reads token environment. Algorithms receive private facade
-bindings, never adapters, metadata stores, credentials or a permissive gate.
+Only this boundary reads token environment. Algorithms receive the shared controller,
+never adapters or credentials.
 Start/stop act on this application's threads; there is no remote daemon.
 """
 
@@ -13,7 +13,7 @@ import os
 import signal
 import sys
 from threading import Event
-from typing import Any, Protocol, Self, cast
+from typing import Protocol, Self
 
 from . import __version__
 from .autonomy.catalog import BUILTIN_SPECS
@@ -23,20 +23,14 @@ from .autonomy.contracts import (
 from .autonomy.registry import AlgorithmRegistry
 from .autonomy.runtime import RunHandle
 from .config import (
-    ConfigurationError, ControllerConfig, JSONReader,
+    ConfigurationError, JSONReader,
     load_controller_config, load_registry_config, read_json,
 )
-from .control_types import UUIDFactory
 from .controller.auth import token_headers
 from .controller.contracts import Controller, ControllerError
-from .controller.ownership import CommandExecutor
-from .controller.service import ControllerService
+from .controller.service import ControllerService, ReadControllerService
 from .controller.transport import HttpTransport
 from .controller.zont import ZontAdapter
-from .coordination import (
-    BootClock, Clock, CoordinationRuntime, JsonlSink, ObservationError, ObservationSink, Statistics,
-)
-from .coordination import CoordinatorWorker as _DeviceCoordinator
 
 
 class TransportFactory(Protocol):
@@ -54,24 +48,20 @@ def _credentials(environ: Mapping[str, str]) -> str:
 
 
 def _adapter(environ: Mapping[str, str] | None, reader: JSONReader,
-             transport_factory: TransportFactory) -> tuple[ControllerConfig, HttpTransport, ZontAdapter]:
+             transport_factory: TransportFactory) -> tuple[HttpTransport, ZontAdapter]:
     token = _credentials(os.environ if environ is None else environ)
     config = load_controller_config(reader=reader)
     headers = token_headers(config.contact, token)
-    try:
-        Statistics(lambda row: None, protocol_version='1', profile=config.statistics.profile)
-    except ObservationError:
-        raise ConfigurationError('config/controller.json', 'Invalid statistics profile') from None
     transport = transport_factory(timeout=config.http_timeout_seconds)
-    return config, transport, ZontAdapter(transport, headers)
+    return transport, ZontAdapter(transport, headers)
 
 
 def create_read_controller(*, environ: Mapping[str, str] | None = None,
                            reader: JSONReader = read_json,
-                           transport_factory: TransportFactory | None = None) -> ControllerService:
-    """Research/read boundary: no registry, coordinator, worker or write binding."""
-    _, _, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
-    return ControllerService(adapter)
+                           transport_factory: TransportFactory | None = None) -> ReadControllerService:
+    """Research boundary: data and previews, no command method or algorithms."""
+    _, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
+    return ReadControllerService(adapter)
 
 
 def _close_transport(transport: HttpTransport) -> None:
@@ -80,25 +70,18 @@ def _close_transport(transport: HttpTransport) -> None:
         close()
 
 
-def _create_device_coordinator(*args: Any, **kwargs: Any) -> _DeviceCoordinator:
-    # Resolve the name at call time: tests replace application._DeviceCoordinator.
-    # Any is intentional in this forwarding shim; CoordinatorWorker types the arguments.
-    return _DeviceCoordinator(*args, **kwargs)
-
-
 class Application:
     """Own one registry and its resources in the caller's process.
 
     close(wait_timeout) may return False while a worker is stopping. Shared
-    resources stay available until every finally and accepted command ends.
+    resources stay available until every registered module finishes its finally.
     """
 
-    def __init__(self, controller: ControllerService, coordination: CoordinationRuntime,
-                 registry: AlgorithmRegistry) -> None:
-        self._controller, self._coordination, self._registry = controller, coordination, registry
+    def __init__(self, controller: ControllerService, registry: AlgorithmRegistry) -> None:
+        self._controller, self._registry = controller, registry
 
     def controller(self) -> Controller:
-        return self._controller.for_consumer()
+        return self._controller
 
     def list_algorithms(self, mode: Mode | None = None) -> tuple[AlgorithmRegistration, ...]:
         return self._registry.list_algorithms(mode)
@@ -150,58 +133,23 @@ class Application:
 
 def create_application(*, environ: Mapping[str, str] | None = None, reader: JSONReader = read_json,
                        catalog: Iterable[AlgorithmSpec] = BUILTIN_SPECS,
-                       transport_factory: TransportFactory | None = None,
-                       statistics_sink: ObservationSink | None = None, clock: Clock | None = None,
-                       uuid_factory: UUIDFactory | None = None) -> Application:
-    """Load fixed cwd/config infrastructure; factories load their module files.
+                       transport_factory: TransportFactory | None = None) -> Application:
+    """Compose one account controller and independent algorithm threads.
 
-    Catalog/transport/sink/clock/UUID generation are offline DI seams. A supplied
-    UUID factory must be thread-safe and return fresh nonzero UUIDs. No option
-    replaces the coordination gate with local permission.
+    Modules share the controller through ordinary DI. There is no device
+    coordinator or command ownership. Shutdown joins module finally blocks
+    before closing the transport. External callers finish their own calls
+    before closing the application.
     """
     _credentials(os.environ if environ is None else environ)
     registry_config = load_registry_config(reader=reader)
     catalog = tuple(catalog)
     validate_catalog(catalog, registry_config)
-    config, transport, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
-    sink = statistics_sink
-    try:
-        clock = clock if clock is not None else BootClock()
-        if sink is None:
-            path = config.statistics.path
-            path.parent.mkdir(parents=True, exist_ok=True)
-            sink = JsonlSink(path.open('a', encoding='utf-8'))
-        statistics = Statistics(sink, protocol_version='1', profile=config.statistics.profile)
-    except BaseException:
-        try:
-            if statistics_sink is None and sink is not None:
-                cast(JsonlSink, sink).close()
-        finally:
-            _close_transport(transport)
-        raise
-    coordination = CoordinationRuntime(
-        adapter, config.coordination, clock, statistics,
-        worker_factory=_create_device_coordinator, uuid_factory=uuid_factory,
-    )
-    executor = CommandExecutor(gate=coordination, clock=clock.now, statistics=statistics,
-                               uuid_factory=uuid_factory)
-    controller = ControllerService(adapter, executor=executor)
-
-    def close_resources() -> None:
-        executor.wait_idle()
-        try:
-            coordination.close()
-        finally:
-            try:
-                _close_transport(transport)
-            finally:
-                if statistics_sink is None:
-                    cast(JsonlSink, sink).close()
-
-    registry = AlgorithmRegistry(registry_config, controller.for_consumer,
-                                 begin_close_controller=executor.begin_close,
-                                 close_controller=close_resources, uuid_factory=uuid_factory)
-    app = Application(controller, coordination, registry)
+    transport, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
+    controller = ControllerService(adapter)
+    registry = AlgorithmRegistry(registry_config, controller,
+                                 close_controller=lambda: _close_transport(transport))
+    app = Application(controller, registry)
     try:
         registry.register_all(catalog)
     except BaseException:

@@ -1,26 +1,18 @@
 """Offline registrar lifecycle and constructor DI contracts."""
 
 from pathlib import Path
-from threading import Barrier, Event, Thread
+from threading import Event, Thread
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock
-from uuid import UUID
 
-from zontcontrol.autonomy.catalog import AlgorithmCatalog, BUILTIN_SPECS
+from zontcontrol.autonomy.catalog import AlgorithmCatalog
 from zontcontrol.autonomy.contracts import (
     AlgorithmBusy, AlgorithmFailed, AlgorithmResult, AlgorithmSpec, AlgorithmState,
     AlgorithmTimeout, Mode, ResultStatus,
 )
 from zontcontrol.autonomy.registry import AlgorithmRegistry
 from zontcontrol.config import ConfigurationError, OnceTimeout, RegistryConfig, read_json
-from zontcontrol.controller.contracts import ControlKey
-from zontcontrol.controller.ownership import CommandExecutor
-from zontcontrol.controller.service import ControllerService
-from tests.fakes.uuid import uuid_generator
-from tests.fakes.clock import FakeClock
-from tests.test_control_ownership import LocalTestGate
-from tests.test_inventory import inventory_device
 
 
 SUCCESS = AlgorithmResult(ResultStatus.SUCCESS, 'ok')
@@ -45,36 +37,23 @@ def spec(name='reset', modes=DUAL, factory=Module, minimum=0, requirements=froze
 
 
 class RegistryTests(unittest.TestCase):
-    def setUp(self):
-        self.uuid_generator = uuid_generator()
-
-    def test_registry_passes_uuid_generator_to_algorithm_runtime(self):
-        module = Mock()
-        module.run_once.return_value = SUCCESS
-        registry, _ = self.registry([spec(factory=lambda controller: module)])
-        self.uuid_generator.assert_not_called()  # Registration does not start a run.
+    def test_registration_and_runs_share_controller_through_direct_di(self):
+        controller = object()
+        factory = Mock(side_effect=Module)
+        registry, _ = self.registry([spec(factory=factory)], controller=controller)
         self.assertIs(registry.run_once('reset'), SUCCESS)
-        context = module.run_once.call_args.args[0]
-        self.assertEqual((context.instance_id, context.run_id), (UUID(int=1), UUID(int=2)))
-        self.assertEqual(self.uuid_generator.call_count, 2)
+        self.assertEqual(factory.call_args_list, [unittest.mock.call(controller)] * 2)
 
-    def test_builtins_require_sync_grants_instead_of_immediate_acquisition(self):
-        for builtin in BUILTIN_SPECS:
-            with self.subTest(algorithm=builtin.algorithm_id):
-                self.assertIn('acquire_control', builtin.required_capabilities)
-                self.assertNotIn('try_acquire_control', builtin.required_capabilities)
 
     def registry(self, specs, *, disabled=(), autostart=False, pairs=None,
-                 bind=None, capabilities=None, close=None, begin_close=None):
+                 controller=None, capabilities=None, close=None):
         if pairs is None:
             pairs = {s.algorithm_id: OnceTimeout(.01, 1) for s in specs if Mode.ONCE in s.modes}
         config = RegistryConfig(frozenset(disabled), autostart, pairs)
-        registry = AlgorithmRegistry(config, bind or (lambda: object()),
-                                     begin_close_controller=begin_close,
+        registry = AlgorithmRegistry(config, controller,
                                      close_controller=close,
                                      **({} if capabilities is None else
-                                        {'available_capabilities': capabilities}),
-                                        uuid_factory=self.uuid_generator)
+                                        {'available_capabilities': capabilities}))
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         report = registry.register_all(AlgorithmCatalog(specs))
         return registry, {item.spec.algorithm_id: item for item in report}
@@ -143,7 +122,7 @@ class RegistryTests(unittest.TestCase):
             registry.run_once('ui')
         self.assertTrue(registry.stop('reset', wait_timeout=1))
         again = registry.start('reset')
-        self.assertNotEqual(again.context.instance_id, handle.context.instance_id)
+        self.assertIsNot(again.context, handle.context)
         self.assertIsNot(made[-1], made[1])
 
     def test_config_true_autostarts_dual_mode_without_once_deadline(self):
@@ -251,9 +230,8 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(registry.close(wait_timeout=0))
         self.assertEqual(effects, ['off', 'closed'])
 
-    def test_constructor_di_is_per_instance_without_registry_or_element_id_dispatch(self):
-        controllers = [object(), object(), object(), object()]
-        bind = Mock(side_effect=controllers)
+    def test_constructor_di_shares_controller_without_registry_or_element_id_dispatch(self):
+        controller = object()
         made = []
 
         def factory(controller):
@@ -262,48 +240,38 @@ class RegistryTests(unittest.TestCase):
             return module
 
         registry, _ = self.registry([spec('device_one', factory=factory),
-                                     spec('device_two', factory=factory)], bind=bind)
+                                     spec('device_two', factory=factory)], controller=controller)
         self.assertIs(registry.run_once('device_one'), SUCCESS)
         self.assertIs(registry.run_once('device_two'), SUCCESS)
-        self.assertEqual([x.controller for x in made], controllers)
-        self.assertEqual(bind.call_args_list, [unittest.mock.call()] * 4)
+        self.assertEqual([x.controller for x in made], [controller] * 4)
+        self.assertEqual(len({id(module) for module in made}), 4)
         self.assertFalse(hasattr(made[0], 'registry'))
 
     def test_registration_constructs_without_running_and_launch_bootstrap_is_timed(self):
-        for blocked_step in ('di', 'factory'):
-            with self.subTest(blocked_step=blocked_step):
-                entered, release = Event(), Event()
-                effects = Mock()
-                module = Mock(run_once=Mock(return_value=SUCCESS),
-                              run_continuous=effects)
-                count = {'di': 0, 'factory': 0}
+        entered, release = Event(), Event()
+        self.addCleanup(release.set)
+        module = Mock(run_once=Mock(return_value=SUCCESS))
+        count = 0
 
-                def bootstrap(step):
-                    count[step] += 1
-                    if step == blocked_step and count[step] == 2:
-                        entered.set()
-                        release.wait()
+        def factory(controller):
+            nonlocal count
+            count += 1
+            if count == 2:
+                entered.set()
+                release.wait()
+            return module
 
-                def bind():
-                    bootstrap('di')
-                    return object()
-
-                def factory(controller):
-                    bootstrap('factory')
-                    return module
-
-                registry, report = self.registry([spec(factory=factory)], bind=bind)
-                self.addCleanup(release.set)
-                self.assertEqual(report['reset'].state, AlgorithmState.REGISTERED)
-                effects.assert_not_called()
-                module.run_once.assert_not_called()
-                with self.assertRaises(AlgorithmTimeout):
-                    registry.run_once('reset', timeout=.02)
-                self.assertTrue(entered.is_set())
-                self.assertEqual(registry.list_algorithms()[0].state, AlgorithmState.STOPPING)
-                module.run_once.assert_not_called()
-                release.set()
-                self.assertTrue(registry.stop('reset', wait_timeout=1))
+        registry, report = self.registry([spec(factory=factory)])
+        self.assertEqual(report['reset'].state, AlgorithmState.REGISTERED)
+        module.run_continuous.assert_not_called()
+        module.run_once.assert_not_called()
+        with self.assertRaises(AlgorithmTimeout):
+            registry.run_once('reset', timeout=.02)
+        self.assertTrue(entered.is_set())
+        self.assertEqual(registry.list_algorithms()[0].state, AlgorithmState.STOPPING)
+        module.run_once.assert_not_called()
+        release.set()
+        self.assertTrue(registry.stop('reset', wait_timeout=1))
 
     def test_failed_factory_isolated_and_explicit_launch_retries_construction(self):
         factory = Mock(side_effect=[ValueError('private-value'), Module(object())])
@@ -313,42 +281,6 @@ class RegistryTests(unittest.TestCase):
         self.assertIs(registry.run_all_once()['bad'], SUCCESS)
         self.assertEqual(factory.call_count, 2)
 
-    def test_same_element_id_on_different_devices_uses_independent_consumer_bindings(self):
-        clock = FakeClock(start=100)
-        gate = LocalTestGate(clock, uuid_factory=self.uuid_generator)
-        executor = CommandExecutor(gate=gate, clock=clock.now, uuid_factory=self.uuid_generator)
-        adapter = Mock()
-        adapter.devices.side_effect = lambda device_id=None: [
-            {**inventory_device(), 'id': device_id}]
-        service = ControllerService(adapter, executor=executor, clock=clock.wall_now)
-        both = Barrier(2)
-
-        class Reader(Module):
-            def __init__(self, controller, device_id):
-                super().__init__(controller)
-                self.device_id = device_id
-
-            def run_once(self, context):
-                session = self.controller.try_acquire_control(self.device_id, lease_seconds=60)
-                try:
-                    command = self.controller.prepare_command(
-                        self.device_id, ControlKey(self.device_id, 'toggle_buttons', 31),
-                        'trigger', {'target_state': True})
-                    both.wait(1)
-                    return AlgorithmResult(ResultStatus.SUCCESS, command.control_key)
-                finally:
-                    self.controller.release_control(session)
-
-        registry, _ = self.registry([
-            spec('one', factory=lambda c: Reader(c, 42)),
-            spec('two', factory=lambda c: Reader(c, 43))], bind=service.for_consumer)
-        self.assertEqual(gate.acquisitions, 0)
-        adapter.assert_not_called()
-        adapter.devices.assert_not_called()
-        result = registry.run_all_once()
-        self.assertEqual(result['one'].value, ControlKey(42, 'toggle_buttons', 31))
-        self.assertEqual(result['two'].value, ControlKey(43, 'toggle_buttons', 31))
-        self.assertEqual(gate.acquisitions, 2)
 
     def test_registry_configuration_is_snapshot_not_mutable_service_locator(self):
         pairs = {'reset': OnceTimeout(.01, 1)}
@@ -397,7 +329,7 @@ class RegistryTests(unittest.TestCase):
         for specs, config in (
                 ([spec(factory=factory), spec(factory=factory)], RegistryConfig(frozenset(), False, {})),
                 ([spec(factory=factory)], RegistryConfig(frozenset({'typo'}), False, {}))):
-            registry = AlgorithmRegistry(config, Mock(), uuid_factory=self.uuid_generator)
+            registry = AlgorithmRegistry(config, Mock())
             with self.assertRaises(ValueError):
                 registry.register_all(specs)
             self.assertTrue(registry.close())
@@ -412,8 +344,7 @@ class RegistryTests(unittest.TestCase):
             return Module(controller)
 
         registry = AlgorithmRegistry(RegistryConfig(frozenset(), False,
-                                                   {'reset': OnceTimeout(.01, 1)}), object,
-                                                   uuid_factory=self.uuid_generator)
+                                                   {'reset': OnceTimeout(.01, 1)}), object())
         self.addCleanup(registry.close)
         self.addCleanup(release.set)
         thread = Thread(target=lambda: registry.register_all([spec(factory=factory)]))
@@ -440,62 +371,26 @@ class RegistryTests(unittest.TestCase):
 
     def test_shared_close_failure_is_safe_and_not_retried(self):
         close = Mock(side_effect=RuntimeError('private-value'))
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), object,
-                                     close_controller=close,
-                                     uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), object(),
+                                     close_controller=close)
         registry.register_all(AlgorithmCatalog())
         for _ in range(2):
             with self.assertRaisesRegex(RuntimeError, '^Shared controller shutdown failed$'):
                 registry.close()
         close.assert_called_once_with()
 
-    def test_early_close_hook_precedes_cancellation_and_all_finally(self):
-        effects, handles = [], []
-        entered = Barrier(3)
-        finish = Event()
-
-        class Worker(Module):
-            def run_continuous(self, context):
-                try:
-                    entered.wait(1)
-                    context.wait()
-                finally:
-                    finish.wait()
-                    effects.append('finally')
-
-        def begin_close():
-            self.assertTrue(all(not h.context.cancelled.is_set() for h in handles))
-            effects.append('admission')
-
-        registry, _ = self.registry([spec('one', factory=Worker), spec('two', factory=Worker)],
-                                    begin_close=begin_close,
-                                    close=lambda: effects.append('resources'))
-        self.addCleanup(finish.set)
-        handles.extend(registry.start(name) for name in ('one', 'two'))
-        entered.wait(1)
-        self.assertFalse(registry.close(wait_timeout=0))
-        self.assertTrue(all(h.context.cancelled.is_set() for h in handles))
-        self.assertEqual(effects, ['admission'])
-        with self.assertRaises(AlgorithmBusy):
-            registry.start('one')
-        finish.set()
-        self.assertTrue(registry.close(wait_timeout=1))
-        self.assertTrue(registry.close(wait_timeout=0))
-        self.assertEqual(effects, ['admission', 'finally', 'finally', 'resources'])
 
     def test_invalid_close_timeout_does_not_begin_shutdown(self):
-        begin, close = Mock(), Mock()
-        registry, _ = self.registry([spec()], begin_close=begin, close=close)
+        close = Mock()
+        registry, _ = self.registry([spec()], close=close)
         for timeout in (-1, True, '1', float('inf'), float('nan')):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
                 registry.close(wait_timeout=timeout)
-        begin.assert_not_called()
         close.assert_not_called()
         self.assertFalse(registry._closed)
         self.assertFalse(registry._close_started)
         self.assertIs(registry.run_once('reset'), SUCCESS)
         self.assertTrue(registry.close())
-        begin.assert_called_once_with()
         close.assert_called_once_with()
 
     def test_concurrent_close_uses_one_hook_and_one_shutdown_worker(self):
@@ -505,7 +400,7 @@ class RegistryTests(unittest.TestCase):
             entered.set()
             finish.wait()
         final = Mock(side_effect=close)
-        registry, _ = self.registry([], begin_close=begin, close=final)
+        registry, _ = self.registry([], close=final)
         self.addCleanup(finish.set)
         results = []
         thread = Thread(target=lambda: results.append(registry.close()))
@@ -520,100 +415,7 @@ class RegistryTests(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(results, [True])
         self.assertTrue(registry.close(wait_timeout=0))
-        begin.assert_called_once_with()
         final.assert_called_once_with()
-
-    def test_early_hook_failure_is_terminal_for_concurrent_and_repeated_close(self):
-        hook_entered, hook_finish = Event(), Event()
-        worker_entered, worker_finish = Event(), Event()
-        errors = []
-
-        class Worker(Module):
-            def run_continuous(self, context):
-                worker_entered.set()
-                try:
-                    context.wait()
-                finally:
-                    worker_finish.wait()
-
-        def fail():
-            hook_entered.set()
-            hook_finish.wait()
-            raise RuntimeError('private-value')
-
-        begin, final = Mock(side_effect=fail), Mock()
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False,
-            {'reset': OnceTimeout(.01, 1)}), object,
-            begin_close_controller=begin, close_controller=final,
-            uuid_factory=self.uuid_generator)
-        registry.register_all([spec(factory=Worker)])
-        handle = registry.start('reset')
-        self.addCleanup(worker_finish.set)
-        self.addCleanup(hook_finish.set)
-        self.assertTrue(worker_entered.wait(1))
-
-        def close(wait_timeout=0):
-            try:
-                registry.close(wait_timeout=wait_timeout)
-                errors.append('unexpected return')
-            except RuntimeError as error:
-                errors.append((str(error), error.__suppress_context__,
-                               handle.context.cancelled.is_set()))
-
-        threads = [Thread(target=close) for _ in range(2)]
-        threads[0].start()
-        self.assertTrue(hook_entered.wait(1))
-        threads[1].start()
-        hook_finish.set()
-        for thread in threads:
-            thread.join(1)
-            self.assertFalse(thread.is_alive())
-        close()
-        close(None)
-        self.assertEqual(errors, [('Shared controller shutdown failed', True, True)] * 4)
-        self.assertTrue(registry._shutdown_done.is_set())
-        self.assertTrue(registry._close_started)
-        self.assertIsNone(registry._shutdown)
-        begin.assert_called_once_with()
-        final.assert_not_called()
-        with self.assertRaises(AlgorithmBusy):
-            registry.start('reset')
-        worker_finish.set()
-        self.assertTrue(registry.stop('reset', wait_timeout=1))
-
-    def test_hook_failure_during_registration_never_autostarts_late_runtime(self):
-        entered, resume = Event(), Event()
-        ran, close = Mock(), Mock()
-        def factory(controller):
-            entered.set()
-            resume.wait()
-            return Mock(run_continuous=ran)
-        begin = Mock(side_effect=RuntimeError('private-value'))
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), True, {}), object,
-            begin_close_controller=begin, close_controller=close,
-            uuid_factory=self.uuid_generator)
-        self.addCleanup(resume.set)
-        thread = Thread(target=lambda: registry.register_all([
-            spec(modes=frozenset({Mode.CONTINUOUS}), factory=factory),
-            spec('late', modes=frozenset({Mode.CONTINUOUS}),
-                 factory=lambda controller: Mock(run_continuous=ran))]))
-        thread.start()
-        self.assertTrue(entered.wait(1))
-        with self.assertRaisesRegex(RuntimeError, '^Shared controller shutdown failed$'):
-            registry.close(wait_timeout=0)
-        self.assertTrue(registry._shutdown_done.is_set())
-        resume.set()
-        thread.join(1)
-        self.assertFalse(thread.is_alive())
-        ran.assert_not_called()
-        close.assert_not_called()
-        begin.assert_called_once_with()
-
-    def test_early_close_hook_dependency_must_be_callable(self):
-        with self.assertRaises(ValueError):
-            AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), object,
-                              begin_close_controller=object(),
-                              uuid_factory=self.uuid_generator)
 
 
 if __name__ == '__main__':

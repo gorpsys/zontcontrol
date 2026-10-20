@@ -1,7 +1,7 @@
 """Research archive projection of controller DTOs, not an application contract.
 
 The collector and offline calibration tools own this format. Nothing here can
-register algorithms, acquire ownership or execute a command.
+register algorithms or execute a command.
 """
 
 

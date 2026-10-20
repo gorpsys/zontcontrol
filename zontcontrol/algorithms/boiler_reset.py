@@ -1,4 +1,4 @@
-"""Current calibrated anomaly -> one owned reset pulse, with cooperative cleanup.
+"""Current calibrated anomaly -> one reset pulse, with cooperative cleanup.
 
 No network or work starts during construction. Once callers may schedule this
 module about every 15 minutes; continuous owns its polling and five-minute pause.
@@ -14,7 +14,7 @@ from time import monotonic
 from ..autonomy.contracts import AlgorithmResult, ResultStatus
 from ..config import ConfigurationError, read_json
 from ..controller.contracts import (
-    ControlKey, ControlRequestReason, ControlRequestState, DeviceControlBusy,
+    ControlKey,
     DeviceUnavailable, InvalidArguments, Quality, ValueKey,
     ValueType,
 )
@@ -26,24 +26,14 @@ CONFIG_PATH = Path('config/boiler_reset.json')
 PULSE_SECONDS = 40
 POST_RESET_SECONDS = 300
 HISTORY_MINUTES = 45
-# Unmeasured engineering budgets, not measured ZONT timing guarantees. The spec
-# covers the largest configurable grant wait. Lease begins with the request,
-# before grant acknowledgement, and must also cover rechecks, on and finally.
-HISTORY_BUDGET_SECONDS = 30
-GRANT_WAIT_SECONDS = 30
-RECHECK_BUDGET_SECONDS = 20
-ON_BUDGET_SECONDS = 15
-CLEANUP_BUDGET_SECONDS = 15
-LEASE_MARGIN_SECONDS = 20
-MINIMUM_SECONDS = (HISTORY_BUDGET_SECONDS + GRANT_WAIT_SECONDS + RECHECK_BUDGET_SECONDS
-                   + ON_BUDGET_SECONDS + PULSE_SECONDS + CLEANUP_BUDGET_SECONDS
-                   + LEASE_MARGIN_SECONDS)
+# Forty seconds of reset plus an engineering budget for history and HTTP.
+# This is a registrar minimum, not a bound on ZONT response times.
+MINIMUM_SECONDS = 120
 
 
-def _seconds(value, *, maximum=None):
+def _seconds(value):
     try:
-        valid = (type(value) in (int, float) and math.isfinite(value) and value > 0
-                 and (maximum is None or value <= maximum))
+        valid = type(value) in (int, float) and math.isfinite(value) and value > 0
     except OverflowError:
         valid = False
     if not valid:
@@ -59,8 +49,6 @@ class BoilerResetConfig:
     reset_control_id: int
     check_interval_seconds: float
     detection_profile: str = 'smart_2_heating'
-    grant_wait_seconds: float = GRANT_WAIT_SECONDS
-    grant_poll_seconds: float = 1
 
     def __post_init__(self):
         if any(type(value) is not int or value <= 0 for value in (
@@ -70,19 +58,12 @@ class BoilerResetConfig:
         if self.air_sensor_id == self.coolant_sensor_id:
             raise ValueError()
         _seconds(self.check_interval_seconds)
-        _seconds(self.grant_wait_seconds, maximum=GRANT_WAIT_SECONDS)
-        _seconds(self.grant_poll_seconds, maximum=self.grant_wait_seconds)
         if self.detection_profile != 'smart_2_heating':
             raise ValueError()
 
     @property
     def detector_config(self):
         return SMART_2_HEATING_CONFIG
-
-    @property
-    def lease_seconds(self):
-        return (self.grant_wait_seconds + RECHECK_BUDGET_SECONDS + ON_BUDGET_SECONDS
-                + PULSE_SECONDS + CLEANUP_BUDGET_SECONDS + LEASE_MARGIN_SECONDS)
 
     @property
     def reset_key(self):
@@ -180,19 +161,6 @@ class BoilerReset:
         return AlgorithmResult(status, dict(assessment=decision, reset_performed=reset_performed,
                                             reason=reason))
 
-    def _acquire(self, context):
-        result = self._controller.acquire_control(
-            self.config.device_id, lease_seconds=self.config.lease_seconds,
-            timeout=self.config.grant_wait_seconds, poll_seconds=self.config.grant_poll_seconds,
-            cancelled=context.cancelled)
-        if result.state is ControlRequestState.GRANTED:
-            return result.session
-        if result.reason is ControlRequestReason.CONTROLLER_ERROR:
-            raise result.make_error()
-        if result.reason in (ControlRequestReason.CANCELLED, ControlRequestReason.SHUTDOWN):
-            return None
-        raise DeviceControlBusy()
-
     def run_once(self, context):
         if context.cancelled.is_set():
             return self._result(reason='cancelled')
@@ -208,47 +176,41 @@ class BoilerReset:
                                   coolant_id=self.config.coolant_sensor_id,
                                   reset_id=self.config.reset_control_id,
                                   config=self.config.detector_config)
-        if decision['state_at_period_end'] != 'confirmed_pattern' or context.cancelled.is_set():
+        if decision['state_at_period_end'] != 'confirmed_pattern':
             return self._result(decision)
-        session = self._acquire(context)
-        if session is None:
+        if context.cancelled.is_set():
+            return self._result(decision, reason='cancelled')
+        online = next((row.online for row in self._controller.list_devices()
+                       if row.device_id == self.config.device_id), None)
+        if online is not True:
+            raise DeviceUnavailable()
+        snapshot = self._controller.read_current(self.config.device_id, (self.config.reset_key,))
+        value = next((row for row in snapshot.values if row.key == self.config.reset_key), None)
+        # Widget state has no measurement timestamp and quality UNKNOWN is
+        # normal. Missing/stale state still cannot authorize a new pulse.
+        active = (value.value if value is not None
+                  and value.quality in (Quality.GOOD, Quality.UNKNOWN) else None)
+        if active is True:
+            return self._result({**decision, 'state_at_period_end': 'suppressed'},
+                                reason='already_on')
+        if active is not False:
+            return self._result({**decision, 'state_at_period_end': 'unknown'},
+                                reason='current_reset_unknown')
+        key = ControlKey(self.config.device_id, 'toggle_buttons', self.config.reset_control_id)
+        on = self._controller.prepare_command(self.config.device_id, key, 'trigger',
+                                              {'target_state': True})
+        off = self._controller.prepare_command(self.config.device_id, key, 'trigger',
+                                               {'target_state': False})
+        if context.cancelled.is_set():
             return self._result(decision, reason='cancelled')
         try:
-            if context.cancelled.is_set():
-                return self._result(decision, reason='cancelled')
-            online = next((row.online for row in self._controller.list_devices()
-                           if row.device_id == self.config.device_id), None)
-            if online is not True:
-                raise DeviceUnavailable()
-            snapshot = self._controller.read_current(self.config.device_id, (self.config.reset_key,))
-            value = next((row for row in snapshot.values if row.key == self.config.reset_key), None)
-            # Widget state has no measurement timestamp and quality UNKNOWN is
-            # normal. Missing/stale state still cannot authorize a new pulse.
-            active = (value.value if value is not None
-                      and value.quality in (Quality.GOOD, Quality.UNKNOWN) else None)
-            if active is True:
-                return self._result({**decision, 'state_at_period_end': 'suppressed'},
-                                    reason='already_on')
-            if active is not False:
-                return self._result({**decision, 'state_at_period_end': 'unknown'},
-                                    reason='current_reset_unknown')
-            key = ControlKey(self.config.device_id, 'toggle_buttons', self.config.reset_control_id)
-            on = self._controller.prepare_command(self.config.device_id, key, 'trigger',
-                                                  {'target_state': True})
-            off = self._controller.prepare_command(self.config.device_id, key, 'trigger',
-                                                   {'target_state': False})
-            if context.cancelled.is_set():
-                return self._result(decision, reason='cancelled')
-            try:
-                # Even unknown on may have applied. No retry; always attempt off
-                # using the same ordinary session and controller admission path.
-                self._controller.execute_command(on, session)
-                self._wait(context, PULSE_SECONDS)
-            finally:
-                self._controller.execute_command(off, session)
-            return self._result(decision, reset_performed=True)
+            # Even unknown on may have applied. No retry; always attempt off
+            # through the same direct controller API.
+            self._controller.execute_command(on)
+            self._wait(context, PULSE_SECONDS)
         finally:
-            self._controller.release_control(session)
+            self._controller.execute_command(off)
+        return self._result(decision, reset_performed=True)
 
     def run_continuous(self, context):
         next_check = self._clock()
