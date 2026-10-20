@@ -1,8 +1,9 @@
 # Контракт Yandex Cloud-деплоя
 
-Статус: once-композиция, stdlib local/YC logger, облачный handler и исходный
-профиль реализованы. ZIP и deploy workflow пока не реализованы; опубликованного облачного запуска
-zontcontrol нет. Далее описаны требования согласованного
+Статус: once-композиция, stdlib local/YC logger, облачный handler, профиль,
+минимальный ZIP и deploy workflow реализованы и проверяются офлайн.
+Новые облачные ресурсы ещё не созданы, repository variables не заполнены;
+опубликованного облачного запуска zontcontrol нет. Далее — контракт согласованного
 [плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
 заменившего прежний [эскиз](../plans/yandex-cloud.md).
 
@@ -45,21 +46,28 @@ iam.serviceAccounts.user на invoker. Runtime SA получает lockbox.paylo
 значение z_token в Lockbox; агент читает только metadata, никогда payload.
 Runtime получает его через secret binding в ZONT_TOKEN.
 
-Планируемые repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
+Обязательные repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
 FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
 GITHUB_OIDC_AUDIENCE, ZONT_CONTACT. Runtime, entrypoint, 256MB/420s/concurrency1,
 LOCKBOX_KEY=z_token и LOCKBOX_ENVIRONMENT_VARIABLE=ZONT_TOKEN фиксируются
-в workflow. [Пример](../../deploy/yandex.example.json) пока отражает прежний
-эскиз и будет обновлён вместе с deploy workflow; он не источник настройки.
+в workflow. [Пример](../../deploy/yandex.example.json) отражает этот набор;
+он не читается helper и не является вторым источником настройки. Новые ID
+в примере — null до подтверждённого создания; подстановка ID образца запрещена.
+Общие cloud/folder/runtime SA/bucket и GitHub AUD проверяются по согласованным
+значениям. Contact проверяется существующим валидатором контроллера.
 
 ## Gate и публикация
 
 Деплой допускается только для текущего проверенного master gorpsys/zontcontrol:
 workflow_run успешного Project checks push-master или workflow_dispatch master.
-Требовать Lint и Offline checks от доверенного .github/workflows/checks.yml,
-проверять производителя checks/statuses, SHA и origin; PR/fork, другой branch
-и устаревший SHA отклонять до credentials. Повторить gate непосредственно
-перед OIDC. Checkout закреплён на проверенном SHA. Очередь deploy-prod:
+Требовать Lint и Offline checks от доверенного .github/workflows/checks.yml:
+проверять GitHub Actions app ID/slug, head SHA, details URL и отдельный
+workflow run (repo/head repo, path, push/master, SHA, success). Commit statuses
+не могут заменить обязательные checks; права statuses:read не требуются.
+PR/fork, другой branch и устаревший SHA отклонять до credentials. Повторить
+gate непосредственно перед OIDC, в том числе внутри helper после локальной
+проверки параметров и ZIP. Gate повторно читает master после checks.
+Checkout закреплён на проверенном SHA. Очередь deploy-prod:
 cancel-in-progress=false, queue=max. Release tag не запускает деплой сам.
 
 OIDC subject: repo:gorpsys/zontcontrol:ref:refs/heads/master, без GitHub
@@ -75,6 +83,17 @@ bindings, runtime SA, logging и поддерживаемые настройки
 SHA, runtime/entrypoint, ресурсы/timeout/concurrency, SA, log folder и secret
 ID/version/key/env. ACTIVE само по себе не доказывает успешный запуск Python.
 Создание функции, IAM и таймера в deploy workflow не входит.
+
+Helper сохраняет env, прочие pinned secret bindings, tmpfs, network,
+named service accounts, metadata endpoints и минимальный уровень логов;
+runtime/entrypoint/memory/timeout/concurrency/runtime SA заданы явно.
+Назначение логов — default log group общего folder. Иной журнал, отключённые
+логи, mounts/async settings и неизвестные поля приводят к отказу до upload.
+Непустой list с пустым/некорректным latest также запрещает bootstrap.
+Description содержит SHA, SHA256 и уникальный ключ объекта. После неизвестного
+исхода create этот provenance и новые ID/settings проверяются чтением latest;
+успех возможен только при однозначном совпадении. После неизвестного upload
+helper читает head-object и останавливается: HEAD не доказывает хеш всех байтов.
 
 ## Учётные данные и диагностика
 

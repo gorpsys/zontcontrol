@@ -1,0 +1,109 @@
+name: deploy-prod
+
+on:
+  workflow_run:
+    workflows: [Project checks]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  gate:
+    if: >-
+      github.repository == 'gorpsys/zontcontrol' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'master' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+    outputs:
+      sha: ${{ steps.checks.outputs.sha }}
+      ready: ${{ steps.checks.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require trusted checks on the exact current master
+        id: checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.deploy_gate
+
+  deploy:
+    needs: [gate]
+    if: ${{ needs.gate.outputs.ready == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+      id-token: write
+    env:
+      DEPLOY_SHA: ${{ needs.gate.outputs.sha }}
+      CLOUD_PACKAGE_SHA: ${{ needs.gate.outputs.sha }}
+      CLOUD_ID: ${{ vars.CLOUD_ID }}
+      FOLDER_ID: ${{ vars.FOLDER_ID }}
+      SA_ID: ${{ vars.SA_ID }}
+      FUNCTION_ID: ${{ vars.FUNCTION_ID }}
+      FUNCTION_SA_ID: ${{ vars.FUNCTION_SA_ID }}
+      BUCKET: ${{ vars.BUCKET }}
+      LOCKBOX_SECRET_ID: ${{ vars.LOCKBOX_SECRET_ID }}
+      LOCKBOX_VERSION_ID: ${{ vars.LOCKBOX_VERSION_ID }}
+      GITHUB_OIDC_AUDIENCE: ${{ vars.GITHUB_OIDC_AUDIENCE }}
+      ZONT_CONTACT: ${{ vars.ZONT_CONTACT }}
+      FUNCTION_RUNTIME: python312
+      FUNCTION_ENTRYPOINT: handler.handler
+      FUNCTION_MEMORY: 256MB
+      FUNCTION_TIMEOUT: 420s
+      FUNCTION_CONCURRENCY: '1'
+      ZIP_PATH: ./build/yandex-function.zip
+      LOCKBOX_KEY: z_token
+      LOCKBOX_ENVIRONMENT_VARIABLE: ZONT_TOKEN
+      YC_CLI_VERSION: 1.40.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the minimal checked once ZIP
+        run: make yandex-archive PYTHON=python3
+      - name: Install the pinned official yc binary
+        timeout-minutes: 4
+        run: |
+          mkdir -p "$RUNNER_TEMP/yc-bin"
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 120 --retry 2 --retry-max-time 180 \
+            "https://storage.yandexcloud.net/yandexcloud-yc/release/${YC_CLI_VERSION}/linux/amd64/yc" \
+            --output "$RUNNER_TEMP/yc-bin/yc"
+          chmod +x "$RUNNER_TEMP/yc-bin/yc"
+          echo "$RUNNER_TEMP/yc-bin" >> "$GITHUB_PATH"
+      - name: Recheck master and checks before cloud credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.deploy_gate --check-once
+      - name: Validate settings, recheck gate, exchange OIDC and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m scripts.yandex_deploy

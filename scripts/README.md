@@ -185,7 +185,7 @@ CLI, charts, get_token, __main__, тесты, scripts и локальные да
 Manifest schema_version=1 содержит app_version, source_sha из HEAD, dirty
 и files — SHA256 каждого member, кроме manifest. CLOUD_PACKAGE_SHA, если
 задан, должен совпадать с полным HEAD. Локальная сборка допускает dirty=true;
-для будущего деплоя нужен dirty=false и SHA выбранного коммита. Временный
+для деплоя нужен dirty=false и SHA выбранного коммита. Временный
 архив проверяется на состав, типы файлов, CRC, хеши и точные байты, затем
 атомарно заменяет результат. build/ вне Git; make package/clean удаляет его.
 
@@ -195,14 +195,42 @@ make cloud-package-check сам собирает временный ZIP с си�
 без ZONT_TOKEN, site-packages и сети. Облачный handler только импортируется;
 его production-вызов для диагностики не выполняется.
 
-Workflow деплоя и облачная активация ещё не реализованы.
+Workflow [deploy-prod](../.github/workflows/deploy-prod.yml) и stdlib helpers
+реализованы. Новые function/deploy SA/секрет ещё не созданы, repository variables
+не заполнены; опубликованного запуска и активного таймера нет.
+Workflow принимает успешный Project checks push-master либо workflow_dispatch
+на master. Gate проверяет актуальный SHA gorpsys/zontcontrol, Lint/Offline checks,
+GitHub Actions producer и workflow run с точным checks.yml/push/master/repo/SHA.
+Commit statuses не заменяют checks. Перед OIDC проверка повторяется в workflow
+и внутри helper; checkout и manifest закреплены на этом SHA.
+
+Обязательные repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
+FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
+GITHUB_OIDC_AUDIENCE, ZONT_CONTACT. [Пример](../deploy/yandex.example.json)
+содержит согласованные общие значения и null для ещё не созданных ID/контакта;
+helper его не читает. Runtime/handler/256MB/420s/concurrency1 и binding
+z_token → ZONT_TOKEN фиксированы в workflow; версия Lockbox закреплена ID.
+Пустые/некорректные настройки отклоняются до OIDC. GitHub AUD и новый deployment
+SA_ID для IAM exchange различаются. yc 1.40.0 получает IAM только через child
+env, временный явный config без credentials удаляется на всех выходах,
+HOME не меняется, команды имеют конечный timeout и --retry 0.
+
+Helper читает функцию по FUNCTION_ID и сверяет folder. Только успешный пустой
+version list разрешает первую версию; иначе требуется валидный ACTIVE latest.
+Env, прочие секреты и поддерживаемые operational settings сохраняются;
+неизвестные поля/неподдерживаемые настройки запрещают upload. ZIP проверяется
+существующим verifier, включая dirty=false/source_sha=DEPLOY_SHA, и загружается
+через --body @path под functions/zontcontrol/<sha>/<run-id>-<attempt>.zip.
+После create проверяются latest ID/functionId/ACTIVE/settings/secrets и
+SHA/hash/object в description. Неопределённая запись не повторяется: результат
+проверяется чтением; непроверяемый исход завершает deploy ошибкой. Function,
+IAM и таймер этот workflow не создаёт и не меняет.
+
 [Согласованный план](../docs/plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md)
-задаёт публикацию актуального master через GitHub OIDC и общие ресурсы
-autorepeater с отдельными function/deploy SA/секретом. Требования —
-[контракт](../docs/agents/deployment.md); [пример параметров](../deploy/yandex.example.json)
-будет обновлён вместе с deploy workflow. Таймер создаётся и включается
-после успешного первого автоматического деплоя и отдельного подтверждения
-владельца. Сборка/CI не означают публикации или разрешения плановых сбросов.
+и [контракт](../docs/agents/deployment.md) задают отдельные подтверждённые
+ручные шаги создания ресурсов. Таймер создаётся и включается после успешного
+первого автоматического деплоя и отдельного подтверждения владельца.
+Сборка/CI не означают публикации или разрешения плановых сбросов.
 
 ## Версии и выпуск
 

@@ -1,6 +1,7 @@
 # Yandex Cloud: автоматический деплой и boiler_reset раз в 15 минут
 
-Статус: план подготовлен, реализация не начата.
+Статус: код Tasks 1–4 реализован и проверен офлайн. Tasks 5–6 (ресурсы,
+первый deploy, таймер и облачная приёмка) ещё не выполнены.
 Основание: [постановка и уточнения](20261020165020-yandex-cloud-boiler-reset-request.md).
 Команды: [проверенный справочник yc](20261020165020-yandex-cloud-yc-commands.md).
 База zontcontrol: master c09d3c672c927013c976468087c221485911dc6f, 0.4.0.
@@ -363,16 +364,16 @@ CLI вызывается с --retry 0. Команды с неопределён�
 - Create: tests/test_deploy_gate.py, tests/test_yandex_deploy.py, tests/test_deploy_workflow.py.
 - Modify: deploy/yandex.example.json, scripts/README.md, docs/agents/deployment.md.
 
-- [ ] Перенести только нужную stdlib-обвязку образца, адаптировать repo,
+- [x] Перенести только нужную stdlib-обвязку образца, адаптировать repo,
   обязательные checks/producer/path и повторный gate перед OIDC.
-- [ ] Добавить настройки нового приложения, безопасный yc wrapper с временным
+- [x] Добавить настройки нового приложения, безопасный yc wrapper с временным
   явным config, отдельные OIDC AUD/SA audience и отказ до credentials.
-- [ ] Реализовать bootstrap пустого списка версий и обычное сохранение настроек,
+- [x] Реализовать bootstrap пустого списка версий и обычное сохранение настроек,
   загрузку в отдельный префикс bucket, publish/ACTIVE/settings verification.
-- [ ] Написать тесты fork/PR/старого SHA/подложных checks, смены master перед OIDC,
+- [x] Написать тесты fork/PR/старого SHA/подложных checks, смены master перед OIDC,
   пустых параметров, первой версии, ошибки чтения, чужого functionId,
   утраты secret/SA/concurrency/logging, unknown settings и unknown write outcome.
-- [ ] Проверить через fake subprocess отсутствие token в argv/config/logs и
+- [x] Проверить через fake subprocess отсутствие token в argv/config/logs и
   удаление временного профиля на всех выходах; отсутствие явного
   --async-max-retries, как у образца; проверить workflow permissions
   и pinned checkout/yc. Выполнить make check и обе проверки пакетов.
