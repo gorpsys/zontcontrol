@@ -41,7 +41,8 @@ class PackageContentsTests(unittest.TestCase):
             'zontcontrol.controller.zont', 'zontcontrol.controller.service',
             'zontcontrol.autonomy.registry', 'zontcontrol.autonomy.runtime',
             'zontcontrol.algorithms.boiler_reset', 'zontcontrol.algorithms.boiler_cli',
-            'zontcontrol.algorithms.charts'}
+            'zontcontrol.algorithms.charts', 'zontcontrol.heating',
+            'zontcontrol.heating_adapter', 'zontcontrol.monitor'}
         with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
             modules = {item.name for item in pkgutil.walk_packages(
                 zontcontrol.__path__, prefix='zontcontrol.')}

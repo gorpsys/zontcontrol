@@ -1,6 +1,6 @@
 # Текущие контракты приложения
 
-Controller API_VERSION=2, подготовленный выпуск 0.3.0.
+Controller API_VERSION=2, подготовленный выпуск 0.4.0.
 Удаление API монополии — намеренная несовместимость; заглушек прежних
 session/request/acquire/release методов нет.
 [Архитектура](architecture.md), [решение](../history/2026-10-20-remove-synchronization.md).
@@ -39,6 +39,38 @@ CommandOutcomeUnknown. Они не принимают произвольный �
 CommandOutcomeUnknown означает неизвестный исход отправленной команды;
 автоповтора нет. CommandResult.api_accepted не доказывает физический результат.
 ReadControllerService/create_read_controller не предоставляют execute_command.
+
+## Предметный вход отопления
+
+zontcontrol.heating задаёт frozen HeatingPoint(measured_at, value, quality),
+HeatingSeries(points, source, unit, value_type, kind, incomplete_reasons) и
+HeatingHistory. Коллекции — tuple, даты aware UTC, значения scalar; исходная
+точность дат и value плохого качества сохраняются. Ряды упорядочены по точным
+датам, равные даты допустимы; monitor выбирает последний дубль до проверки
+качества. Структурные ошибки дают ValueError до детекции.
+
+HeatingHistory содержит явные положительные device_id/circuit_id/
+air_sensor_id/coolant_sensor_id/reset_control_id, start/end/received_at,
+семь рядов air/coolant/air_target/coolant_target/worktime/target_sensor_id/reset,
+time_truncated и incomplete_reasons. Пропуск ряда — None, существующий пустой
+ряд — HeatingSeries(points=()). Точки до start допустимы с исходным возрастом.
+
+from_controller_history(history, *, device_id, circuit_id, air_id, coolant_id,
+reset_id) из heating_adapter выбирает точные ValueKey и проверяет device_id.
+Он сохраняет quality/metadata/неполноту без ISO/JSON и зависимости от конфига.
+Вычисления используют Controller value только при quality='good'. Архивный
+from_archive_packet с теми же явными ID находится только в scripts/heating_archive;
+его quality='good' сохраняет прежнюю вычислительную проекцию, не доказывает
+исходное качество. Старые потери load_series не восстанавливаются.
+
+monitor.history_samples(history: HeatingHistory) выдаёт HeatingSample;
+monitor.assess_history(history: HeatingHistory, *, config=None) возвращает
+прежний dict результата. Словарного входа и старых kwargs ID больше нет.
+Каждый вызов создаёт новый NoHeatDetector. Правила сетки и причинной доступности —
+[справочник](../reference/anomaly-detection.md#2-пригодность-данных).
+requested_period описывает исходный запрос 46 минут; границы расчётной сетки
+не добавляются в production-ответ. Неполнота старого участка сама по себе
+не запрещает решение после накопления пригодных данных.
 
 ## Автономные алгоритмы
 
