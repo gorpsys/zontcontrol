@@ -2,8 +2,13 @@
 
 Статус: once-композиция, stdlib local/YC logger, облачный handler, профиль,
 минимальный ZIP и deploy workflow реализованы и проверяются офлайн.
-Новые облачные ресурсы ещё не созданы, repository variables не заполнены;
-опубликованного облачного запуска zontcontrol нет. Далее — контракт согласованного
+Отдельные deploy SA, OIDC credential, функция и metadata секрета созданы;
+IAM/OIDC проверены отдельными согласованными чтениями 20.10.2026.
+Факты и ID — в [отчёте provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md).
+После сообщения владельца metadata секрета проверены отдельным согласованным
+чтением: секрет ACTIVE, версия e6qi0n3ucqk2stmtdalb ACTIVE, ключ z_token есть.
+Repository variables не заполнены; версии кода, таймера и облачной приёмки пока нет.
+Далее — контракт согласованного
 [плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
 заменившего прежний [эскиз](../plans/yandex-cloud.md).
 
@@ -32,17 +37,22 @@ function/хоста вне гарантии finally. Координация пр
 ## Раздельные и общие ресурсы
 
 Отдельные ресурсы: закрытая функция zontcontrol, deploy SA ci-cd-zontcontrol-sa,
-его federated credential для master, секрет z_token с ключом z_token и таймер
-zontcontrol-15m. Реальные IDs новых ресурсов фиксируются после создания.
+его federated credential для master и metadata секрета z_token созданы.
+Deploy SA — aje715nu0u832o93e0hd, credential — aje80bckog9ld78ondm9,
+функция — d4e9enfbuhk2h59a0fj0, секрет — e6q7k3r798m1od3jc647.
+Metadata версии e6qi0n3ucqk2stmtdalb с ключом z_token подтверждены; payload не читался.
+Таймер zontcontrol-15m пока не создаётся.
 Cloud/folder, bucket autorepeater-deploy, существующая OIDC federation,
 runtime SA/invoker и default log group используются общие, согласно таблице
 в плане. Функцию, deploy SA, секрет t_token и таймер autorepeater не менять.
 Объекты ZIP имеют отдельный префикс functions/zontcontrol/ и уникальный ключ
 по SHA/run ID/attempt. Проверять manifest, происхождение SHA и SHA256 ZIP.
 
-Новый deploy SA получает functions.admin и storage.editor на общем folder,
-iam.serviceAccounts.user на invoker. Runtime SA получает lockbox.payloadViewer
-на новый секрет. Статические IAM-ключи не создаются. Владелец добавляет
+Новый deploy SA получил functions.admin и storage.editor на общем folder,
+iam.serviceAccounts.user на invoker; на общем runtime SA добавлен binding
+для нового deploy SA. Runtime SA получил lockbox.payloadViewer на новый
+секрет. Все четыре роли проверены readback. Статические IAM-ключи не создаются.
+Владелец добавляет
 значение z_token в Lockbox; агент читает только metadata, никогда payload.
 Runtime получает его через secret binding в ZONT_TOKEN.
 
@@ -51,8 +61,9 @@ FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
 GITHUB_OIDC_AUDIENCE, ZONT_CONTACT. Runtime, entrypoint, 256MB/420s/concurrency1,
 LOCKBOX_KEY=z_token и LOCKBOX_ENVIRONMENT_VARIABLE=ZONT_TOKEN фиксируются
 в workflow. [Пример](../../deploy/yandex.example.json) отражает этот набор;
-он не читается helper и не является вторым источником настройки. Новые ID
-в примере — null до подтверждённого создания; подстановка ID образца запрещена.
+он не читается helper и не является вторым источником настройки. Подтверждённые
+ID ресурсов и версии секрета внесены в пример; ZONT_CONTACT остаётся null,
+repository variables ещё не настроены. Подстановка ID образца запрещена.
 Общие cloud/folder/runtime SA/bucket и GitHub AUD проверяются по согласованным
 значениям. Contact проверяется существующим валидатором контроллера.
 

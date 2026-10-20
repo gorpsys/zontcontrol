@@ -1,7 +1,10 @@
 # Yandex Cloud: автоматический деплой и boiler_reset раз в 15 минут
 
-Статус: код Tasks 1–4 реализован и проверен офлайн. Tasks 5–6 (ресурсы,
-первый deploy, таймер и облачная приёмка) ещё не выполнены.
+Статус: Tasks 1–5 выполнены; код проверен офлайн, отдельные ресурсы и IAM/OIDC
+подтверждены. [Отчёт provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md).
+Metadata активной версии секрета также подтверждены. Task 6 (repository
+variables, выпуск, первый deploy, таймер и облачная приёмка) ещё не выполнен.
+Облачная активация ожидает следующих согласованных шагов.
 Основание: [постановка и уточнения](20261020165020-yandex-cloud-boiler-reset-request.md).
 Команды: [проверенный справочник yc](20261020165020-yandex-cloud-yc-commands.md).
 База zontcontrol: master c09d3c672c927013c976468087c221485911dc6f, 0.4.0.
@@ -35,26 +38,28 @@ CLI, continuous, получение токена и исследовательс
 | --- | --- | --- |
 | Cloud | b1gbga988v36vq19lmb7, workflow образца | Использовать тот же |
 | Folder | b1gdgrp5bnth11phova8, yc function get | Использовать тот же |
-| Функция образца | d4e6d0l53hkivgrmfano, t-invest (переименована владельцем из python-function) | Не менять |
-| Функция ZONT | Имя zontcontrol, ID ещё не выдан | Создать отдельную, закрытую |
+| Функция образца | d4e6d0l53hkivgrmfano, при раннем чтении python-function; по сообщению владельца переименована в t-invest | Не менять; переименование не перепроверялось новым запросом |
+| Функция ZONT | d4e9enfbuhk2h59a0fj0, zontcontrol, ACTIVE ресурса | Создана отдельно, закрытая; версии кода ещё нет |
 | Deploy SA образца | ajela8pd8l3bjeupa04s, ci-cd-github-sa | Не менять |
-| Deploy SA ZONT | Имя ci-cd-zontcontrol-sa, ID ещё не выдан | Создать отдельный |
-| Runtime SA и invoker | ajelpbq7as5bpe499962, имя invoker | Использовать для функции и таймера |
+| Deploy SA ZONT | aje715nu0u832o93e0hd, ci-cd-zontcontrol-sa | Создан отдельно, три роли подтверждены |
+| Runtime SA и invoker | ajelpbq7as5bpe499962, имя invoker | Переиспользовать; добавлен iam.serviceAccounts.user для нового deploy SA |
 | OIDC federation | ajej9j37pt8j7ns962vr, federated credential образца | Использовать ту же |
+| OIDC credential ZONT | aje80bckog9ld78ondm9, SA aje715nu0u832o93e0hd | Создан и проверен; subject repo:gorpsys/zontcontrol:ref:refs/heads/master |
 | GitHub OIDC AUD | https://github.com/gorpsys, workflow образца | Использовать тот же |
 | Bucket | autorepeater-deploy, workflow образца | Использовать тот же с префиксом zontcontrol |
 | Логи | Default log group каталога b1gdgrp5bnth11phova8 | Использовать тот же журнал |
 | Lockbox образца | e6qc2ghhip6925lllhm7, имя/ключ t_token | Не менять и не читать payload |
-| Новый Lockbox | Имя z_token, ключ z_token | Создать без значения; владелец заполнит |
+| Новый Lockbox | e6q7k3r798m1od3jc647, имя z_token; при создании current_version=null | После заполнения владельцем metadata версии e6qi0n3ucqk2stmtdalb ACTIVE / ключ z_token проверены; payload не читался, payloadViewer подтверждён |
 | KMS секрета образца | kms_key_id отсутствует | Новый секрет тоже без собственного KMS-ключа |
 | Таймер образца | v2 a1sb17vl05nregkjh2si, tinkoff | Не менять |
 | Таймер ZONT | Имя zontcontrol-15m, ID ещё не выдан | Создать v2 после первого успешного деплоя и подтверждения владельца |
 
-Роли deploy SA подтверждены чтением IAM: functions.admin и storage.editor
-на общем folder; iam.serviceAccounts.user на invoker. Такие же bindings
-выдать новому deploy SA. Это те же области прав, что у образца; ограничение
+Роли deploy SA образца подтверждены ранним чтением IAM: functions.admin и
+storage.editor на общем folder; iam.serviceAccounts.user на invoker. Такие же
+bindings выданы новому deploy SA и проверены readback 20.10.2026.
+Это те же области прав, что у образца; ограничение
 входа из GitHub задаёт отдельный federated credential, а не имя аккаунта.
-На новый секрет invoker получает lockbox.payloadViewer, как на t_token.
+На новый секрет invoker получил lockbox.payloadViewer, что проверено readback.
 Роль functions.functionInvoker на folder у invoker уже есть; дублировать её
 или делать новую функцию публичной не требуется.
 
@@ -385,15 +390,15 @@ CLI вызывается с --retry 0. Команды с неопределён�
 - Modify: deploy/yandex.example.json, docs/agents/deployment.md.
 - Use: справочник yc рядом с планом; таймер на этом этапе не создаётся.
 
-- [ ] Перед каждой ручной командой показать её и цель, получить подтверждение;
+- [x] Перед каждой ручной командой показать её и цель, получить подтверждение;
   проверить одноимённые ресурсы и не перезаписывать найденные автоматически.
-- [ ] Создать отдельные deploy SA/federated credential/function/empty z_token;
+- [x] Создать отдельные deploy SA/federated credential/function/empty z_token;
   выдать подтверждённые роли, сохранив все общие и исходные ресурсы.
-- [ ] Записать реальные IDs, scopes/roles и время проверки. Создание таймера
+- [x] Записать реальные IDs, scopes/roles и время проверки. Создание таймера
   отложить до успешного первого деплоя и отдельного подтверждения в Task 6.
-- [ ] Сопоставить наблюдаемые metadata с ожидаемыми параметрами; при unknown
+- [x] Сопоставить наблюдаемые metadata с ожидаемыми параметрами; при unknown
   outcome сначала отдельное согласованное чтение, не повтор create вслепую.
-- [ ] Повторить offline-проверки resource settings/action JSON (один повтор
+- [x] Повторить offline-проверки resource settings/action JSON (один повтор
   таймера через 10s) и make check; payload токена и credentials в
   отчёт/репозиторий не включать.
 

@@ -1,15 +1,15 @@
 {
-  "status": "example_only_resources_and_activation_pending",
+  "status": "example_only_resources_and_secret_metadata_verified_activation_pending",
   "repository": "gorpsys/zontcontrol",
   "repository_variables": {
     "CLOUD_ID": "b1gbga988v36vq19lmb7",
     "FOLDER_ID": "b1gdgrp5bnth11phova8",
-    "SA_ID": null,
-    "FUNCTION_ID": null,
+    "SA_ID": "aje715nu0u832o93e0hd",
+    "FUNCTION_ID": "d4e9enfbuhk2h59a0fj0",
     "FUNCTION_SA_ID": "ajelpbq7as5bpe499962",
     "BUCKET": "autorepeater-deploy",
-    "LOCKBOX_SECRET_ID": null,
-    "LOCKBOX_VERSION_ID": null,
+    "LOCKBOX_SECRET_ID": "e6q7k3r798m1od3jc647",
+    "LOCKBOX_VERSION_ID": "e6qi0n3ucqk2stmtdalb",
     "GITHUB_OIDC_AUDIENCE": "https://github.com/gorpsys",
     "ZONT_CONTACT": null
   },
