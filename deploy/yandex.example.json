@@ -1,28 +1,27 @@
 {
-  "status": "planned",
-  "repository": null,
-  "branch": "master",
-  "cloud_id": null,
-  "folder_id": null,
-  "deployment_service_account_id": null,
-  "runtime_service_account_id": null,
-  "federation_id": null,
-  "github_oidc_audience": null,
-  "archive_bucket": null,
-  "function_name": null,
-  "runtime": "python312",
-  "entrypoint": "handler.handler",
-  "memory": "256MB",
-  "timeout": "60s",
-  "lockbox_secret_id": null,
-  "lockbox_secret_version_id": null,
-  "lockbox_secret_key": "zont_token",
-  "environment": {
-    "ZONT_CONTACT": null,
-    "ZONT_DEVICE_ID": null,
-    "ZONT_CIRCUIT_ID": null,
-    "ZONT_AIR_SENSOR_ID": null,
-    "ZONT_COOLANT_SENSOR_ID": null,
-    "ZONT_RESET_ELEMENT_ID": null
+  "status": "example_only_resources_secret_metadata_and_repository_variables_verified_activation_pending",
+  "repository": "gorpsys/zontcontrol",
+  "repository_variables": {
+    "CLOUD_ID": "b1gbga988v36vq19lmb7",
+    "FOLDER_ID": "b1gdgrp5bnth11phova8",
+    "SA_ID": "aje715nu0u832o93e0hd",
+    "FUNCTION_ID": "d4e9enfbuhk2h59a0fj0",
+    "FUNCTION_SA_ID": "ajelpbq7as5bpe499962",
+    "BUCKET": "autorepeater-deploy",
+    "LOCKBOX_SECRET_ID": "e6q7k3r798m1od3jc647",
+    "LOCKBOX_VERSION_ID": "e6qi0n3ucqk2stmtdalb",
+    "YC_OIDC_AUDIENCE": "https://github.com/gorpsys",
+    "ZONT_CONTACT": null
+  },
+  "fixed": {
+    "FUNCTION_RUNTIME": "python312",
+    "FUNCTION_ENTRYPOINT": "handler.handler",
+    "FUNCTION_MEMORY": "256MB",
+    "FUNCTION_TIMEOUT": "420s",
+    "FUNCTION_CONCURRENCY": "1",
+    "ZIP_PATH": "./build/yandex-function.zip",
+    "LOCKBOX_KEY": "z_token",
+    "LOCKBOX_ENVIRONMENT_VARIABLE": "ZONT_TOKEN",
+    "YC_CLI_VERSION": "1.40.0"
   }
 }

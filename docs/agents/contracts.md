@@ -1,6 +1,6 @@
 # Текущие контракты приложения
 
-Controller API_VERSION=2, подготовленный выпуск 0.4.0.
+Controller API_VERSION=2, подготовленный выпуск 0.5.0.
 Удаление API монополии — намеренная несовместимость; заглушек прежних
 session/request/acquire/release методов нет.
 [Архитектура](architecture.md), [решение](../history/2026-10-20-remove-synchronization.md).
@@ -107,6 +107,32 @@ Application владеет регистратором и транспортом.
 Внешние вызовы контроллера завершаются вызывающей стороной до app.close().
 Отмена запуска не отменяет уже отправленный HTTP и не запрещает finally off.
 Команды имеют транспортный таймаут; принудительной остановки потоков нет.
+
+## Облачный вход
+
+Корневой handler.py экспортирует zontcontrol.cloud.handler(event, context).
+Импорт не читает конфиги/токен, не создаёт Application и не загружает CLI.
+При каждом вызове настраивается JSON logger, создаётся новый обычный Application
+с единственным BOILER_RESET_SPEC, ограниченным Mode.ONCE, и выполняется
+ровно один run_once('boiler_reset', timeout=300). В finally вызывается close()
+без ограничения ожидания: worker и его off/finally завершаются до закрытия
+транспорта и возврата ответа, включая таймаут/отмену результата.
+
+Event игнорируется: он не задаёт устройство, алгоритм, режим или управление.
+Фиксированные config/controller.json, registry.json и boiler_reset.json проходят
+существующую валидацию до сетевой работы. Исходный профиль —
+deploy/cloud-config; пустой contact в controller.json предназначен для будущей
+подстановки сборщиком из непустого ZONT_CONTACT. Рабочие локальные конфиги
+для облака не используются. Runtime получает ZONT_TOKEN из Lockbox через env.
+
+Ответ содержит только version, algorithm_id='boiler_reset', status,
+state_at_period_end, reset_performed и reason. status сохраняет
+success/unknown/suppressed; reason — null, cancelled, already_on или
+current_reset_unknown. Успешный off API не означает физического восстановления.
+Сбой, включая off или закрытие транспорта, после cleanup даёт RuntimeError
+с фиксированной категорией без текста upstream и chained traceback.
+Безопасный request_id берётся из context только для логов; event не выводится.
+Наличие handler и профиля не означает публикации или включения таймера.
 
 ## Конфиги и секреты
 

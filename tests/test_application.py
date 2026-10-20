@@ -1,6 +1,7 @@
 """Offline composition and lifecycle; never uses an actual ZONT connection."""
 
 import unittest
+import runpy
 from threading import Event, Thread
 from unittest.mock import Mock, patch
 
@@ -19,6 +20,26 @@ def settings(disabled=()):
 
 
 class ApplicationTests(unittest.TestCase):
+    def test_main_and_module_entry_configure_local_logging(self):
+        from zontcontrol.application import main
+        with patch('zontcontrol.application.configure_local_logging') as configure, \
+                self.assertRaises(SystemExit):
+            main(['--version'])
+        configure.assert_called_once_with()
+        with patch('zontcontrol.application.configure_local_logging') as configure, \
+                patch('sys.argv', ['zontcontrol', '--version']), self.assertRaises(SystemExit):
+            runpy.run_module('zontcontrol', run_name='__main__')
+        configure.assert_called_once_with()
+
+    def test_explicit_empty_catalog_does_not_select_defaults_or_configure_logging(self):
+        with patch('zontcontrol.application.builtin_specs') as defaults, \
+                patch('zontcontrol.application.configure_local_logging') as configure, \
+                patch('zontcontrol.application.HttpTransport'):
+            with self.build(catalog=()) as app:
+                self.assertEqual(app.list_algorithms(), ())
+            defaults.assert_not_called()
+            configure.assert_not_called()
+
     def build(self, *, catalog=(), config=None, **kwargs):
         data = settings() if config is None else config
         if not catalog:

@@ -2,6 +2,22 @@
 
 ## Не выпущено
 
+## [0.5.0](docs/plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md) - 2026-10-20
+
+- Добавлены облачный handler для одного boiler_reset once, отдельный профиль
+  и минимальный ZIP с manifest и офлайн-проверкой вне checkout.
+- Внутренний каталог больше не экспортирует eager-константу BUILTIN_SPECS.
+  Для явной локальной композиции использовать builtin_specs(), для once —
+  (BOILER_RESET_SPEC,); create_application() сохраняет локальные defaults.
+  [Переход](docs/agents/architecture.md#3-регистратор-и-запуск).
+- GitHub Actions готовит деплой проверенного master через OIDC и pinned Lockbox,
+  проверяет происхождение SHA, параметры функции и результат публикации.
+- Локальные и облачные входы используют безопасное логирование; JSON stdout
+  сохраняет статусы unknown/suppressed и не раскрывает API-ошибки и credentials.
+- Controller API v2, профиль детектора, импульс 40 с и off в finally сохранены.
+  Ресурсы подготовлены; первый deploy, включение таймера и облачная приёмка
+  ещё не выполнены. Версия исходников не означает активацию плановых сбросов.
+
 ## [0.4.0](docs/reports/2026-10-20-typed-heating-regressions.md) - 2026-10-20
 
 - Monitor принимает неизменяемую HeatingHistory; Controller API v2 и архивы

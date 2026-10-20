@@ -1,0 +1,9 @@
+{
+  "device_id": 700877,
+  "circuit_id": 20496,
+  "air_sensor_id": 8207,
+  "coolant_sensor_id": 8429,
+  "reset_control_id": 8832,
+  "check_interval_seconds": 60,
+  "detection_profile": "smart_2_heating"
+}

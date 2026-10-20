@@ -2,6 +2,7 @@ import ast
 import importlib.util
 from pathlib import Path
 import sys
+import subprocess
 import tomllib
 import unittest
 
@@ -10,6 +11,46 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_explicit_once_catalog_imports_and_composes_without_cli_or_logging_setup(self):
+        code = '''
+import importlib.abc
+import logging
+import sys
+from unittest.mock import Mock, patch
+class NoCLI(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in ('zontcontrol.algorithms.boiler_cli', 'zontcontrol.algorithms.charts'):
+            raise AssertionError('CLI import forbidden')
+sys.meta_path.insert(0, NoCLI())
+logger = logging.getLogger('zontcontrol')
+previous = (logger.handlers[:], logger.level, logger.propagate)
+from zontcontrol.application import create_application
+from zontcontrol.autonomy.catalog import BOILER_RESET_SPEC
+from zontcontrol.autonomy.contracts import Mode
+from dataclasses import replace
+settings = {
+    'config/controller.json': {'contact': 'offline@example.invalid', 'http_timeout_seconds': 5},
+    'config/registry.json': {'disabled_modules': [], 'once_timeouts': {
+        'boiler_reset': {'minimum_seconds': 120, 'recommended_seconds': 300}}}}
+transport = Mock()
+with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')), \\
+        patch('zontcontrol.algorithms.boiler_reset.read_json', return_value={
+            'device_id': 42, 'circuit_id': 10, 'air_sensor_id': 7,
+            'coolant_sensor_id': 8, 'reset_control_id': 31, 'check_interval_seconds': 60}):
+    with create_application(environ={'ZONT_TOKEN': 'offline-synthetic'},
+            reader=lambda p: settings[str(p)], transport_factory=lambda **kw: transport,
+            catalog=(replace(BOILER_RESET_SPEC, modes=frozenset({Mode.ONCE})),)) as app:
+        row, = app.list_algorithms()
+        assert row.error is None
+        assert row.spec.modes == frozenset({Mode.ONCE})
+transport.request.assert_not_called()
+assert (logger.handlers, logger.level, logger.propagate) == previous
+assert 'zontcontrol.algorithms.boiler_cli' not in sys.modules
+'''
+        result = subprocess.run([sys.executable, '-c', code], cwd=ROOT,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_heating_model_imports_only_stdlib(self):
         tree = ast.parse((ROOT / 'zontcontrol/heating.py').read_text())
         for node in ast.walk(tree):

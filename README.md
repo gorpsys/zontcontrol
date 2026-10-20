@@ -124,5 +124,7 @@ make package-check
 
 [Технические команды, исследования и выпуск](scripts/README.md),
 [CHANGELOG](CHANGELOG.md), [история решений](docs/history/README.md).
-Yandex Cloud Functions, OIDC и Lockbox остаются [планом](docs/plans/yandex-cloud.md).
-Локальная проверка не означает деплой или разрешение облачного сброса.
+Handler, минимальный ZIP и workflow Yandex Cloud Functions с OIDC/Lockbox
+подготовлены: [состояние запуска](docs/plans/yandex-cloud.md).
+Первый деплой и включение таймера ещё не выполнены; локальная проверка
+не означает активацию плановых сбросов.

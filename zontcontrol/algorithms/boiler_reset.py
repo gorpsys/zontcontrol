@@ -8,6 +8,7 @@ API acceptance of off is not evidence that heating recovered.
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import math
+import logging
 from pathlib import Path
 from time import monotonic
 
@@ -15,7 +16,7 @@ from ..autonomy.contracts import AlgorithmResult, ResultStatus
 from ..config import ConfigurationError, read_json
 from ..controller.contracts import (
     ControlKey,
-    DeviceUnavailable, Quality, ValueKey,
+    CommandOutcomeUnknown, ControllerError, DeviceUnavailable, Quality, ValueKey,
     ValueType,
 )
 from ..detection_profile import SMART_2_HEATING_CONFIG
@@ -30,6 +31,7 @@ HISTORY_MINUTES = 46
 # Forty seconds of reset plus an engineering budget for history and HTTP.
 # This is a registrar minimum, not a bound on ZONT response times.
 MINIMUM_SECONDS = 120
+logger = logging.getLogger(__name__)
 
 
 def _seconds(value):
@@ -124,6 +126,36 @@ class BoilerReset:
                                             reason=reason))
 
     def run_once(self, context):
+        started = self._clock()
+        self._log('once_started', 'Boiler assessment started')
+        try:
+            result = self._run_once(context)
+        except BaseException as error:
+            self._log_error('once_failed', error)
+            raise
+        self._log('once_finished', 'Boiler assessment finished',
+                  state=result.value['assessment']['state_at_period_end'],
+                  reset_performed=result.value['reset_performed'],
+                  elapsed_ms=max(0, (self._clock() - started) * 1000))
+        return result
+
+    def _log(self, event, message, *, level=logging.INFO, **fields):
+        try:
+            logger.log(level, message, extra=dict(event=event, algorithm_id='boiler_reset',
+                                                 device_id=self.config.device_id, **fields))
+        except Exception:
+            # Diagnostics must never prevent a command or its finally/off.
+            pass
+
+    def _log_error(self, event, error):
+        category = ('command_outcome_unknown' if isinstance(error, CommandOutcomeUnknown) else
+                    'configuration_error' if isinstance(error, ConfigurationError) else
+                    'controller_error' if isinstance(error, ControllerError) else
+                    'interrupted' if isinstance(error, (KeyboardInterrupt, SystemExit)) else
+                    'unexpected_error')
+        self._log(event, f'Boiler operation failed: {category}', level=logging.ERROR)
+
+    def _run_once(self, context):
         if context.cancelled.is_set():
             return self._result(reason='cancelled')
         self._validate_bindings()
@@ -167,10 +199,21 @@ class BoilerReset:
         try:
             # Even unknown on may have applied. No retry; always attempt off
             # through the same direct controller API.
-            self._controller.execute_command(on)
+            self._log('reset_on_sending', 'Sending reset on command')
+            try:
+                self._controller.execute_command(on)
+            except BaseException as error:
+                self._log_error('reset_on_failed', error)
+                raise
             self._wait(context, PULSE_SECONDS)
         finally:
-            self._controller.execute_command(off)
+            self._log('reset_off_attempt', 'Attempting reset off command')
+            try:
+                self._controller.execute_command(off)
+            except BaseException as error:
+                self._log_error('reset_off_failed', error)
+                raise
+            self._log('reset_off_api_accepted', 'Reset off accepted by API')
         return self._result(decision, reset_performed=True)
 
     def run_continuous(self, context):

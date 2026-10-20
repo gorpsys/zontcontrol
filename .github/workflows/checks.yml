@@ -54,6 +54,10 @@ jobs:
           fi
       - name: Check product offline without ZONT credentials
         run: make check PYTHON=python
+      - name: Check cloud ZIP outside the checkout without ZONT credentials
+        env:
+          CLOUD_PACKAGE_SHA: ${{ github.sha }}
+        run: make cloud-package-check PYTHON=python
       - name: Install build tools after the release check
         run: python -m pip install 'setuptools>=68' wheel
       - name: Build, install and check wheel outside the checkout
