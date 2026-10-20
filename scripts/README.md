@@ -196,8 +196,9 @@ make cloud-package-check сам собирает временный ZIP с си�
 его production-вызов для диагностики не выполняется.
 
 Workflow [deploy-prod](../.github/workflows/deploy-prod.yml) и stdlib helpers
-реализованы. Новые function/deploy SA/секрет ещё не созданы, repository variables
-не заполнены; опубликованного запуска и активного таймера нет.
+реализованы. Отдельные function/deploy SA/секрет созданы, metadata активной
+версии секрета проверены: [отчёт](../docs/reports/2026-10-20-yandex-cloud-provisioning.md).
+Настройка repository variables завершается перед PR; первого deploy и таймера нет.
 Workflow принимает успешный Project checks push-master либо workflow_dispatch
 на master. Gate проверяет актуальный SHA gorpsys/zontcontrol, Lint/Offline checks,
 GitHub Actions producer и workflow run с точным checks.yml/push/master/repo/SHA.
@@ -206,9 +207,11 @@ Commit statuses не заменяют checks. Перед OIDC проверка �
 
 Обязательные repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
 FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
-GITHUB_OIDC_AUDIENCE, ZONT_CONTACT. [Пример](../deploy/yandex.example.json)
-содержит согласованные общие значения и null для ещё не созданных ID/контакта;
-helper его не читает. Runtime/handler/256MB/420s/concurrency1 и binding
+YC_OIDC_AUDIENCE, ZONT_CONTACT. [Пример](../deploy/yandex.example.json)
+содержит подтверждённые ID ресурсов и версии секрета; контакт остаётся null,
+helper пример не читает. GitHub запрещает префикс GITHUB_ в repository variables:
+workflow передаёт YC_OIDC_AUDIENCE во внутренний env GITHUB_OIDC_AUDIENCE helper.
+Runtime/handler/256MB/420s/concurrency1 и binding
 z_token → ZONT_TOKEN фиксированы в workflow; версия Lockbox закреплена ID.
 Пустые/некорректные настройки отклоняются до OIDC. GitHub AUD и новый deployment
 SA_ID для IAM exchange различаются. yc 1.40.0 получает IAM только через child
@@ -261,7 +264,7 @@ pyproject.toml не содержит второго номера. CLI, исхо�
 При MAJOR сбрасываются MINOR/PATCH, при MINOR — PATCH. Смешанный выпуск
 получает наиболее значимый уровень изменений приложения. Новые технические
 скрипты и обвязка относятся к PATCH. Несовместимость требует инструкции перехода.
-Для подготовленного 0.x выпуска 0.4.0 текущий контракт — Controller API v2
+Для подготовленного 0.x выпуска 0.5.0 текущий контракт — Controller API v2
 с прямыми командами и упрощёнными конфигами. Прежние методы монополии и
 поля coordination/statistics/lease/grant удалены. Переход —
 [config/README](../config/README.md#переход). Этот PR остаётся одним выпуском;
@@ -302,7 +305,7 @@ make release-check PYTHON=python3
 ```
 
 Git-проверки требуют настоящего checkout с коммитом и полными тегами.
-Текущий подготовленный выпуск — 0.4.0. Перед слиянием CI повторяет gate на
+Текущий подготовленный выпуск — 0.5.0. Перед слиянием CI повторяет gate на
 актуальной базе/тегах. Исторические выпуски — [история версий](../docs/history/versioning.md).
 В офлайн-тестах создаются временные репозитории и bare remotes; реальные
 теги из них не публикуются.

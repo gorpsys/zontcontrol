@@ -10,7 +10,7 @@
     "BUCKET": "autorepeater-deploy",
     "LOCKBOX_SECRET_ID": "e6q7k3r798m1od3jc647",
     "LOCKBOX_VERSION_ID": "e6qi0n3ucqk2stmtdalb",
-    "GITHUB_OIDC_AUDIENCE": "https://github.com/gorpsys",
+    "YC_OIDC_AUDIENCE": "https://github.com/gorpsys",
     "ZONT_CONTACT": null
   },
   "fixed": {

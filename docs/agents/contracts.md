@@ -1,6 +1,6 @@
 # Текущие контракты приложения
 
-Controller API_VERSION=2, подготовленный выпуск 0.4.0.
+Controller API_VERSION=2, подготовленный выпуск 0.5.0.
 Удаление API монополии — намеренная несовместимость; заглушек прежних
 session/request/acquire/release методов нет.
 [Архитектура](architecture.md), [решение](../history/2026-10-20-remove-synchronization.md).

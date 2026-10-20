@@ -2,15 +2,23 @@
 
 import json
 from pathlib import Path
+import re
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 VARIABLES = {'CLOUD_ID', 'FOLDER_ID', 'SA_ID', 'FUNCTION_ID', 'FUNCTION_SA_ID', 'BUCKET',
-             'LOCKBOX_SECRET_ID', 'LOCKBOX_VERSION_ID', 'GITHUB_OIDC_AUDIENCE', 'ZONT_CONTACT'}
+             'LOCKBOX_SECRET_ID', 'LOCKBOX_VERSION_ID', 'YC_OIDC_AUDIENCE', 'ZONT_CONTACT'}
 
 
 class DeployWorkflowTests(unittest.TestCase):
+    def test_repository_variables_use_allowed_names_and_preserve_helper_audience(self):
+        workflow = (ROOT / '.github/workflows/deploy-prod.yml').read_text()
+        variables = set(re.findall(r'\$\{\{ vars\.([A-Z_]+) \}\}', workflow))
+        self.assertEqual(variables, VARIABLES)
+        self.assertFalse(any(name.startswith('GITHUB_') for name in variables))
+        self.assertIn('GITHUB_OIDC_AUDIENCE: ${{ vars.YC_OIDC_AUDIENCE }}', workflow)
+
     def test_workflow_only_deploys_checked_master_with_minimal_permissions(self):
         workflow = (ROOT / '.github/workflows/deploy-prod.yml').read_text()
         for value in ('workflows: [Project checks]', "github.repository == 'gorpsys/zontcontrol'",

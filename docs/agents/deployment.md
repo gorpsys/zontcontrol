@@ -58,12 +58,14 @@ Runtime получает его через secret binding в ZONT_TOKEN.
 
 Обязательные repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
 FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
-GITHUB_OIDC_AUDIENCE, ZONT_CONTACT. Runtime, entrypoint, 256MB/420s/concurrency1,
+YC_OIDC_AUDIENCE, ZONT_CONTACT. Runtime, entrypoint, 256MB/420s/concurrency1,
 LOCKBOX_KEY=z_token и LOCKBOX_ENVIRONMENT_VARIABLE=ZONT_TOKEN фиксируются
 в workflow. [Пример](../../deploy/yandex.example.json) отражает этот набор;
 он не читается helper и не является вторым источником настройки. Подтверждённые
 ID ресурсов и версии секрета внесены в пример; ZONT_CONTACT остаётся null,
-repository variables ещё не настроены. Подстановка ID образца запрещена.
+настройка repository variables завершается перед PR. Подстановка ID образца запрещена.
+Префикс GITHUB_ запрещён GitHub для repository variables; workflow передаёт
+YC_OIDC_AUDIENCE во внутренний env GITHUB_OIDC_AUDIENCE helper.
 Общие cloud/folder/runtime SA/bucket и GitHub AUD проверяются по согласованным
 значениям. Contact проверяется существующим валидатором контроллера.
 

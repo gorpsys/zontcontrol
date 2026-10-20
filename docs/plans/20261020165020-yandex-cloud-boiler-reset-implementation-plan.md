@@ -2,9 +2,10 @@
 
 Статус: Tasks 1–5 выполнены; код проверен офлайн, отдельные ресурсы и IAM/OIDC
 подтверждены. [Отчёт provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md).
-Metadata активной версии секрета также подтверждены. Task 6 (repository
-variables, выпуск, первый deploy, таймер и облачная приёмка) ещё не выполнен.
-Облачная активация ожидает следующих согласованных шагов.
+Metadata активной версии секрета также подтверждены. Task 6 выполняется до
+premerge checkpoint: подготовлен выпуск 0.5.0, настройка repository variables
+и проверки PR завершаются. Первый deploy, таймер и облачная приёмка ещё не
+выполнены. Облачная активация ожидает следующих согласованных шагов.
 Основание: [постановка и уточнения](20261020165020-yandex-cloud-boiler-reset-request.md).
 Команды: [проверенный справочник yc](20261020165020-yandex-cloud-yc-commands.md).
 База zontcontrol: master c09d3c672c927013c976468087c221485911dc6f, 0.4.0.
@@ -228,7 +229,9 @@ endpoint/cloud/folder, без credentials; не переопределять HOM
 
 Параметры repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
 FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
-GITHUB_OIDC_AUDIENCE, ZONT_CONTACT. В workflow фиксированы runtime/entrypoint,
+YC_OIDC_AUDIENCE, ZONT_CONTACT. GitHub запрещает имена repository variables
+с префиксом GITHUB_; workflow передаёт YC_OIDC_AUDIENCE во внутренний
+env GITHUB_OIDC_AUDIENCE helper. В workflow фиксированы runtime/entrypoint,
 256MB/420s/concurrency1, ZIP_PATH, LOCKBOX_KEY=z_token и
 LOCKBOX_ENVIRONMENT_VARIABLE=ZONT_TOKEN. Пример deploy/yandex.example.json
 привести к этому же набору, обозначив его примером, а не вторым источником.

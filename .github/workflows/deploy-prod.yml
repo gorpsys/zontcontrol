@@ -68,7 +68,7 @@ jobs:
       BUCKET: ${{ vars.BUCKET }}
       LOCKBOX_SECRET_ID: ${{ vars.LOCKBOX_SECRET_ID }}
       LOCKBOX_VERSION_ID: ${{ vars.LOCKBOX_VERSION_ID }}
-      GITHUB_OIDC_AUDIENCE: ${{ vars.GITHUB_OIDC_AUDIENCE }}
+      GITHUB_OIDC_AUDIENCE: ${{ vars.YC_OIDC_AUDIENCE }}
       ZONT_CONTACT: ${{ vars.ZONT_CONTACT }}
       FUNCTION_RUNTIME: python312
       FUNCTION_ENTRYPOINT: handler.handler
