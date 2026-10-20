@@ -11,7 +11,6 @@ from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import unittest
 from unittest.mock import Mock
-from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.algorithms.boiler_cli import (
     BoilerCLI, Terminal as RealTerminal, load_config, UPDATE_SECONDS,
@@ -38,10 +37,8 @@ SETTINGS = dict(devices=[42], controls=[dict(device_id=42, kind=CONTROL.kind,
 
 
 class Terminal:
-    def __init__(self, identity=None, *, uuid_factory=None):
-        self.uuid_generator = (uuid_generator() if uuid_factory is None
-                               else uuid_factory)
-        self.identity = identity or self.uuid_generator()
+    def __init__(self, identity=None):
+        self.identity = object() if identity is None else identity
         self.active = True
         self.lines = Queue()
         self.output = []
@@ -63,9 +60,8 @@ class Terminal:
 
 class BoilerCLITests(unittest.TestCase):
     def setUp(self):
-        self.uuid_generator = uuid_generator()
-        self.terminal = Terminal(uuid_factory=self.uuid_generator)
-        self.context = RunContext('boiler_cli', self.uuid_generator(), self.uuid_generator(), Event(), None)
+        self.terminal = Terminal()
+        self.context = RunContext('boiler_cli', Event(), None)
         self.controller = Mock()
         self.controller.list_devices.return_value = (DeviceInfo(42, 'House', 'SMART', True),)
         self.descriptor = ValueDescriptor(KEY, 'Air', '°C', 'virtual', 'air', ValueType.NUMBER,
@@ -123,16 +119,14 @@ class BoilerCLITests(unittest.TestCase):
         spec = next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_cli')
         self.assertEqual(spec.modes, frozenset({Mode.CONTINUOUS}))
         self.assertTrue(RegistryConfig(frozenset(), False, {}).should_autostart(spec))
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller,
-        uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), self.controller)
         self.addCleanup(lambda: registry.close(wait_timeout=1))
         report = registry.register_all((replace(spec, factory=lambda c: self.module()),))
         self.assertIs(report[0].state, AlgorithmState.FAILED)
         self.controller.execute_command.assert_not_called()
         self.reader.reset_mock()
         disabled = AlgorithmRegistry(RegistryConfig(frozenset({'boiler_cli'}), False, {}),
-                                     lambda: self.controller,
-                                     uuid_factory=self.uuid_generator)
+                                     self.controller)
         self.addCleanup(lambda: disabled.close(wait_timeout=1))
         report = disabled.register_all((replace(spec, factory=lambda c: self.module()),))
         self.assertTrue(report[0].disabled)
@@ -145,8 +139,7 @@ class BoilerCLITests(unittest.TestCase):
             module = self.module()
             made.append(module)
             return module
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller,
-        uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), self.controller)
         self.addCleanup(lambda: registry.close(wait_timeout=1))
         registry.register_all((replace(spec, factory=factory),))
         self.assertTrue(self.terminal.written.wait(1))
@@ -157,7 +150,7 @@ class BoilerCLITests(unittest.TestCase):
             registry.run_once('boiler_cli')
         self.assertTrue(registry.stop('boiler_cli', wait_timeout=1))
         again = registry.start('boiler_cli')
-        self.assertNotEqual(first.context.instance_id, again.context.instance_id)
+        self.assertIsNot(first.context, again.context)
         self.assertEqual(len(made), 3)  # registration probe and two fresh launches
         self.assertTrue(registry.stop('boiler_cli', wait_timeout=1))
         self.controller.execute_command.assert_not_called()
@@ -183,8 +176,7 @@ class BoilerCLITests(unittest.TestCase):
         self.controller.read_current.side_effect = slow
         spec = replace(next(s for s in BUILTIN_SPECS if s.algorithm_id == 'boiler_cli'),
                        factory=lambda c: self.module())
-        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), lambda: self.controller,
-        uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(RegistryConfig(frozenset(), False, {}), self.controller)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         self.addCleanup(release.set)
         registry.register_all((spec,))

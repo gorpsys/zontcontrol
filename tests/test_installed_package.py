@@ -17,7 +17,6 @@ import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
-from uuid import UUID
 import venv
 import zipfile
 
@@ -138,15 +137,12 @@ class InstalledPackageTests(unittest.TestCase):
                 with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')), \
                         patch('zontcontrol.application.HttpTransport') as transport, \
                         patch('zontcontrol.algorithms.boiler_cli.Terminal.available', return_value=False):
-                    uuid_source = Mock(side_effect=(UUID(int=value) for value in range(1, 100)))
-                    with create_application(environ={'ZONT_TOKEN': 'synthetic-offline'},
-                                            uuid_factory=uuid_source) as app:
+                    with create_application(environ={'ZONT_TOKEN': 'synthetic-offline'}) as app:
                         rows = {row.spec.algorithm_id: row for row in app.list_algorithms()}
                         self.assertIs(rows['boiler_reset'].state, AlgorithmState.REGISTERED)
                         self.assertIs(rows['boiler_cli'].state, AlgorithmState.FAILED)
                         self.assertEqual(app._controller._adapter._transport, transport.return_value)
                     transport.return_value.request.assert_not_called()
-                    uuid_source.assert_not_called()  # No runs or control bindings at registration.
                 for name, load in (('boiler_reset', reset_config), ('boiler_cli', cli_config),
                                    ('registry', load_registry_config),
                                    ('controller', load_controller_config)):

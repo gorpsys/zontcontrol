@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 from threading import Event
 import unittest
 from unittest.mock import Mock, patch
-from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.algorithms.boiler_reset import (
     BoilerReset, CONFIG_PATH, MINIMUM_SECONDS, PULSE_SECONDS, load_config, history_packet,
@@ -60,9 +59,8 @@ def history(data=None):
 
 class BoilerResetTests(unittest.TestCase):
     def setUp(self):
-        self.uuid_generator = uuid_generator()
         self.clock = FakeClock(wall_start=history().end)
-        self.context = RunContext('boiler_reset', self.uuid_generator(), self.uuid_generator(), Event(), None)
+        self.context = RunContext('boiler_reset', Event(), None)
         self.events = []
         self.controller = Mock()
         self.controller.read_history.return_value = history()
@@ -310,8 +308,7 @@ class BoilerResetTests(unittest.TestCase):
         spec = replace(spec, factory=lambda controller: self.module(wait=wait))
         config = RegistryConfig(frozenset(), False, {'boiler_reset': OnceTimeout(
             MINIMUM_SECONDS, MINIMUM_SECONDS)})
-        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now,
-        uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(config, self.controller, clock=self.clock.now)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         registry.register_all([spec])
         handle = registry.start('boiler_reset')
@@ -327,8 +324,7 @@ class BoilerResetTests(unittest.TestCase):
         spec = replace(BUILTIN_SPECS[0], factory=lambda controller: self.module())
         config = RegistryConfig(frozenset(), False, {'boiler_reset': OnceTimeout(
             MINIMUM_SECONDS, MINIMUM_SECONDS)})
-        registry = AlgorithmRegistry(config, lambda: self.controller, clock=self.clock.now,
-        uuid_factory=self.uuid_generator)
+        registry = AlgorithmRegistry(config, self.controller, clock=self.clock.now)
         self.addCleanup(lambda: registry.close(wait_timeout=2))
         registry.register_all([spec])
         result = registry.run_once('boiler_reset')

@@ -15,5 +15,5 @@
 
 Это заменяет прежнее прекращение всей роли из-за любого unknown/сбоя окна.
 Изменение не отменяет guard, сроки grant, карантин, предел term и штатный
-shutdown без раннего FREE. Контракт — [выбор лидера](../reference/leader-election.md),
+shutdown без раннего FREE. Контракт — [выбор лидера](leader-election.md),
 результаты — [поэтапная проверка](../reports/2026-10-19-staged-leadership.md).

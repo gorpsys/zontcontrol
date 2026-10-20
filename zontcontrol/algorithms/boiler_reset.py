@@ -31,10 +31,9 @@ HISTORY_MINUTES = 45
 MINIMUM_SECONDS = 120
 
 
-def _seconds(value, *, maximum=None):
+def _seconds(value):
     try:
-        valid = (type(value) in (int, float) and math.isfinite(value) and value > 0
-                 and (maximum is None or value <= maximum))
+        valid = type(value) in (int, float) and math.isfinite(value) and value > 0
     except OverflowError:
         valid = False
     if not valid:
@@ -177,7 +176,7 @@ class BoilerReset:
                                   coolant_id=self.config.coolant_sensor_id,
                                   reset_id=self.config.reset_control_id,
                                   config=self.config.detector_config)
-        if decision['state_at_period_end'] != 'confirmed_pattern' or context.cancelled.is_set():
+        if decision['state_at_period_end'] != 'confirmed_pattern':
             return self._result(decision)
         if context.cancelled.is_set():
             return self._result(decision, reason='cancelled')

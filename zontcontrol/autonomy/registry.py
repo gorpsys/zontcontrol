@@ -11,7 +11,6 @@ from dataclasses import dataclass, replace
 from threading import Event, Lock, Thread
 from time import monotonic
 
-from .contracts import UUIDFactory
 from ..config import ConfigurationError, RegistryConfig
 from .contracts import (
     CAPABILITIES, AlgorithmBusy, AlgorithmError, AlgorithmFailed,
@@ -32,24 +31,22 @@ class _Slot:
 class AlgorithmRegistry:
     """One application catalog; the composition root owns the shared facade.
 
-    controller_factory supplies the shared controller to each module.
+    controller is passed directly to each module.
     close_controller closes resources only after every worker and finally.
     close(wait_timeout) bounds the caller's wait, never the workers' lifetime.
     """
 
-    def __init__(self, config, controller_factory, *, available_capabilities=CAPABILITIES,
-                 clock=monotonic, close_controller=None,
-                 uuid_factory: UUIDFactory | None = None):
-        if (not isinstance(config, RegistryConfig) or not callable(controller_factory)
+    def __init__(self, config, controller, *, available_capabilities=CAPABILITIES,
+                 clock=monotonic, close_controller=None):
+        if (not isinstance(config, RegistryConfig)
                 or not callable(clock) or not isinstance(available_capabilities, frozenset)
                 or not available_capabilities <= CAPABILITIES
                 or close_controller is not None and not callable(close_controller)):
             raise ValueError('Invalid registry dependencies')
         self._config = config
-        self._controller_factory = controller_factory
+        self._controller = controller
         self._capabilities = available_capabilities
         self._clock = clock
-        self._uuid_factory = uuid_factory
         self._close_controller = close_controller
         self._lock = Lock()
         self._slots = {}
@@ -92,10 +89,9 @@ class AlgorithmRegistry:
                     continue
                 construct = self._factory(slot.spec)
                 slot.runtime = AlgorithmRuntime(replace(slot.spec, factory=construct),
-                                                self._controller_factory, clock=self._clock,
-                                                uuid_factory=self._uuid_factory)
+                                                self._controller, clock=self._clock)
                 try:
-                    construct(self._controller_factory())
+                    construct(self._controller)
                 except Exception as error:
                     # ConfigurationError is the safe, module-owned diagnostic.
                     with self._lock:

@@ -11,14 +11,10 @@ from enum import Enum
 import math
 import re
 from threading import Event
-from collections.abc import Callable
 from typing import Protocol, TypeAlias
-from uuid import UUID
 
 from ..controller.contracts import Controller
 
-
-UUIDFactory: TypeAlias = Callable[[], UUID]
 
 CAPABILITIES = frozenset({
     'list_devices', 'describe_values', 'read_current', 'read_history',
@@ -102,8 +98,6 @@ class RunContext:
     """
 
     algorithm_id: str
-    instance_id: UUID
-    run_id: UUID
     cancelled: Event
     deadline: float | None
 

@@ -26,7 +26,7 @@
    Это единственное согласованное изменение проверки истечения; сама схема
    Fischer, guards, карантин и причинная проекция grant сохраняются.
 
-Текущий контракт — [leader-election](../reference/leader-election.md).
+Текущий контракт — [leader-election](leader-election.md).
 Натурные [исходные шесть сценариев](../reports/2026-10-19-six-live-coordination-cases.md)
 и [повторная калибровка](../reports/2026-10-19-live-coordination-recalibration.md)
 содержат отрицательные результаты и пределы выбранных параметров.

@@ -8,7 +8,6 @@ from urllib.parse import urlsplit
 import unittest
 from unittest.mock import patch
 
-from tests.fakes.uuid import uuid_generator
 from tests.test_boiler_cli import Terminal
 from tests.test_boiler_reset import SETTINGS, history
 from tests.test_inventory import inventory_device
@@ -59,7 +58,6 @@ class VirtualHTTP:
 
 class DirectProductFlows(unittest.TestCase):
     def setUp(self):
-        self.uuid_factory = uuid_generator()
         self.apps, self.transports = [], []
         self.addCleanup(self.cleanup)
 
@@ -80,12 +78,12 @@ class DirectProductFlows(unittest.TestCase):
         with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
             app = create_application(environ={'ZONT_TOKEN': 'synthetic-offline'},
                 catalog=specs, reader=lambda path: data[str(path)],
-                transport_factory=lambda **_: transport, uuid_factory=self.uuid_factory)
+                transport_factory=lambda **_: transport)
         self.apps.append(app)
         return app, transport
 
     def test_cli_sends_one_command_without_background_protocol_traffic(self):
-        terminal = Terminal(uuid_factory=self.uuid_factory)
+        terminal = Terminal()
         data = {'devices': [42], 'controls': [{'device_id': 42, 'kind': 'mode',
                 'element_id': 20, 'actions': ['activate']}], 'graphs': []}
         app, transport = self.build()

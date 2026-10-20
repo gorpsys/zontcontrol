@@ -70,15 +70,11 @@ class ZontAdapter:
         except TransportError as error:
             raise_controller_error(error, write=write)
 
-    def devices(self, device_id=None, *, fields=None):
+    def devices(self, device_id=None):
         query = {}
         if device_id is not None:
             _device_id(device_id)
             query["device_ids"] = device_id
-        if fields is not None:
-            if not isinstance(fields, str) or not fields.strip():
-                raise InvalidArguments()
-            query["fields"] = fields
         suffix = "?" + urlencode(query) if query else ""
         return _devices(self._request(f"{API_URL}/devices{suffix}"), device_id)
 
@@ -86,7 +82,6 @@ class ZontAdapter:
         _device_id(device_id)
         data = self._request(f"{FULL_API_URL}/devices", body={"load_io": True})
         return _devices(data, device_id)[0]
-
 
     def send_command(self, command: PreparedCommand):
         """Send one command already validated by the controller."""

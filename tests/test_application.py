@@ -3,7 +3,6 @@
 import unittest
 from threading import Event, Thread
 from unittest.mock import Mock, patch
-from tests.fakes.uuid import uuid_generator
 
 from zontcontrol.application import create_application, create_read_controller
 from zontcontrol.autonomy.contracts import AlgorithmResult, AlgorithmSpec, Mode, ResultStatus
@@ -20,11 +19,7 @@ def settings(disabled=()):
 
 
 class ApplicationTests(unittest.TestCase):
-    def setUp(self):
-        self.uuid_generator = uuid_generator()
-
     def build(self, *, catalog=(), config=None, **kwargs):
-        kwargs.setdefault('uuid_factory', self.uuid_generator)
         data = settings() if config is None else config
         if not catalog:
             data['config/registry.json']['once_timeouts'] = {}
@@ -36,13 +31,11 @@ class ApplicationTests(unittest.TestCase):
     def test_config_errors_before_transport_and_no_token_diagnostics(self):
         with patch('zontcontrol.application.HttpTransport') as transport:
             with self.assertRaises(ConfigurationError):
-                create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=lambda p: {},
-                uuid_factory=self.uuid_generator)
+                create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=lambda p: {})
             transport.assert_not_called()
         for value in (None, '', '   '):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'ZONT_TOKEN') as caught:
-                create_application(environ={} if value is None else {'ZONT_TOKEN': value},
-                uuid_factory=self.uuid_generator)
+                create_application(environ={} if value is None else {'ZONT_TOKEN': value})
             self.assertIn('zontcontrol.get_token', str(caught.exception))
 
 
@@ -56,8 +49,7 @@ class ApplicationTests(unittest.TestCase):
         with patch('zontcontrol.algorithms.boiler_cli.read_json') as cli_config, \
                 patch('zontcontrol.algorithms.boiler_reset.read_json') as reset_config, \
                 patch('zontcontrol.application.HttpTransport') as transport:
-            with create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=read,
-                                    uuid_factory=self.uuid_generator) as app:
+            with create_application(environ={'ZONT_TOKEN': 'fake-secret'}, reader=read) as app:
                 self.assertEqual(app.list_algorithms(), ())
                 self.assertEqual(app.run_all_once(), {})
             cli_config.assert_not_called()
@@ -73,8 +65,7 @@ class ApplicationTests(unittest.TestCase):
                 patch('zontcontrol.algorithms.boiler_cli.Terminal.available', return_value=False), \
                 patch('zontcontrol.application.HttpTransport') as transport:
             with create_application(environ={'ZONT_TOKEN': 'fake-secret'},
-                    reader=lambda path: data[str(path)],
-                    uuid_factory=self.uuid_generator) as app:
+                    reader=lambda path: data[str(path)]) as app:
                 row, = app.list_algorithms()
                 self.assertIs(row.state, AlgorithmState.FAILED)
                 self.assertNotIn('fake-secret', str(row.error))
@@ -171,7 +162,7 @@ class ApplicationTests(unittest.TestCase):
         transport = Mock()
         app = self.build(transport_factory=lambda **kw: transport)
         self.addCleanup(app.close)
-        app.controller()  # An unused binding does not delay shutdown.
+        app.controller()  # Getting the shared controller does not delay shutdown.
         with self.assertRaises(ValueError):
             app.close(wait_timeout=-1)
         app.controller()

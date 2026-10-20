@@ -56,22 +56,15 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class HttpTransport:
-    def __init__(self, *, timeout=15, opener=None, clock=None):
+    def __init__(self, *, timeout=15, opener=None, clock=monotonic):
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 120:
             raise ValueError("timeout must be between 0 and 120 seconds")
         self._timeout = timeout
         self._opener = opener if opener is not None else build_opener(NoRedirect())
-        self._now = clock.now if clock is not None else monotonic
+        self._now = clock
 
-    def request(self, request: Request, *, timeout_seconds=None) -> dict:
+    def request(self, request: Request) -> dict:
         timeout = self._timeout
-        if timeout_seconds is not None:
-            if (type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds)
-                    or timeout_seconds < 0):
-                raise ValueError("timeout_seconds must be a finite nonnegative duration")
-            if timeout_seconds == 0:
-                raise TransportError(FailureKind.NOT_SENT)
-            timeout = min(timeout, timeout_seconds)
         # Fixed origin: credentials must never be sent to an arbitrary URL.
         try:
             url = urlsplit(request.full_url)

@@ -18,12 +18,12 @@ from typing import Protocol, Self
 from . import __version__
 from .autonomy.catalog import BUILTIN_SPECS
 from .autonomy.contracts import (
-    AlgorithmError, AlgorithmRegistration, AlgorithmResult, AlgorithmSpec, Mode, UUIDFactory, validate_catalog,
+    AlgorithmError, AlgorithmRegistration, AlgorithmResult, AlgorithmSpec, Mode, validate_catalog,
 )
 from .autonomy.registry import AlgorithmRegistry
 from .autonomy.runtime import RunHandle
 from .config import (
-    ConfigurationError, ControllerConfig, JSONReader,
+    ConfigurationError, JSONReader,
     load_controller_config, load_registry_config, read_json,
 )
 from .controller.auth import token_headers
@@ -48,19 +48,19 @@ def _credentials(environ: Mapping[str, str]) -> str:
 
 
 def _adapter(environ: Mapping[str, str] | None, reader: JSONReader,
-             transport_factory: TransportFactory) -> tuple[ControllerConfig, HttpTransport, ZontAdapter]:
+             transport_factory: TransportFactory) -> tuple[HttpTransport, ZontAdapter]:
     token = _credentials(os.environ if environ is None else environ)
     config = load_controller_config(reader=reader)
     headers = token_headers(config.contact, token)
     transport = transport_factory(timeout=config.http_timeout_seconds)
-    return config, transport, ZontAdapter(transport, headers)
+    return transport, ZontAdapter(transport, headers)
 
 
 def create_read_controller(*, environ: Mapping[str, str] | None = None,
                            reader: JSONReader = read_json,
                            transport_factory: TransportFactory | None = None) -> ReadControllerService:
     """Research boundary: data and previews, no command method or algorithms."""
-    _, _, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
+    _, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
     return ReadControllerService(adapter)
 
 
@@ -133,8 +133,7 @@ class Application:
 
 def create_application(*, environ: Mapping[str, str] | None = None, reader: JSONReader = read_json,
                        catalog: Iterable[AlgorithmSpec] = BUILTIN_SPECS,
-                       transport_factory: TransportFactory | None = None,
-                       uuid_factory: UUIDFactory | None = None) -> Application:
+                       transport_factory: TransportFactory | None = None) -> Application:
     """Compose one account controller and independent algorithm threads.
 
     Modules share the controller through ordinary DI. There is no device
@@ -146,11 +145,10 @@ def create_application(*, environ: Mapping[str, str] | None = None, reader: JSON
     registry_config = load_registry_config(reader=reader)
     catalog = tuple(catalog)
     validate_catalog(catalog, registry_config)
-    _, transport, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
+    transport, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
     controller = ControllerService(adapter)
-    registry = AlgorithmRegistry(registry_config, lambda: controller,
-                                 close_controller=lambda: _close_transport(transport),
-                                 uuid_factory=uuid_factory)
+    registry = AlgorithmRegistry(registry_config, controller,
+                                 close_controller=lambda: _close_transport(transport))
     app = Application(controller, registry)
     try:
         registry.register_all(catalog)

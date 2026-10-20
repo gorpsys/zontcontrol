@@ -49,10 +49,10 @@ required_capabilities и minimum_seconds. Capabilities совпадают с с�
 
 OnceAlgorithm.run_once(context) возвращает AlgorithmResult;
 ContinuousAlgorithm.run_continuous(context) сам организует постоянную работу.
-RunContext содержит algorithm_id, instance_id, run_id, cancelled и deadline.
+RunContext содержит algorithm_id, cancelled и deadline.
 Для once deadline фиксирован при запуске; continuous получает None.
-context.wait прерывается отменой. UUIDFactory — Callable[[], UUID], с новым
-ненулевым UUID для каждого вызова; тесты подменяют генератор через Mock.
+context.wait прерывается отменой. Каждый запуск получает отдельный контекст
+и Event; контроллер общий и передаётся фабрике модуля напрямую.
 
 Регистратор выдаёт список модулей/continuous, run_once/run_all_once,
 start/stop/close. Once-таймаут публикуется независимо от завершения HTTP

@@ -30,17 +30,17 @@ class ZontAdapterTests(unittest.TestCase):
 
     def test_widget_read_filters_by_explicit_device(self):
         self.answer(devices=[{"id": 42, "name": "Дом"}])
-        self.assertEqual(self.adapter.devices(42, fields="sensors,circuits,modes")[0]["id"], 42)
+        self.assertEqual(self.adapter.devices(42)[0]["id"], 42)
         request = self.opener.open.call_args.args[0]
         self.assertEqual(request.get_method(), "GET")
         self.assertEqual(parse_qs(urlsplit(request.full_url).query),
-                         {"device_ids": ["42"], "fields": ["sensors,circuits,modes"]})
+                         {"device_ids": ["42"]})
         self.assertEqual(request.get_header("X-zont-token"), "test-token")
 
 
     def test_command_body_arriving_after_budget_is_unknown_without_retry(self):
         clock = FakeClock()
-        adapter = ZontAdapter(HttpTransport(timeout=2, opener=self.opener, clock=clock), {})
+        adapter = ZontAdapter(HttpTransport(timeout=2, opener=self.opener, clock=clock.now), {})
 
         class LateBody(io.BytesIO):
             def read(self, size):

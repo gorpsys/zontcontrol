@@ -4,7 +4,6 @@ from threading import Barrier, Event, Thread, current_thread
 from time import monotonic
 import unittest
 from unittest.mock import Mock
-from uuid import UUID
 
 from zontcontrol.autonomy.contracts import (
     AlgorithmBusy, AlgorithmCancelled, AlgorithmFailed, AlgorithmResult,
@@ -12,7 +11,6 @@ from zontcontrol.autonomy.contracts import (
 )
 from zontcontrol.autonomy.runtime import AlgorithmRuntime
 from zontcontrol.config import OnceTimeout
-from tests.fakes.uuid import uuid_generator
 from tests.fakes.clock import FakeClock
 
 
@@ -21,21 +19,18 @@ SUCCESS = AlgorithmResult(ResultStatus.SUCCESS, {'value': 1})
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
-        self.uuid_generator = uuid_generator()
         self.gates = []
 
     def tearDown(self):
         for event in self.gates:
             event.set()
 
-    def runtime(self, algorithm=None, *, factory=None, controller_factory=None,
-                algorithm_id='test', close_controller=None, clock=monotonic):
+    def runtime(self, algorithm=None, *, factory=None, controller=None,
+                algorithm_id='test', clock=monotonic):
         module = algorithm or Mock()
         spec = AlgorithmSpec(algorithm_id, 'Test algorithm', frozenset(Mode),
                              factory or Mock(return_value=module))
-        runtime = AlgorithmRuntime(spec, controller_factory or Mock(return_value=object()),
-                                   close_controller=close_controller, clock=clock,
-                                   uuid_factory=self.uuid_generator)
+        runtime = AlgorithmRuntime(spec, controller, clock=clock)
         self.addCleanup(runtime.close)
         return runtime
 
@@ -59,7 +54,7 @@ class RuntimeTests(unittest.TestCase):
 
         module = Mock(run_once=run)
         factory = Mock(side_effect=lambda injected: (threads.append(current_thread()), module)[1])
-        runtime = self.runtime(factory=factory, controller_factory=lambda: controller)
+        runtime = self.runtime(factory=factory, controller=controller)
         before = monotonic()
         self.assertIs(runtime.run_once(1), SUCCESS)
         self.assertTrue(runtime.wait(2))
@@ -67,23 +62,24 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all(thread is not current_thread() for thread in threads))
         context = contexts[0]
         self.assertEqual(context.algorithm_id, 'test')
-        self.assertEqual((context.instance_id, context.run_id), (UUID(int=1), UUID(int=2)))
-        self.assertEqual(self.uuid_generator.call_count, 2)
         self.assertLessEqual(before + 1, context.deadline)
         self.assertFalse(context.cancelled.is_set())
         self.assertEqual(runtime.state, AlgorithmState.STOPPED)
 
-    def test_restart_consumes_fresh_injected_instance_and_run_ids(self):
+    def test_restart_calls_factory_with_shared_controller_and_fresh_context(self):
         module = Mock()
         module.run_once.return_value = SUCCESS
-        runtime = self.runtime(module)
-        for expected in ((1, 2), (3, 4)):
+        controller = object()
+        factory = Mock(return_value=module)
+        runtime = self.runtime(factory=factory, controller=controller)
+        contexts = []
+        for _ in range(2):
             self.assertIs(runtime.run_once(1), SUCCESS)
             self.assertTrue(runtime.wait(2))
-            context = module.run_once.call_args.args[0]
-            self.assertEqual((context.instance_id, context.run_id),
-                             tuple(UUID(int=value) for value in expected))
-        self.assertEqual(self.uuid_generator.call_count, 4)
+            contexts.append(module.run_once.call_args.args[0])
+        self.assertEqual(factory.call_args_list, [unittest.mock.call(controller)] * 2)
+        self.assertIsNot(contexts[0], contexts[1])
+        self.assertIsNot(contexts[0].cancelled, contexts[1].cancelled)
 
     def test_exception_and_invalid_result_are_failed_without_raw_error_text(self):
         for effect in (ValueError('private-value'), None):
@@ -123,34 +119,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(runtime.wait(2))
         module.run_once.assert_not_called()
 
-    def test_controller_binding_bootstrap_is_in_once_budget(self):
-        entered, release = Event(), self.gate()
-        factory = Mock()
-
-        def bind():
-            entered.set()
-            release.wait()
-            return object()
-
-        runtime = self.runtime(factory=factory, controller_factory=bind)
-        handle = runtime.start(Mode.ONCE, timeout=.03)
-        self.wait(entered)
-        with self.assertRaises(AlgorithmTimeout):
-            handle.result(1)
-        release.set()
-        self.assertTrue(runtime.wait(2))
-        factory.assert_not_called()
-
     def test_bootstrap_failure_is_failed_and_other_modules_are_unaffected(self):
-        for stage in ('binding', 'factory'):
-            with self.subTest(stage=stage):
-                failure = Mock(side_effect=ValueError('private-value'))
-                runtime = self.runtime(**({'controller_factory': failure} if stage == 'binding'
-                                          else {'factory': failure}))
-                with self.assertRaises(AlgorithmFailed):
-                    runtime.run_once(1)
-                self.assertTrue(runtime.wait(2))
-                self.assertEqual(runtime.state, AlgorithmState.FAILED)
+        failure = Mock(side_effect=ValueError('private-value'))
+        runtime = self.runtime(factory=failure)
+        with self.assertRaises(AlgorithmFailed):
+            runtime.run_once(1)
+        self.assertTrue(runtime.wait(2))
+        self.assertEqual(runtime.state, AlgorithmState.FAILED)
 
     def test_timeout_result_is_prompt_during_cleanup_and_late_success_cannot_replace_it(self):
         cleanup, release = Event(), self.gate()
@@ -239,8 +214,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(runtime.stop(wait_timeout=2))
         second = runtime.start(Mode.CONTINUOUS)
         entered.wait(2)
-        self.assertNotEqual(first.context.run_id, second.context.run_id)
-        self.assertNotEqual(first.context.instance_id, second.context.instance_id)
+        self.assertIsNot(first.context, second.context)
+        self.assertIsNot(first.context.cancelled, second.context.cancelled)
         self.assertTrue(runtime.stop(wait_timeout=2))
         self.assertEqual(factory.call_count, 2)
 
@@ -344,7 +319,7 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaises(AlgorithmTimeout):
             handle.result(1)
 
-    def test_close_defers_controller_shutdown_until_finally_and_rejects_new_work(self):
+    def test_close_waits_for_finally_and_rejects_new_work(self):
         entered, cleanup, release = Event(), Event(), self.gate()
         controller = Mock()
 
@@ -357,7 +332,7 @@ class RuntimeTests(unittest.TestCase):
                 release.wait()
                 controller.off()
 
-        runtime = self.runtime(Mock(run_continuous=run), close_controller=controller.close)
+        runtime = self.runtime(Mock(run_continuous=run), controller=controller)
         runtime.start(Mode.CONTINUOUS)
         self.wait(entered)
         self.assertFalse(runtime.close(wait_timeout=0))
@@ -367,14 +342,14 @@ class RuntimeTests(unittest.TestCase):
             runtime.start(Mode.CONTINUOUS)
         release.set()
         self.assertTrue(runtime.close(wait_timeout=2))
-        self.assertEqual(controller.mock_calls, [unittest.mock.call.off(), unittest.mock.call.close()])
+        self.assertEqual(controller.mock_calls, [unittest.mock.call.off()])
         self.assertTrue(runtime.close(wait_timeout=0))
-        controller.close.assert_called_once()
+        controller.close.assert_not_called()  # Only the composition root owns resources.
 
 
     def test_invalid_mode_and_timeout_fail_before_bootstrap(self):
         bootstrap = Mock()
-        runtime = self.runtime(controller_factory=bootstrap)
+        runtime = self.runtime(factory=bootstrap)
         for value in (0, -1, True, float('inf'), float('nan'), None, '1'):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 runtime.start(Mode.ONCE, timeout=value)

@@ -53,7 +53,6 @@ class ReadControllerService:
         self._history_chunk = history_chunk
         self._max_history_parts = max_history_parts
 
-
     @_safe_data
     def prepare_command(self, device_id, control_key, action, arguments):
         self._keys(device_id, None)

@@ -73,9 +73,9 @@ R2 хранит только запросы исполнителей; лидер
 | `coordination/statistics.py` | JSONL-наблюдения, RTT/max, эпизоды | READ→WRITE, полные окна, freeze, p99/p99.9, отдельные физические наблюдения |
 
 Обновлённые договорённости: [архитектура](../../agents/architecture.md),
-[API](../../agents/contracts.md), [лидерство v2](../../reference/leader-election.md),
-[сценарии и защиты v2](../../reference/coordination-failure-scenarios.md),
-[статистика](../../reference/orchestration-risk.md).
+[API](../../agents/contracts.md), [лидерство v2](../../history/leader-election.md),
+[сценарии и защиты v2](../../history/coordination-failure-scenarios.md),
+[статистика](../../history/orchestration-risk.md).
 Они описывают реализованную v2. Прежняя колонка таблицы выше сохраняет
 контекст начала работы; исторические отчёты не переписывались.
 
