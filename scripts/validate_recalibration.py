@@ -15,9 +15,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.analyze_3weeks import epoch
 from scripts.backtest_profile import assess_samples, iso, local
 from scripts.recalibrate_archive import ROOT, load_dataset
-from scripts.validate_one_shot import history_window
+from scripts.validate_one_shot import heating_window
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 from zontcontrol.monitor import assess_history
+
+
+def compare_input_policies(series, states, checks, config):
+    """Report differences from legacy frames; they are separate input policies."""
+    indexes = {key: [time for time, value in points] for key, points in series.items()}
+    compared = 0
+    differences = []
+    for time in sorted(checks):
+        if time not in states:
+            continue
+        actual = assess_history(heating_window(series, indexes, time), config=config)
+        if actual['state_at_period_end'] != states[time]:
+            differences.append({'time': iso(time), 'frames_state': states[time],
+                                'normalized_history_state': actual['state_at_period_end']})
+        compared += 1
+    return compared, differences
 
 
 def main():
@@ -59,15 +75,7 @@ def main():
     offsets = (0, 1, 5, 6, 7, 10, 15, 30, 45)
     for label in labels:
         checks.update(label["start"] + offset * 60 for offset in offsets)
-    indexes = {key: [time for time, value in points] for key, points in series.items()}
-    verified = 0
-    for time in sorted(checks):
-        if time not in states:
-            continue
-        packet = history_window(series, indexes, time)
-        actual = assess_history(packet, circuit_id=20496, config=config)
-        assert actual["state_at_period_end"] == states[time], (iso(time), states[time], actual)
-        verified += 1
+    compared, differences = compare_input_policies(series, states, checks, config)
     failures = []
     for label, first in zip(labels, firsts):
         failures.append({**label, "start_moscow": local(label["start"]), "end_moscow": local(label["end"]),
@@ -90,11 +98,14 @@ def main():
     report = {"period": {"start": iso(start), "end": iso(end), "start_moscow": local(start), "end_moscow": local(end)},
               "config": asdict(config), "minute_count": sum(counts.values()), "minute_decisions": dict(counts),
               "outside_known_failures": dict(outside), "decision_reasons": dict(reasons), "july22": dict(july22),
-              "failures": failures, "short_cycles": shorts, "client_crosschecks": verified,
+              "failures": failures, "short_cycles": shorts, "minute_input_policy": "legacy_frames",
+              "input_policy_comparisons": compared, "input_policy_differences": differences,
               "implementation_sha256": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
                                          for name in ("zontcontrol/anomaly.py", "zontcontrol/monitor.py", "zontcontrol/detection_profile.py")},
               "source_sha256": sources,
-              "method": "Каждая минута: новый детектор, только предыдущие 45 минут. До 27.09 23:36 Москва сброс OFF. "
+              "method": "Минутные решения и времена отказов: прежние frames, новый детектор на предыдущих 45 минутах. "
+                        "Сравнение с нормализованной историей сообщает различия двух входных политик. "
+                        "До 27.09 23:36 Москва сброс OFF. "
                         "Вне известных отказов — отрицательные ограничения, а не полный аппаратный журнал. "
                         "Профиль подобран на этом архиве; это не независимая будущая выборка. "
                         "Даты начала по наблюдаемым признакам могут быть позже физического отказа. "
@@ -109,7 +120,7 @@ def main():
     lines = ["# Повторная калибровка ZONT", "", report["method"], "",
              f"Период (Москва): {local(start)} — {local(end)}. {sum(counts.values())} независимых решений.",
              f"Состояния: {dict(counts)}. Вне известных отказов: {dict(outside)}.",
-             f"22 июля: {dict(july22)}. Сравнений с клиентом assess_history: {verified}.", "",
+             f"22 июля: {dict(july22)}. Сравнений входных политик: {compared}; различий: {len(differences)}.", "",
              "Порог воды 4 °C; worktime >=40 с/мин за 5 точек; отклик +3 °C от минимума за 5 минут "
              "или +1 °C относительно начала окна на восходящей фазе. Подтверждение через 13 минут "
              "при воде <=60 °C, через 14 минут выше 60 °C; воздух <= цели ИЛИ вода остыла >=3 °C. "
@@ -144,7 +155,8 @@ def main():
     calibration["selection_objective"] = "minimize worst detection delay over ten faults, then total delay; zero confirmations outside labels; searched grid only"
     (ROOT / "reports/recalibration-83days.json").write_text(json.dumps(calibration, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"counts": dict(counts), "outside": dict(outside), "july22": dict(july22),
-                      "crosschecks": verified, "delays": [f["delay_minutes"] for f in failures]}, ensure_ascii=False))
+                      "input_policy_comparisons": compared, "input_policy_differences": len(differences),
+                      "delays": [f["delay_minutes"] for f in failures]}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -42,6 +42,11 @@ class BoundaryTests(unittest.TestCase):
                      else [])
             for name in names:
                 self.assertFalse({'controller', 'algorithms', 'scripts'} & set(name.split('.')), name)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                self.assertNotEqual(node.func.attr, 'fromisoformat')
+        source = (ROOT / 'zontcontrol/monitor.py').read_text()
+        for name in ('temperature_sensors', 'circuits', 'web_elements'):
+            self.assertNotIn(name, source)
 
     def test_no_control_synchronization_components_or_imports(self):
         for path in (ROOT/'zontcontrol').rglob('*.py'):

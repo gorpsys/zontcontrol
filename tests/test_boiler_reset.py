@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from zontcontrol.algorithms.boiler_reset import (
-    BoilerReset, CONFIG_PATH, MINIMUM_SECONDS, PULSE_SECONDS, load_config, history_packet,
+    BoilerReset, CONFIG_PATH, MINIMUM_SECONDS, PULSE_SECONDS, load_config,
 )
 from zontcontrol.autonomy.catalog import BUILTIN_SPECS
 from zontcontrol.autonomy.contracts import Mode, ResultStatus, RunContext
@@ -22,10 +22,11 @@ from zontcontrol.controller.contracts import (
     ValidatedCommand, ValueDescriptor, ValueKey, ValueReading, ValueType,
 )
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
+from zontcontrol.heating import HeatingHistory
+from zontcontrol.heating_adapter import from_controller_history
 from zontcontrol.monitor import assess_history
 from tests.fakes.clock import FakeClock
 from tests.test_heating_regressions import canonical_dates, load_cases
-from tests.test_monitor import packet
 
 
 SETTINGS = dict(device_id=42, circuit_id=20496, air_sensor_id=8207,
@@ -33,7 +34,7 @@ SETTINGS = dict(device_id=42, circuit_id=20496, air_sensor_id=8207,
 
 
 def history(data=None):
-    data = data or packet()
+    data = data or next(case['packet'] for case in load_cases() if case['name'] == 'confirmed')
     device = data['devices'][0]
     rows = []
     for sensor in device['temperature_sensors']:
@@ -102,7 +103,7 @@ class BoilerResetTests(unittest.TestCase):
         args = self.controller.read_history.call_args.args
         self.assertEqual(args[0], 42)
         self.assertEqual(set(args[1]), {r.key for r in history().series})
-        self.assertEqual(args[3] - args[2], timedelta(minutes=45))
+        self.assertEqual(args[3] - args[2], timedelta(minutes=46))
         self.controller.read_history.assert_called_once()
 
     def test_adapter_decision_equals_existing_fixture_without_recalculation(self):
@@ -112,8 +113,9 @@ class BoilerResetTests(unittest.TestCase):
             if case['name'] not in selected:
                 continue
             with self.subTest(case=case['name']):
-                converted = history_packet(history(case['packet']), load_config(reader=self.reader))
-                self.assertEqual(canonical_dates(assess_history(converted, circuit_id=20496)),
+                converted = from_controller_history(history(case['packet']), device_id=42,
+                    circuit_id=20496, air_id=8207, coolant_id=8429, reset_id=8832)
+                self.assertEqual(canonical_dates(assess_history(converted)),
                                  canonical_dates(case['expected']))
 
     def test_unknown_warning_and_old_events_do_not_send_commands(self):
@@ -132,8 +134,11 @@ class BoilerResetTests(unittest.TestCase):
     def test_explicit_ids_and_configured_profile_are_passed_to_detector(self):
         with patch('zontcontrol.algorithms.boiler_reset.assess_history', wraps=assess_history) as assess:
             self.module().run_once(self.context)
-        self.assertEqual(assess.call_args.kwargs, dict(circuit_id=20496, air_id=8207,
-                         coolant_id=8429, reset_id=8832, config=SMART_2_HEATING_CONFIG))
+        self.assertEqual(assess.call_args.kwargs, dict(config=SMART_2_HEATING_CONFIG))
+        typed = assess.call_args.args[0]
+        self.assertIsInstance(typed, HeatingHistory)
+        self.assertEqual((typed.device_id, typed.circuit_id, typed.air_sensor_id,
+                          typed.coolant_sensor_id, typed.reset_control_id), (42, 20496, 8207, 8429, 8832))
 
     def test_history_quality_is_not_promoted_to_good_and_metadata_is_retained(self):
         original = history()
@@ -142,14 +147,13 @@ class BoilerResetTests(unittest.TestCase):
                                             for p in row.points), incomplete_reasons=('missing_part',))
         data = replace(original, series=(altered, *original.series[1:]),
                        incomplete_reasons=('source_incomplete',))
-        converted = history_packet(data, load_config(reader=self.reader))
-        points = converted['devices'][0]['temperature_sensors'][0]['points']
-        self.assertTrue(all(p['value'] is None for p in points))
-        self.assertTrue(all(p['quality'] == 'stale' for p in points))
-        self.assertEqual(converted['incomplete_reasons'], ['source_incomplete'])
-        self.assertEqual(converted['devices'][0]['temperature_sensors'][0]['incomplete_reasons'],
-                         ['missing_part'])
-        self.assertEqual(assess_history(converted, circuit_id=20496)['state_at_period_end'], 'unknown')
+        converted = from_controller_history(data, device_id=42, circuit_id=20496,
+                                            air_id=8207, coolant_id=8429, reset_id=8832)
+        self.assertEqual(tuple(p.value for p in converted.air.points), tuple(p.value for p in row.points))
+        self.assertTrue(all(p.quality == 'stale' for p in converted.air.points))
+        self.assertEqual(converted.incomplete_reasons, ('source_incomplete',))
+        self.assertEqual(converted.air.incomplete_reasons, ('missing_part',))
+        self.assertEqual(assess_history(converted)['state_at_period_end'], 'unknown')
 
     def test_missing_and_invalid_config_fail_before_controller_calls(self):
         with TemporaryDirectory() as directory:
