@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.analyze_3weeks import epoch, frames, load_series
-from scripts.validate_one_shot import assume_reset_inactive_before, history_window, local
+from scripts.validate_one_shot import assume_reset_inactive_before, heating_window, local
 from zontcontrol.anomaly import DetectionConfig, HeatingSample, NoHeatDetector
 from zontcontrol.monitor import assess_history, history_samples
 
@@ -28,14 +28,12 @@ def load_cases(root, reference):
         offsets = range(46) if episode["kind"] == "anomaly" else reference["offsets_minutes"]
         for offset in offsets:
             end = episode["start"] + offset * 60
-            packet = history_window(series, indexes, end)
-            assessment = assess_history(packet, circuit_id=20496)
-            samples = list(history_samples(packet["devices"][0], datetime.fromtimestamp(end - 2700, timezone.utc),
-                                           datetime.fromtimestamp(end, timezone.utc),
-                                           circuit_id=20496, air_id=8207, coolant_id=8429))
+            history = heating_window(series, indexes, end)
+            assessment = assess_history(history)
+            samples = list(history_samples(history))
             overlap = any(start <= end < finish for start, finish in bounds)
             cases.append({"id": episode["id"], "kind": episode["kind"], "offset": offset,
-                          "time": end, "packet": packet, "samples": samples,
+                          "time": end, "history": history, "samples": samples,
                           "eligible": assessment["state_at_period_end"] not in ("unknown", "suppressed"),
                           "overlap": overlap})
     return manifest, series, cases
@@ -111,7 +109,7 @@ def verify(cases, result):
     config = DetectionConfig(**result["config"])
     results = []
     for case in cases:
-        actual = assess_history(case["packet"], circuit_id=20496, config=config)
+        actual = assess_history(case["history"], config=config)
         trace = trace_case(case, config)
         expected = any(t >= config.confirm_minutes and (a >= config.confirm_air_deficit or d >= config.confirm_coolant_drop)
                        for t, a, d in trace)

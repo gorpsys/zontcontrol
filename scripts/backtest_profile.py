@@ -9,7 +9,7 @@ import json
 import math
 import sys
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.analyze_3weeks import epoch, frames, load_series
-from scripts.validate_one_shot import assume_reset_inactive_before, history_window
+from scripts.validate_one_shot import assume_reset_inactive_before, heating_window
 from zontcontrol.anomaly import HeatingSample, NoHeatDetector
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 from zontcontrol.history import history_period
@@ -152,22 +152,25 @@ def run(manifest, series, start, end, output):
             if time % 86400 == 0:
                 print(f"Checked through {local(time)}; {sum(counts.values())} one-shot runs", flush=True)
     segments = [attach_stats(segment, rows, times, strong_heat) for segment in segments]
-    # Compare the fast replay with the complete client assessment at every
+    # Compare different input policies at every
     # confirmed boundary and regularly across the rest of the period.
     checks_to_verify.update(time for time in times if start < time <= end and time % 21600 == 0)
     indexes = {key: [time for time, value in points] for key, points in series.items()}
-    boundary_verified = 0
+    boundary_compared = 0
+    input_policy_differences = []
     for time in sorted(checks_to_verify):
         i = bisect.bisect_left(times, time)
         if i < 44:
             continue
         incomplete = any(time >= low and time - 2700 <= high for low, high in truncated)
         expected, _, _ = assess_samples(samples[i - 44:i + 1], config, truncated=incomplete)
-        packet = history_window(series, indexes, time)
-        packet["devices"][0]["time_truncated"] = incomplete
-        actual = assess_history(packet, circuit_id=20496, config=config)
-        assert expected == actual["state_at_period_end"], (iso(time), expected, actual["state_at_period_end"])
-        boundary_verified += 1
+        history = replace(heating_window(series, indexes, time), time_truncated=incomplete)
+        actual = assess_history(history, config=config)
+        if expected != actual["state_at_period_end"]:
+            input_policy_differences.append({
+                "time": iso(time), "frames_state": expected,
+                "normalized_history_state": actual["state_at_period_end"]})
+        boundary_compared += 1
     report = {
         "period": {"start": iso(start), "end": iso(end), "start_moscow": local(start), "end_moscow": local(end)},
         "collected_period": {"start": manifest["start"], "end": manifest["end"]},
@@ -178,10 +181,12 @@ def run(manifest, series, start, end, output):
         "segment_length_counts": dict(Counter("1-5" if s["duration_minutes"] <= 5 else "6-30"
                                               if s["duration_minutes"] <= 30 else ">30" for s in segments)),
         "daily_decisions": {day: dict(value) for day, value in totals_by_day.items()},
-        "client_boundary_crosschecks": boundary_verified,
+        "input_policy_comparisons": boundary_compared,
+        "input_policy_differences": input_policy_differences,
+        "minute_input_policy": "legacy_frames",
         "implementation_sha256": {name: hashlib.sha256(Path(name).read_bytes()).hexdigest()
                                   for name in ("zontcontrol/anomaly.py", "zontcontrol/monitor.py", "zontcontrol/detection_profile.py")},
-        "method": "Каждая минута оценивается новым экземпляром детектора по предыдущим 45 минутам. "
+        "method": "Минутные решения и сегменты используют прежние frames и новый детектор на предыдущих 45 минутах. "
                   "Данные после момента решения не используются. Параметры фиксированы до загрузки нового периода. "
                   "Сегмент — последовательные минуты confirmed_pattern; разрыв завершает сегмент, "
                   "но не доказывает восстановление. Возврат нагрева: последующий рост воды >=5 °C за <=5 минут. "
@@ -203,8 +208,13 @@ def write_report(path, report):
     lines = ["Проверка фиксированного профиля на предшествующих двух месяцах", "",
              f"Период: {report['period']['start_moscow']} — {report['period']['end_moscow']} (Москва).", "",
              report["method"], "", f"Решения по минутам: {report['minute_decisions']}.",
-             f"Подтверждённых сегментов: {report['confirmed_segment_count']}.",
-             f"Контрольных сравнений с assess_history: {report['client_boundary_crosschecks']}.", ""]
+             f"Подтверждённых сегментов: {report['confirmed_segment_count']}.", ""]
+    if 'input_policy_comparisons' in report:
+        lines += [f"Сравнений frames с нормализованной историей: {report['input_policy_comparisons']}; "
+                  f"различий: {len(report['input_policy_differences'])}.", ""]
+    else:
+        # --summarize-only can still render a stored report of the old replay.
+        lines += [f"Сравнений в историческом отчёте: {report['client_boundary_crosschecks']}.", ""]
     if "signal_groups" in report:
         lines += [f"До измеренного возврата нагрева объединено в {len(report['signal_groups'])} групп: "
                   f"{report['long_group_count']} длительных и {report['other_group_count']} остальных.",
@@ -323,8 +333,8 @@ def main():
     args = parser.parse_args()
     start, end = history_period(datetime.fromisoformat(args.start), datetime.fromisoformat(args.end))
     manifest, series = load_series(args.input, 20496, 8207, 8429, 8832)
-    if epoch(manifest["start"]) > int(start.timestamp()) - 2700 or epoch(manifest["end"]) < int(end.timestamp()):
-        raise ValueError("collect the full requested period plus 45 minutes of preceding history")
+    if epoch(manifest["start"]) > int(start.timestamp()) - 2760 or epoch(manifest["end"]) < int(end.timestamp()):
+        raise ValueError("collect the full requested period plus 46 minutes of preceding history")
     if not manifest["chunks"] or epoch(manifest["chunks"][-1]["end"]) < int(end.timestamp()):
         raise ValueError("archive collection is not complete")
     series = assume_reset_inactive_before(series, epoch(manifest["start"]), epoch(args.reset_inactive_before))
@@ -341,7 +351,8 @@ def main():
     report = enrich_report(report, manifest, series, args.output)
     write_report(args.output, report)
     print(json.dumps({key: report[key] for key in ("period", "minute_decisions", "confirmed_segment_count",
-                                                  "segment_length_counts", "client_boundary_crosschecks")}, ensure_ascii=False))
+                                                  "segment_length_counts", "input_policy_comparisons",
+                                                  "input_policy_differences")}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

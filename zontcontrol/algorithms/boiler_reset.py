@@ -15,17 +15,18 @@ from ..autonomy.contracts import AlgorithmResult, ResultStatus
 from ..config import ConfigurationError, read_json
 from ..controller.contracts import (
     ControlKey,
-    DeviceUnavailable, InvalidArguments, Quality, ValueKey,
+    DeviceUnavailable, Quality, ValueKey,
     ValueType,
 )
 from ..detection_profile import SMART_2_HEATING_CONFIG
+from ..heating_adapter import from_controller_history
 from ..monitor import assess_history
 
 
 CONFIG_PATH = Path('config/boiler_reset.json')
 PULSE_SECONDS = 40
 POST_RESET_SECONDS = 300
-HISTORY_MINUTES = 45
+HISTORY_MINUTES = 46
 # Forty seconds of reset plus an engineering budget for history and HTTP.
 # This is a registrar minimum, not a bound on ZONT response times.
 MINIMUM_SECONDS = 120
@@ -89,45 +90,6 @@ def load_config(*, root=Path('.'), reader=None):
         raise ConfigurationError(path, 'Invalid boiler_reset bindings, profile or intervals') from None
 
 
-def history_packet(history, config):
-    """Adapt facade series without resampling, interpolation or current fallback.
-
-    Preserve provenance, quality, incomplete reasons and original values. The
-    existing detector consumes only value/time, so nongood points are explicitly
-    unknown in that projection. Do not gate the whole 45 minutes on complete:
-    the calibrated detector can recover after an old gap.
-    """
-    if history.device_id != config.device_id:
-        raise InvalidArguments()
-    sensors, circuits, controls = {}, {}, {}
-    for row in history.series:
-        points = [dict(time=p.measured_at.isoformat(),
-                       value=p.value if p.quality is Quality.GOOD else None,
-                       original_value=p.value, quality=p.quality.value) for p in row.points]
-        metadata = dict(source=row.source, unit=row.unit, value_type=row.value_type.value,
-                        history_kind=row.kind.value,
-                        incomplete_reasons=list(row.incomplete_reasons))
-        key = row.key
-        if key.kind == 'sensor' and key.field == 'value':
-            sensors[key.element_id] = dict(id=key.element_id, points=points, **metadata)
-        elif key.kind == 'circuit':
-            circuit = circuits.setdefault(key.element_id, dict(id=key.element_id, series={},
-                                                               series_metadata={}))
-            circuit['series'][key.field] = points
-            circuit['series_metadata'][key.field] = metadata
-        elif key.kind == 'toggle_buttons' and key.field == 'active':
-            controls[key.element_id] = dict(id=key.element_id, series={'state': points}, **metadata)
-    # A missing circuit remains explicit unknown telemetry rather than a hidden
-    # boiler circuit supplying its target.
-    circuits.setdefault(config.circuit_id, dict(id=config.circuit_id, series={}))
-    return dict(fetched_at=history.received_at.isoformat(),
-                requested_period=dict(start=history.start.isoformat(), end=history.end.isoformat()),
-                incomplete_reasons=list(history.incomplete_reasons), devices=[dict(
-                    id=history.device_id, time_truncated=history.time_truncated,
-                    temperature_sensors=list(sensors.values()), circuits=list(circuits.values()),
-                    web_elements=list(controls.values()))])
-
-
 class BoilerReset:
     def __init__(self, controller, *, root=Path('.'), reader=None, clock=monotonic,
                  wall_clock=None, wait=None):
@@ -170,12 +132,11 @@ class BoilerReset:
         end = self._wall_clock()
         data = self._controller.read_history(self.config.device_id, self.config.history_keys,
                                             end - timedelta(minutes=HISTORY_MINUTES), end)
-        decision = assess_history(history_packet(data, self.config),
-                                  circuit_id=self.config.circuit_id,
-                                  air_id=self.config.air_sensor_id,
-                                  coolant_id=self.config.coolant_sensor_id,
-                                  reset_id=self.config.reset_control_id,
-                                  config=self.config.detector_config)
+        history = from_controller_history(
+            data, device_id=self.config.device_id, circuit_id=self.config.circuit_id,
+            air_id=self.config.air_sensor_id, coolant_id=self.config.coolant_sensor_id,
+            reset_id=self.config.reset_control_id)
+        decision = assess_history(history, config=self.config.detector_config)
         if decision['state_at_period_end'] != 'confirmed_pattern':
             return self._result(decision)
         if context.cancelled.is_set():

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.analyze_3weeks import epoch, frames, load_series
+from zontcontrol.heating import HeatingHistory, HeatingPoint, HeatingSeries
 from zontcontrol.monitor import assess_history
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 
@@ -64,36 +65,30 @@ def manual_episodes(series):
     return result
 
 
-def history_window(series, indexes, end):
-    start = end - 45 * 60
+def heating_window(series, indexes, end):
+    """Build seven typed rows from the precision already available in load_series."""
+    start = end - 46 * 60
 
-    def points(key):
-        # Preserve the real timestamp of the last known initial value; never
-        # turn an old temperature into a fresh measurement at the window edge.
+    def row(key):
+        # Keep the real initial point before start; its age is still meaningful.
         lo = bisect.bisect_left(indexes[key], start)
         hi = bisect.bisect_right(indexes[key], end)
         if lo:
             lo -= 1
-        return [{"time": iso(t), "value": v} for t, v in series[key][lo:hi]]
+        return HeatingSeries(tuple(
+            HeatingPoint(datetime.fromtimestamp(time, timezone.utc), value, 'good')
+            for time, value in series[key][lo:hi]))
 
-    circuit = {"target_temp": "air_target", "setpoint_temp": "coolant_target",
-               "worktime": "worktime", "target_sensor_id": "sensor",
-               "mode_id": "mode", "status": "status"}
-    reset = points("reset")
-    return {
-        "fetched_at": iso(end),
-        "requested_period": {"start": iso(start), "end": iso(end)},
-        "devices": [{
-            "id": 700877, "time_truncated": False,
-            "temperature_sensors": [
-                {"id": 8207, "points": points("air")},
-                {"id": 8429, "points": points("coolant")},
-            ],
-            "circuits": [{"id": 20496, "series": {
-                name: points(key) for name, key in circuit.items()}}],
-            "web_elements": [{"id": 8832, "series": {"state": reset}}] if reset else [],
-        }],
-    }
+    reset = row("reset")
+    return HeatingHistory(
+        device_id=700877, circuit_id=20496, air_sensor_id=8207,
+        coolant_sensor_id=8429, reset_control_id=8832,
+        start=datetime.fromtimestamp(start, timezone.utc),
+        end=datetime.fromtimestamp(end, timezone.utc),
+        received_at=datetime.fromtimestamp(end, timezone.utc),
+        air=row("air"), coolant=row("coolant"), air_target=row("air_target"),
+        coolant_target=row("coolant_target"), worktime=row("worktime"),
+        target_sensor_id=row("sensor"), reset=reset if reset.points else None)
 
 
 def working_candidates(rows, incidents, manual):
@@ -196,15 +191,14 @@ def evaluate(episodes, series, rows):
     for episode in episodes:
         for offset in OFFSETS:
             end = episode["start"] + offset * 60
-            history = history_window(series, indexes, end)
+            history = heating_window(series, indexes, end)
             # A fresh detector is constructed by assess_history on EVERY call.
-            result = assess_history(history, circuit_id=20496)
+            result = assess_history(history)
             assert not result["automatic_control"]
-            for device in history["devices"]:
-                for sensor in device["temperature_sensors"]:
-                    assert all(epoch(point["time"]) <= end for point in sensor["points"])
-                for item in device["circuits"] + device["web_elements"]:
-                    assert all(epoch(point["time"]) <= end for points in item["series"].values() for point in points)
+            for name in ("air", "coolant", "air_target", "coolant_target",
+                         "worktime", "target_sensor_id", "reset"):
+                value = getattr(history, name)
+                assert value is None or all(point.measured_at <= history.end for point in value.points)
             row = rows[bisect.bisect_right(row_times, end) - 1]
             checks.append({
                 "episode_id": episode["id"], "kind": episode["kind"], "start": iso(episode["start"]),
@@ -295,7 +289,7 @@ def main():
         "reset_assumption": assumption, "selection_reused": reuse is not None,
         "offsets_minutes": OFFSETS,
         "detection_config": asdict(SMART_2_HEATING_CONFIG),
-        "method": "Каждая точка — независимый assess_history на предшествующих 45 минутах. "
+        "method": "Каждая точка — независимый assess_history на минутной сетке 45 минут из исходной истории за 46 минут. "
                   "Будущие данные не передаются детектору. Начала аномалий — ранее найденные начала "
                   "наблюдаемых условий, не известные моменты аппаратного отказа. Ручной эпизод — "
                   "каждое реальное включение переключателя 8832, без объединения импульсов. "
