@@ -1,5 +1,5 @@
 {
-  "status": "example_only_resources_and_secret_metadata_verified_activation_pending",
+  "status": "example_only_resources_secret_metadata_and_repository_variables_verified_activation_pending",
   "repository": "gorpsys/zontcontrol",
   "repository_variables": {
     "CLOUD_ID": "b1gbga988v36vq19lmb7",

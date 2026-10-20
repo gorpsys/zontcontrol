@@ -63,7 +63,8 @@ id=e6qi0n3ucqk2stmtdalb, status=ACTIVE, payload_entry_keys=[z_token].
 фильтром из раздела 4 справочника. Значение секрета не читалось.
 Дополнение записано 2026-10-20 16:30:41 UTC (19:30:41 Europe/Moscow);
 это время записи, не точное время запроса. ID версии закреплён в примере;
-repository variables, первый deploy и активация ещё не выполнены.
+repository variables на тот момент ещё не были настроены. Их последующая
+настройка описана ниже; первый deploy и активация ещё не выполнены.
 
 ## IAM, OIDC и проверка результата
 
@@ -130,7 +131,14 @@ GitHub OIDC AUD остаётся https://github.com/gorpsys; IAM audience при
 [Пример](../../deploy/yandex.example.json) содержит реальные ID ресурсов,
 но остаётся примером: helper его не читает. LOCKBOX_VERSION_ID закреплён на
 e6qi0n3ucqk2stmtdalb после metadata readback; ZONT_CONTACT остаётся null.
-Repository variables на этом шаге не настраивались.
+В Task 5 repository variables не настраивались. В последующем premerge
+checkpoint Task 6 все десять variables созданы или сверены с ожидаемыми:
+CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID, FUNCTION_SA_ID, BUCKET,
+LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID, YC_OIDC_AUDIENCE и ZONT_CONTACT.
+Повторное чтение GitHub подтвердило точное совпадение каждого значения;
+YC_OIDC_AUDIENCE и ZONT_CONTACT созданы и повторно прочитаны на этом шаге.
+Значение контакта и остальные значения variables в вывод проверки не попадали.
+Эта проверка не вызывала yc или ZONT и не публиковала версию функции.
 Значение ZONT_TOKEN в пример и отчёт не включается.
 
 Ожидаемые настройки версии: python312, handler.handler, 256MB, timeout=420s,

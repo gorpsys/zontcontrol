@@ -3,8 +3,8 @@
 Статус: Tasks 1–5 выполнены; код проверен офлайн, отдельные ресурсы и IAM/OIDC
 подтверждены. [Отчёт provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md).
 Metadata активной версии секрета также подтверждены. Task 6 выполняется до
-premerge checkpoint: подготовлен выпуск 0.5.0, настройка repository variables
-и проверки PR завершаются. Первый deploy, таймер и облачная приёмка ещё не
+premerge checkpoint: подготовлен выпуск 0.5.0, все десять repository variables
+настроены и проверены точным readback; проверки PR завершаются. Первый deploy, таймер и облачная приёмка ещё не
 выполнены. Облачная активация ожидает следующих согласованных шагов.
 Основание: [постановка и уточнения](20261020165020-yandex-cloud-boiler-reset-request.md).
 Команды: [проверенный справочник yc](20261020165020-yandex-cloud-yc-commands.md).
@@ -414,7 +414,7 @@ CLI вызывается с --retry 0. Команды с неопределён�
 - Create during implementation: docs/reports/<date>-yandex-cloud-acceptance.md.
 - Move after completion: этот план в docs/plans/completed/ с исправлением ссылок.
 
-- [ ] После сообщения владельца о заполнении z_token прочитать только metadata
+- [x] После сообщения владельца о заполнении z_token прочитать только metadata
   новой версии; настроить repository variables, не получая значение секрета.
 - [ ] Подготовить один MINOR 0.5.0 при базе 0.4.0 либо следующий свободный MINOR;
   подписанные коммиты, PR, холодное ревью/WunderReview и CI. Слияние отдельно.

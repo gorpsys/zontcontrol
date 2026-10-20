@@ -7,7 +7,9 @@ IAM/OIDC проверены отдельными согласованными ч
 Факты и ID — в [отчёте provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md).
 После сообщения владельца metadata секрета проверены отдельным согласованным
 чтением: секрет ACTIVE, версия e6qi0n3ucqk2stmtdalb ACTIVE, ключ z_token есть.
-Repository variables не заполнены; версии кода, таймера и облачной приёмки пока нет.
+Все десять repository variables настроены и повторно прочитаны с точным
+совпадением ожидаемых значений; контакт и значения в отчёты не выводились.
+Версии кода, таймера и облачной приёмки пока нет.
 Далее — контракт согласованного
 [плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
 заменившего прежний [эскиз](../plans/yandex-cloud.md).
@@ -62,8 +64,9 @@ YC_OIDC_AUDIENCE, ZONT_CONTACT. Runtime, entrypoint, 256MB/420s/concurrency1,
 LOCKBOX_KEY=z_token и LOCKBOX_ENVIRONMENT_VARIABLE=ZONT_TOKEN фиксируются
 в workflow. [Пример](../../deploy/yandex.example.json) отражает этот набор;
 он не читается helper и не является вторым источником настройки. Подтверждённые
-ID ресурсов и версии секрета внесены в пример; ZONT_CONTACT остаётся null,
-настройка repository variables завершается перед PR. Подстановка ID образца запрещена.
+ID ресурсов и версии секрета внесены в пример; ZONT_CONTACT остаётся null
+только в публикуемом примере. В GitHub все десять variables настроены и
+проверены readback. Подстановка ID образца запрещена.
 Префикс GITHUB_ запрещён GitHub для repository variables; workflow передаёт
 YC_OIDC_AUDIENCE во внутренний env GITHUB_OIDC_AUDIENCE helper.
 Общие cloud/folder/runtime SA/bucket и GitHub AUD проверяются по согласованным

@@ -74,6 +74,16 @@ disabled_modules исключает модуль до чтения его кон
 Регистрация проверяет конструктор без запуска работ или HTTP-команд.
 Каждый новый запуск создаёт свежий экземпляр в своём worker-потоке.
 
+Переход с внутреннего каталога 0.4.0: импорт BUILTIN_SPECS из
+zontcontrol.autonomy.catalog заменить на builtin_specs и вызвать
+create_application(catalog=builtin_specs()). Для стандартного локального
+приложения достаточно create_application(), а для once без CLI —
+create_application(catalog=(BOILER_RESET_SPEC,)). Eager-алиас не сохраняется:
+он снова импортировал бы отсутствующий в минимальном облачном ZIP BoilerCLI.
+BUILTIN_SPECS не входил в потребительский Controller API; перенос внутреннего
+импорта не требует MAJOR по [правилам версий](../../scripts/README.md#версии-и-выпуск).
+Подготовленный выпуск остаётся 0.5.0.
+
 Once имеет deadline результата, контролируемый регистратором. По таймауту
 caller получает AlgorithmTimeout, модуль получает Event отмены и заканчивает
 finally. Поток не убивается; до его завершения состояние stopping запрещает

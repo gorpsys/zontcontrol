@@ -6,6 +6,10 @@
 
 - Добавлены облачный handler для одного boiler_reset once, отдельный профиль
   и минимальный ZIP с manifest и офлайн-проверкой вне checkout.
+- Внутренний каталог больше не экспортирует eager-константу BUILTIN_SPECS.
+  Для явной локальной композиции использовать builtin_specs(), для once —
+  (BOILER_RESET_SPEC,); create_application() сохраняет локальные defaults.
+  [Переход](docs/agents/architecture.md#3-регистратор-и-запуск).
 - GitHub Actions готовит деплой проверенного master через OIDC и pinned Lockbox,
   проверяет происхождение SHA, параметры функции и результат публикации.
 - Локальные и облачные входы используют безопасное логирование; JSON stdout
