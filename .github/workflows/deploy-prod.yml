@@ -99,10 +99,6 @@ jobs:
             --output "$RUNNER_TEMP/yc-bin/yc"
           chmod +x "$RUNNER_TEMP/yc-bin/yc"
           echo "$RUNNER_TEMP/yc-bin" >> "$GITHUB_PATH"
-      - name: Recheck master and checks before cloud credentials
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -m scripts.deploy_gate --check-once
       - name: Validate settings, recheck gate, exchange OIDC and publish
         env:
           GH_TOKEN: ${{ github.token }}

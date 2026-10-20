@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
-import hashlib
+import csv
 import io
 import json
 import os
@@ -50,6 +50,17 @@ def environment(path):
 def binding():
     return {'id': SECRET, 'versionId': SECRET_VERSION, 'key': 'z_token',
             'environmentVariable': 'ZONT_TOKEN'}
+
+
+def csv_options(value):
+    return dict(field.split('=', 1) for field in next(csv.reader([value])))
+
+
+def requested_bindings(args):
+    names = {'id': 'id', 'version-id': 'versionId', 'key': 'key',
+             'environment-variable': 'environmentVariable'}
+    return [{names[key]: value for key, value in csv_options(args[index + 1]).items()}
+            for index, flag in enumerate(args) if flag == '--secret']
 
 
 def current():
@@ -139,9 +150,14 @@ class DeployTests(unittest.TestCase):
         upload = next(args for args in yc.calls if 'put-object' in args)
         self.assertEqual(upload[upload.index('--body') + 1], '@' + str(self.path))
         self.assertIn(f'functions/zontcontrol/{SHA}/12-2.zip', upload)
-        for flag, value in [('--function-id', FUNCTION), ('--execution-timeout', '420s'),
-                            ('--concurrency', '1'), ('--log-folder-id', self.env['FOLDER_ID'])]:
+        for flag, value in [('--function-id', FUNCTION), ('--runtime', 'python312'),
+                            ('--entrypoint', 'handler.handler'), ('--memory', '256MB'),
+                            ('--execution-timeout', '420s'), ('--concurrency', '1'),
+                            ('--service-account-id', self.env['FUNCTION_SA_ID']),
+                            ('--log-folder-id', self.env['FOLDER_ID'])]:
             self.assertEqual(create[create.index(flag) + 1], value)
+        self.assertEqual(requested_bindings(create), [binding()])
+        self.assertNotIn('--environment', create)
         self.assertNotIn('--function-name', create)
         self.assertNotIn('--async-max-retries', create)
         self.assertEqual(sum('get-by-tag' in args for args in yc.calls), 1)
@@ -150,18 +166,23 @@ class DeployTests(unittest.TestCase):
         yc = FakeYC(current())
         self.publish(yc)
         args = next(a for a in yc.calls if 'create' in a)
-        for flag in ('--environment', '--secret', '--tmpfs-size', '--network-id',
-                     '--add-service-account', '--metadata-options', '--min-log-level'):
-            self.assertIn(flag, args)
-        self.assertEqual(yc.after['environment'], current()['environment'])
-        self.assertEqual(yc.after['secrets'], current()['secrets'] + [binding()])
+        self.assertEqual(csv_options(args[args.index('--environment') + 1]), current()['environment'])
+        self.assertEqual(requested_bindings(args), current()['secrets'] + [binding()])
+        for flag, value in [('--tmpfs-size', '536870912'), ('--network-id', 'en' + 'n' * 18),
+                            ('--min-log-level', 'info')]:
+            self.assertEqual(args[args.index(flag) + 1], value)
+        self.assertEqual(csv_options(args[args.index('--add-service-account') + 1]),
+                         {'alias': 'other', 'id': 'aje' + 'o' * 17})
+        self.assertEqual(csv_options(args[args.index('--metadata-options') + 1]),
+                         {'aws-v1-http-endpoint': 'disabled'})
 
     def test_pinned_token_reference_is_replaced_and_other_bindings_remain(self):
         before = current()
         before['secrets'].append(dict(binding(), versionId='e6q' + 'o' * 17))
         yc = FakeYC(before)
         self.publish(yc)
-        self.assertEqual(yc.after['secrets'], current()['secrets'] + [binding()])
+        args = next(a for a in yc.calls if 'create' in a)
+        self.assertEqual(requested_bindings(args), current()['secrets'] + [binding()])
 
     def test_read_error_wrong_target_and_unsupported_fields_fail_before_upload(self):
         cases = []

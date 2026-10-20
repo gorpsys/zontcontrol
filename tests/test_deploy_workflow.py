@@ -19,16 +19,14 @@ class DeployWorkflowTests(unittest.TestCase):
                       'ref: ${{ needs.gate.outputs.sha }}', 'ref: ${{ github.sha }}',
                       'CLOUD_PACKAGE_SHA: ${{ needs.gate.outputs.sha }}',
                       'persist-credentials: false', 'YC_CLI_VERSION: 1.40.0',
-                      'python3 -m scripts.deploy_gate --check-once',
                       'python3 -m scripts.yandex_deploy', 'make yandex-archive',
                       'FUNCTION_TIMEOUT: 420s', "FUNCTION_CONCURRENCY: '1'",
                       'LOCKBOX_KEY: z_token', 'LOCKBOX_ENVIRONMENT_VARIABLE: ZONT_TOKEN'):
             self.assertIn(value, workflow)
         for variable in VARIABLES:
             self.assertIn('${{ vars.' + variable + ' }}', workflow)
-        gate, deploy = workflow.split('  deploy:', 1)
+        gate = workflow.split('  deploy:', 1)[0]
         self.assertNotIn('id-token:', gate)
-        self.assertLess(deploy.index('--check-once'), deploy.index('scripts.yandex_deploy'))
         for forbidden in ('environment:', 'secrets.', 'Sandbox', '--async-max-retries',
                           'trigger create', 'd4e6d0l53hkivgrmfano', 'ajela8pd8l3bjeupa04s'):
             self.assertNotIn(forbidden, workflow)
