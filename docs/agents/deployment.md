@@ -1,7 +1,7 @@
 # Контракт Yandex Cloud-деплоя
 
-Статус: once-композиция и stdlib local/YC logger реализованы. Облачный handler,
-ZIP и deploy workflow пока не реализованы; опубликованного облачного запуска
+Статус: once-композиция, stdlib local/YC logger, облачный handler и исходный
+профиль реализованы. ZIP и deploy workflow пока не реализованы; опубликованного облачного запуска
 zontcontrol нет. Далее описаны требования согласованного
 [плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
 заменившего прежний [эскиз](../plans/yandex-cloud.md).
@@ -86,7 +86,7 @@ config или logs. Временные файлы удаляются при ус
 запись с неизвестным исходом: проверить чтением или завершить deploy ошибкой.
 
 Локальный logger настраивается только application.main для обоих CLI-входов.
-Импорт библиотеки и create_application не настраивают logger; будущий cloud
+Импорт библиотеки и create_application не настраивают logger; cloud
 handler сам вызывает configure_yc_logging. В облачном режиме — JSON stdout,
 INFO, propagate=False, один собственный handler, сохранение чужих handlers.
 Поля: message/level/logger и безопасные event/request_id/algorithm_id/device_id/

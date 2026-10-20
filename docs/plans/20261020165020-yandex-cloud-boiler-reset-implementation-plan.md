@@ -328,15 +328,15 @@ CLI вызывается с --retry 0. Команды с неопределён�
 - Create: tests/test_cloud_handler.py.
 - Modify: tests/test_installed_package.py, docs/agents/contracts.md.
 
-- [ ] Реализовать ровно один app.run_once('boiler_reset', 300), минимальный
+- [x] Реализовать ровно один app.run_once('boiler_reset', 300), минимальный
   безопасный ответ и гарантированное ожидание cleanup до выхода handler.
-- [ ] Добавить профиль с указанными IDs/таймаутами; использовать ZONT_TOKEN
+- [x] Добавить профиль с указанными IDs/таймаутами; использовать ZONT_TOKEN
   из env, event не управляет выбором алгоритма/устройства/режима.
-- [ ] Написать тесты normal/unknown/suppressed/confirmed, already_on,
+- [x] Написать тесты normal/unknown/suppressed/confirmed, already_on,
   недоступного токена/конфига, timeout/cancel и ошибки finally/off с fake API.
-- [ ] Проверить свежий app на каждом вызове, отсутствие побочных эффектов
+- [x] Проверить свежий app на каждом вызове, отсутствие побочных эффектов
   импорта и CLI/continuous, закрытие транспорта после worker/finally.
-- [ ] Выполнить make check и обновить installed-wheel smoke новых модулей.
+- [x] Выполнить make check и обновить installed-wheel smoke новых модулей.
 
 ### Task 3: Формировать и проверять минимальный облачный ZIP
 

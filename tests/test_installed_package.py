@@ -42,7 +42,8 @@ class PackageContentsTests(unittest.TestCase):
             'zontcontrol.autonomy.registry', 'zontcontrol.autonomy.runtime',
             'zontcontrol.algorithms.boiler_reset', 'zontcontrol.algorithms.boiler_cli',
             'zontcontrol.algorithms.charts', 'zontcontrol.heating',
-            'zontcontrol.heating_adapter', 'zontcontrol.monitor', 'zontcontrol.logging_config'}
+            'zontcontrol.heating_adapter', 'zontcontrol.monitor', 'zontcontrol.logging_config',
+            'zontcontrol.cloud'}
         with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
             modules = {item.name for item in pkgutil.walk_packages(
                 zontcontrol.__path__, prefix='zontcontrol.')}
@@ -69,6 +70,60 @@ class PackageContentsTests(unittest.TestCase):
 
 @unittest.skipUnless(INSTALLED, 'installed wheel suite: make package-check')
 class InstalledPackageTests(unittest.TestCase):
+    def test_cloud_import_and_one_fake_once_outside_checkout_without_cli(self):
+        code = '''
+from dataclasses import replace
+import json
+import logging
+from pathlib import Path
+import sys
+from unittest.mock import Mock, patch
+with patch('socket.socket.connect', side_effect=AssertionError('network forbidden')):
+    from zontcontrol import __version__
+    from zontcontrol.cloud import handler
+    from zontcontrol.autonomy.catalog import BOILER_RESET_SPEC
+    from zontcontrol.autonomy.contracts import AlgorithmResult, Mode, ResultStatus
+    assert not logging.getLogger('zontcontrol').handlers
+    assert 'zontcontrol.algorithms.boiler_cli' not in sys.modules
+    Path('config').mkdir()
+    configs = {
+        'controller': {'contact': 'installed@example.invalid', 'http_timeout_seconds': 15},
+        'registry': {'once_timeouts': {'boiler_reset': {
+            'minimum_seconds': 170, 'recommended_seconds': 300}}}}
+    for name, data in configs.items():
+        Path('config/' + name + '.json').write_text(json.dumps(data), encoding='utf-8')
+    calls = []
+    class Once:
+        def __init__(self, controller):
+            pass
+        def run_once(self, context):
+            calls.append(context)
+            return AlgorithmResult(ResultStatus.UNKNOWN, {
+                'assessment': {'state_at_period_end': 'unknown'},
+                'reset_performed': False, 'reason': None})
+    transport = Mock()
+    spec = replace(BOILER_RESET_SPEC, factory=Once)
+    with patch('zontcontrol.cloud.BOILER_RESET_SPEC', spec), \\
+            patch.dict('os.environ', {'ZONT_TOKEN': 'synthetic-offline'}), \\
+            patch('zontcontrol.application.HttpTransport', return_value=transport):
+        result = handler({'mode': 'continuous'}, None)
+    assert result == {'version': __version__, 'algorithm_id': 'boiler_reset',
+        'status': 'unknown', 'state_at_period_end': 'unknown',
+        'reset_performed': False, 'reason': None}
+    assert len(calls) == 1
+    assert calls[0].deadline is not None
+    transport.request.assert_not_called()
+    transport.close.assert_called_once_with()
+    assert 'zontcontrol.algorithms.boiler_cli' not in sys.modules
+    assert 'zontcontrol.algorithms.charts' not in sys.modules
+'''
+        with TemporaryDirectory() as directory:
+            result = subprocess.run([sys.executable, '-I', '-c', code], cwd=directory,
+                env=offline_environment(), capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        events = [json.loads(line)['event'] for line in result.stdout.splitlines()]
+        self.assertEqual(events, ['cloud_invocation_started', 'cloud_invocation_finished'])
+
     def test_console_and_python_module_configure_local_text_logging(self):
         code = '''
 import logging
