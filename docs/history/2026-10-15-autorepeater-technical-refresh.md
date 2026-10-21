@@ -1,5 +1,8 @@
 # Обновление технических правил по autorepeater
 
+> Историческая запись от 15.10.2026; действующие правила — [процедура выпуска](../../scripts/README.md#версии-и-выпуск).
+> Исходный текст ниже сохраняет контекст решения на ту дату.
+
 15.10.2026. По запросу владельца повторно проверен
 [gorpsys/autorepeater](https://github.com/gorpsys/autorepeater) на master,
 SHA [49cb338daae8d808706ec9d2480ca3f21ea4dcfd](https://github.com/gorpsys/autorepeater/commit/49cb338daae8d808706ec9d2480ca3f21ea4dcfd).
