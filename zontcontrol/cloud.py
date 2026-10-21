@@ -1,31 +1,27 @@
 """One ordinary application per cloud invocation, with cooperative cleanup."""
 
 from dataclasses import replace
+import json
 import logging
+from io import StringIO
+from typing import Any, cast
 
 from . import __version__
 from .application import create_application
 from .autonomy.catalog import BOILER_RESET_SPEC
-from .autonomy.contracts import AlgorithmCancelled, AlgorithmTimeout, Mode
+from .autonomy.contracts import AlgorithmCancelled, AlgorithmResult, AlgorithmTimeout, Mode
 from .config import ConfigurationError
-from .logging_config import configure_yc_logging
+from .logging_config import capture_console_output, configure_yc_logging
 
 
 logger = logging.getLogger(__name__)
-_STATES = frozenset({'normal', 'warning', 'confirmed_pattern', 'unknown', 'suppressed'})
-_REASONS = frozenset({'cancelled', 'already_on', 'current_reset_unknown'})
 
 
-def _response(result):
-    value = result.value
-    state = value['assessment']['state_at_period_end']
-    reason = value['reason']
-    if (state not in _STATES or reason is not None and reason not in _REASONS
-            or type(value['reset_performed']) is not bool):
-        raise ValueError('Invalid boiler_reset result')
-    return {'version': __version__, 'algorithm_id': 'boiler_reset',
-            'status': result.status.value, 'state_at_period_end': state,
-            'reset_performed': value['reset_performed'], 'reason': reason}
+def _response(result: AlgorithmResult) -> dict[str, Any]:
+    value = cast(dict[str, Any], result.value)
+    return {**value, 'version': __version__, 'algorithm_id': 'boiler_reset',
+            'status': result.status.value,
+            'state_at_period_end': value['assessment']['state_at_period_end']}
 
 
 def _log(event, message, request_id, *, level=logging.INFO):
@@ -37,7 +33,7 @@ def _log(event, message, request_id, *, level=logging.INFO):
         pass
 
 
-def handler(event, context):
+def handler(event: object, context: object) -> dict[str, Any]:
     """Ignore invocation payload: bindings and execution mode come from the profile.
 
     ZONT_TOKEN is injected by Lockbox into the environment. The existing
@@ -46,9 +42,14 @@ def handler(event, context):
     even when run_once has already published a timeout or cancellation.
     """
     configure_yc_logging()
+    with capture_console_output() as capture:
+        return _invoke(context, capture)
+
+
+def _invoke(context: object, capture: StringIO) -> dict[str, Any]:
     request_id = getattr(context, 'request_id', None)
     _log('cloud_invocation_started', 'Cloud invocation started', request_id)
-    failure = None
+    failure, result = None, None
     try:
         app = create_application(catalog=(replace(BOILER_RESET_SPEC, modes=frozenset({Mode.ONCE})),))
         try:
@@ -64,6 +65,15 @@ def handler(event, context):
     if failure is not None:
         _log('cloud_invocation_failed', f'Cloud once failed: {failure}', request_id,
              level=logging.ERROR)
-        raise RuntimeError(f'Cloud once failed: {failure}') from None
+        completed_result = None
+        if result is not None:
+            try:
+                completed_result = _response(result)
+            except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                pass
+        report = {'version': __version__, 'algorithm_id': 'boiler_reset', 'status': 'error',
+                  'error': failure, 'result': completed_result, 'log': capture.getvalue()}
+        raise RuntimeError(json.dumps(report, ensure_ascii=False, allow_nan=False)) from None
     _log('cloud_invocation_finished', 'Cloud invocation finished', request_id)
+    response['log'] = capture.getvalue()
     return response

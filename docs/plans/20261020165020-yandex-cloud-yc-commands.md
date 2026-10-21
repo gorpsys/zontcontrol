@@ -190,7 +190,7 @@ yc "${YC_SCOPE[@]}" serverless function version list \
 
 ```bash
 yc "${YC_SCOPE[@]}" storage s3api put-object --bucket autorepeater-deploy \
-  --key "$ZC_OBJECT_KEY" --body @build/yandex-function.zip --format json-rest
+  --key "$ZC_OBJECT_KEY" --body build/yandex-function.zip --format json-rest
 ```
 
 `ZC_OBJECT_KEY=functions/zontcontrol/<SHA>/<run-id>-<attempt>.zip`;

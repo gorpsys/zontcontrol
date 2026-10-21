@@ -1,6 +1,6 @@
 # Текущие контракты приложения
 
-Controller API_VERSION=2, подготовленный выпуск 0.5.0.
+Controller API_VERSION=2, подготовленный выпуск 0.6.0.
 Удаление API монополии — намеренная несовместимость; заглушек прежних
 session/request/acquire/release методов нет.
 [Архитектура](architecture.md), [решение](../history/2026-10-20-remove-synchronization.md).
@@ -32,6 +32,16 @@ prepare_command не отправляет команду. execute_command про
 текущие capabilities, диапазоны/шаг и аргументы ещё раз: preview мог устареть.
 Локальной или распределённой сериализации нет; параллельные команды одному
 прибору допускаются. Name/notes не используются как служебные регистры.
+При первом успешном адресном чтении metadata прибора в жизни ZontAdapter
+выполняется одна best-effort запись его name: прежний точный префикс и
+` [zontcontrol connected <ISO UTC seconds>]`. Только наш прежний суффикс
+заменяется; чужие суффиксы и исходные пробелы сохраняются без обрезания.
+list_devices() без ID и создание приложения не переименовывают приборы.
+При ошибке остаётся безопасная диагностика без повтора записи, обычная работа
+продолжается. Содержимое текущего чтения не подменяется предположением об успехе.
+Это metadata side effect и для create_read_controller, несмотря на отсутствие
+в его интерфейсе отправки управляющих команд. Отметка не даёт права управления
+и при конкурентном переименовании может быть перезаписана другим клиентом.
 
 Ошибки: ControllerError, AuthenticationError, DeviceUnavailable,
 UnsupportedAction, InvalidArguments, IncompleteHistory, RateLimited,
@@ -125,14 +135,37 @@ deploy/cloud-config; пустой contact в controller.json предназна�
 подстановки сборщиком из непустого ZONT_CONTACT. Рабочие локальные конфиги
 для облака не используются. Runtime получает ZONT_TOKEN из Lockbox через env.
 
-Ответ содержит только version, algorithm_id='boiler_reset', status,
-state_at_period_end, reset_performed и reason. status сохраняет
+Ответ содержит version, algorithm_id='boiler_reset', status,
+state_at_period_end, reset_performed, reason, assessment и log. status сохраняет
 success/unknown/suppressed; reason — null, cancelled, already_on или
 current_reset_unknown. Успешный off API не означает физического восстановления.
+Данные результата, включая assessment и дополнительные поля, передаются
+из AlgorithmResult.value целиком. Это JSON-совместимые данные, подготовленные
+самим алгоритмом, без конфигов, credentials, upstream payload и исключений.
+Handler не классифицирует бизнесовые события, состояния или причины.
+
+log — строка с копией Python stdout и stderr за текущий invocation, включая
+cleanup. Tee передаёт исходный текст в исходный поток и общий буфер; отдельной
+проекции для ответа нет. Облачный formatter по-прежнему выдаёт JSONL с timestamp
+UTC из LogRecord, чужой formatter сохраняется буквально. Поэтому общий log
+может содержать и JSONL, и обычный текст. Имеющиеся StreamHandler с направлением
+в stdout/stderr временно перенаправляются в tee, в том числе root и private
+логгеры с propagate=False. Не меняются их уровни/форматы/состав, нет добавления
+root handler и дублированных записей. В finally восстанавливаются sys.stdout,
+sys.stderr и потоки handlers, включая созданные во время вызова; буфер
+закрывается. Тёплые вызовы не делят буфер. Вне invocation накопления нет.
+Прямой OS FD/native вывод, файловые handlers и платформенные START/END вне
+Python-процесса не захватываются. Секреты запрещено выводить в самом источнике;
+накопитель не фильтрует уже выведенные записи.
+
 Сбой, включая off или закрытие транспорта, после cleanup даёт RuntimeError
-с фиксированной категорией без текста upstream и chained traceback.
-Безопасный request_id берётся из context только для логов; event не выводится.
-Наличие handler и профиля не означает публикации или включения таймера.
+с JSON-сообщением: version, algorithm_id, status='error', фиксированная error
+(timeout/cancelled/configuration_error/execution_failed), result (завершённый
+результат или null) и log. Код не пишет текст upstream и chained traceback;
+ошибка и принятые повторы платформы сохраняются. Безопасный request_id берётся
+из context только для логов; event не выводится.
+Первый deploy v0.5.2 и ACTIVE таймер подтверждены; два плановых запуска ещё
+не проверены из-за недоступности логов. Наблюдаемость 0.6.0 пока не опубликована.
 
 ## Конфиги и секреты
 

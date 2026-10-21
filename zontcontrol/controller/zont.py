@@ -5,6 +5,11 @@ explicitly distinguished from effects when translating transport failures.
 """
 
 import json
+from collections.abc import Callable
+from datetime import datetime, timezone
+import logging
+import re
+from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request
 
@@ -14,6 +19,11 @@ from .contracts import (
     AuthenticationError, CommandOutcomeUnknown, DeviceUnavailable, InvalidArguments, RateLimited,
 )
 from .transport import API_URL, FULL_API_URL, FailureKind, HttpTransport, TransportError
+
+
+logger = logging.getLogger(__name__)
+_CONNECTION_SUFFIX = re.compile(
+    r' \[zontcontrol connected \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00\]$')
 
 
 def raise_controller_error(error: TransportError, *, write: bool):
@@ -54,9 +64,39 @@ def _devices(data, device_id=None):
 
 
 class ZontAdapter:
-    def __init__(self, transport: HttpTransport, headers: dict[str, str]):
+    def __init__(self, transport: HttpTransport, headers: dict[str, str], *,
+                 clock: Callable[[], datetime] | None = None) -> None:
         self._transport = transport
         self._headers = dict(headers)
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._connection_attempted: set[int] = set()
+
+    def _mark_connection(self, device: dict[str, Any]) -> None:
+        """One best-effort metadata update per selected device and client lifetime."""
+        device_id = device['id']
+        if device_id in self._connection_attempted:
+            return
+        # Record before I/O: an ambiguous write must never be repeated.
+        self._connection_attempted.add(device_id)
+        try:
+            name = device['name']
+            if not isinstance(name, str):
+                raise InvalidArguments()
+            connected_at = self._clock()
+            if connected_at.tzinfo is None or connected_at.utcoffset() is None:
+                raise InvalidArguments()
+            timestamp = connected_at.astimezone(timezone.utc).isoformat(timespec='seconds')
+            name = _CONNECTION_SUFFIX.sub('', name) + f' [zontcontrol connected {timestamp}]'
+            self._request(f'{FULL_API_URL}/update_device',
+                          body={'device_id': device_id, 'name': name}, write=True)
+            event, message, level = ('client_connection_marked', 'Client connection marked', logging.INFO)
+        except Exception:
+            event, message, level = ('client_connection_marker_failed',
+                                      'Client connection marker unavailable', logging.WARNING)
+        try:
+            logger.log(level, message, extra={'event': event, 'device_id': device_id})
+        except Exception:
+            pass
 
     def _request(self, url, *, body=None, write=False):
         try:
@@ -70,13 +110,16 @@ class ZontAdapter:
         except TransportError as error:
             raise_controller_error(error, write=write)
 
-    def devices(self, device_id=None):
+    def devices(self, device_id: int | None = None) -> list[dict[str, Any]]:
         query = {}
         if device_id is not None:
             _device_id(device_id)
             query["device_ids"] = device_id
         suffix = "?" + urlencode(query) if query else ""
-        return _devices(self._request(f"{API_URL}/devices{suffix}"), device_id)
+        devices = _devices(self._request(f"{API_URL}/devices{suffix}"), device_id)
+        if device_id is not None:
+            self._mark_connection(devices[0])
+        return devices
 
     def full_device(self, device_id):
         _device_id(device_id)

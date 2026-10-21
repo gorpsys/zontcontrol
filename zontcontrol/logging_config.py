@@ -10,27 +10,30 @@ import logging
 import math
 import re
 import sys
+from datetime import datetime, timezone
+from contextlib import AbstractContextManager, contextmanager, redirect_stderr, redirect_stdout
+from collections.abc import Iterator
+from io import StringIO
+from threading import RLock
+from typing import Any, TextIO
 
 
 LOGGER_NAME = 'zontcontrol'
 _IDENTIFIER = re.compile(r'[A-Za-z0-9_.:-]{1,128}\Z')
-_STATES = frozenset({'unknown', 'normal', 'warning', 'suppressed', 'confirmed_pattern'})
 
 
-def _fields(record):
-    fields = {'message': record.getMessage(),
+def _fields(record: logging.LogRecord) -> dict[str, Any]:
+    fields = {'timestamp': datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
+              'message': record.getMessage(),
               'level': {'WARNING': 'WARN', 'CRITICAL': 'FATAL'}.get(
                   record.levelname, record.levelname), 'logger': record.name}
-    for name in ('event', 'request_id', 'algorithm_id'):
+    for name in ('event', 'request_id', 'algorithm_id', 'state'):
         value = getattr(record, name, None)
         if isinstance(value, str) and _IDENTIFIER.fullmatch(value):
             fields[name] = value
     device = getattr(record, 'device_id', None)
     if type(device) is int and device > 0:
         fields['device_id'] = device
-    state = getattr(record, 'state', None)
-    if isinstance(state, str) and state in _STATES:
-        fields['state'] = state
     reset = getattr(record, 'reset_performed', None)
     if type(reset) is bool:
         fields['reset_performed'] = reset
@@ -52,10 +55,10 @@ class YcLoggingFormatter(logging.Formatter):
 
 
 class _LocalFormatter(logging.Formatter):
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         fields = _fields(record)
         metadata = ' '.join(f'{name}={value}' for name, value in fields.items()
-                            if name not in ('message', 'level', 'logger'))
+                            if name not in ('timestamp', 'message', 'level', 'logger'))
         return f"{fields['level']} {fields['logger']}: {fields['message']}" + (
             f' {metadata}' if metadata else '')
 
@@ -64,24 +67,67 @@ class _ApplicationHandler(logging.StreamHandler):
     """Distinguish our handler from handlers installed by an embedding caller."""
 
 
-def _configure(stream, formatter):
+class _Tee:
+    def __init__(self, stream: TextIO, buffer: StringIO,
+                 lock: AbstractContextManager[object]) -> None:
+        self.stream, self.buffer, self.lock = stream, buffer, lock
+
+    def write(self, text: str) -> int | None:
+        with self.lock:
+            count = self.stream.write(text)
+            self.buffer.write(text if count is None else text[:count])
+            return count
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.stream, name)
+
+
+def _stream_handlers() -> set[logging.StreamHandler]:
+    loggers = [logging.getLogger(), *(logger for logger in tuple(logging.Logger.manager.loggerDict.values())
+                                     if isinstance(logger, logging.Logger))]
+    return {handler for logger in loggers for handler in logger.handlers
+            if isinstance(handler, logging.StreamHandler)}
+
+
+@contextmanager
+def capture_console_output() -> Iterator[StringIO]:
+    """Copy Python stdout/stderr, including already configured stream handlers."""
+    with StringIO() as buffer:
+        lock = RLock()
+        out, err = _Tee(sys.stdout, buffer, lock), _Tee(sys.stderr, buffer, lock)
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                for handler in _stream_handlers():
+                    for tee in (out, err):
+                        if handler.stream is tee.stream:
+                            handler.setStream(tee)
+                            break
+                yield buffer
+            finally:
+                # Also detach handlers created during this invocation from its buffer.
+                for handler in _stream_handlers():
+                    if handler.stream is out or handler.stream is err:
+                        handler.setStream(handler.stream.stream)
+
+
+def _configure(handler: _ApplicationHandler, formatter: logging.Formatter) -> _ApplicationHandler:
     logger = logging.getLogger(LOGGER_NAME)
-    for handler in logger.handlers[:]:
-        if isinstance(handler, _ApplicationHandler):
-            logger.removeHandler(handler)
-            handler.close()
-    handler = _ApplicationHandler(stream)
+    for previous in logger.handlers[:]:
+        if isinstance(previous, _ApplicationHandler):
+            logger.removeHandler(previous)
+            previous.close()
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
+    return handler
 
 
-def configure_local_logging():
+def configure_local_logging() -> None:
     """Human-readable diagnostics on stderr; terminal UI remains unchanged."""
-    _configure(sys.stderr, _LocalFormatter())
+    _configure(_ApplicationHandler(sys.stderr), _LocalFormatter())
 
 
-def configure_yc_logging():
+def configure_yc_logging() -> _ApplicationHandler:
     """Cloud diagnostics on stdout; configure anew safely for warm invocations."""
-    _configure(sys.stdout, YcLoggingFormatter())
+    return _configure(_ApplicationHandler(sys.stdout), YcLoggingFormatter())

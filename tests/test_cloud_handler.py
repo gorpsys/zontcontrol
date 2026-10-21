@@ -1,6 +1,6 @@
 """Cloud composition against synthetic controllers; no ZONT or YC calls."""
 
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from dataclasses import replace
 import io
 import json
@@ -92,6 +92,9 @@ class CloudHandlerTests(unittest.TestCase):
         from zontcontrol.cloud import handler
         return handler(event, context)
 
+    def log_rows(self, report):
+        return [json.loads(line) for line in report['log'].splitlines()]
+
     def test_profile_has_fixed_bindings_timeouts_and_no_baked_contact(self):
         controller = json.loads((PROFILE / 'controller.json').read_text())
         self.assertEqual(controller, {'contact': '', 'http_timeout_seconds': 15})
@@ -107,14 +110,18 @@ class CloudHandlerTests(unittest.TestCase):
         for state, status in (('normal', 'success'), ('unknown', 'unknown'),
                               ('suppressed', 'suppressed'), ('warning', 'success')):
             self.events.clear()
+            output_start = len(self.output.getvalue())
             with self.subTest(state=state), patch('zontcontrol.algorithms.boiler_reset.assess_history',
-                    return_value={'state_at_period_end': state, 'private': 'hidden'}):
+                    return_value={'state_at_period_end': state}):
                 result = self.invoke({'algorithm_id': 'boiler_cli', 'mode': 'continuous',
                     'device_id': 1, 'execute': False, 'token': 'event-private'})
-            self.assertEqual(result, {'version': __version__, 'algorithm_id': 'boiler_reset',
-                'status': status, 'state_at_period_end': state, 'reset_performed': False, 'reason': None})
-            self.assertEqual(self.events, ['transport_closed'])
-            self.assertEqual(self.controller.read_history.call_args.args[0], 700877)
+                self.assertEqual(result, {'version': __version__, 'algorithm_id': 'boiler_reset',
+                    'status': status, 'state_at_period_end': state, 'reset_performed': False,
+                    'reason': None, 'assessment': {'state_at_period_end': state},
+                    'log': self.output.getvalue()[output_start:]})
+                self.assertTrue(result['log'])
+                self.assertEqual(self.events, ['transport_closed'])
+                self.assertEqual(self.controller.read_history.call_args.args[0], 700877)
         self.assertNotIn('event-private', self.output.getvalue())
 
     def test_confirmed_sends_one_real_policy_pulse_then_closes(self):
@@ -125,6 +132,127 @@ class CloudHandlerTests(unittest.TestCase):
         logs = [json.loads(line) for line in self.output.getvalue().splitlines()]
         self.assertTrue(any(row.get('request_id') == 'request-123' for row in logs))
         self.assertEqual(sum(row.get('event') == 'once_started' for row in logs), 1)
+        self.assertEqual(result['log'], self.output.getvalue())
+        self.assertEqual(result['assessment']['device_id'], 700877)
+        self.assertIn('requested_period', result['assessment'])
+        self.assertIn('events', result['assessment'])
+
+    def test_warm_invocations_do_not_share_logs_and_post_response_does_not_accumulate(self):
+        first = self.invoke(context=SimpleNamespace(request_id='first'))
+        second = self.invoke(context=SimpleNamespace(request_id='second'))
+        self.assertEqual(sum(row.get('event') == 'cloud_invocation_started' for row in self.log_rows(second)), 1)
+        self.assertNotIn('first', json.dumps(second))
+        snapshot = json.dumps(first)
+        logging.getLogger('zontcontrol').info('after response')
+        self.assertEqual(json.dumps(first), snapshot)
+
+    def test_new_business_events_and_additional_result_fields_pass_unchanged(self):
+        from zontcontrol.cloud import _response
+        from zontcontrol.autonomy.contracts import AlgorithmResult, ResultStatus
+        assessment = {'state_at_period_end': 'new_state', 'new_metric': 7,
+            'events': [{'type': 'future_event', 'custom': {'readings': [20.1, None]}}]}
+        result = AlgorithmResult(ResultStatus.SUCCESS,
+            {'assessment': assessment, 'reset_performed': False, 'reason': 'new_reason',
+             'extra_result': ['new', 'data']})
+        report = _response(result)
+        self.assertEqual(report['assessment'], assessment)
+        self.assertEqual(report['reason'], 'new_reason')
+        self.assertEqual(report['extra_result'], ['new', 'data'])
+
+    def test_finished_result_survives_shutdown_failure_in_safe_error_report(self):
+        with patch('zontcontrol.application._close_transport', side_effect=RuntimeError('private')):
+            error = self.assert_safe_failure()
+        report = json.loads(str(error))
+        self.assertEqual(report['result']['state_at_period_end'], 'confirmed_pattern')
+        self.assertTrue(report['result']['reset_performed'])
+        self.assertEqual(json.loads(report['log'].splitlines()[-1])['event'], 'cloud_invocation_failed')
+        self.assertIs(sys.stdout, self.output)
+
+    def test_real_recovered_assessment_is_returned_without_failure_or_retry(self):
+        from tests.test_monitor import heating_history, typed_point, typed_series
+        from zontcontrol.monitor import assess_history
+        data = heating_history(coolant=typed_series(*(
+            typed_point(i * 60, 35 - .1 * i if i < 40 else 39) for i in range(46))))
+        assessment = assess_history(data)
+        self.assertEqual([event['type'] for event in assessment['events']],
+                         ['confirmed_pattern', 'ended'])
+        with patch('zontcontrol.algorithms.boiler_reset.assess_history', return_value=assessment):
+            result = self.invoke()
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['assessment'], assessment)
+        self.assertEqual(result['assessment']['events'][-1]['reason'], 'heating_response_returned')
+        self.assertTrue(result['assessment']['events'][-1]['heat_returned'])
+        self.assertEqual(self.events, ['transport_closed'])
+
+    def test_other_logger_messages_appear_in_response_exactly_as_stdout(self):
+        from zontcontrol.algorithms.boiler_reset import BoilerReset
+        from zontcontrol.autonomy.contracts import AlgorithmResult, ResultStatus
+        foreign = logging.getLogger('outside.application')
+        previous = foreign.handlers[:], foreign.level, foreign.propagate
+        handler = logging.StreamHandler(self.output)
+        handler.setFormatter(logging.Formatter('PRIOR %(name)s: %(message)s'))
+        foreign.handlers, foreign.level, foreign.propagate = [handler], logging.INFO, False
+        self.addCleanup(setattr, foreign, 'handlers', previous[0])
+        self.addCleanup(setattr, foreign, 'level', previous[1])
+        self.addCleanup(setattr, foreign, 'propagate', previous[2])
+        def run_once(module, context):
+            foreign.info('a completely new event')
+            return AlgorithmResult(ResultStatus.SUCCESS, {'assessment': {
+                'state_at_period_end': 'normal'}, 'reset_performed': False, 'reason': None})
+        with patch.object(BoilerReset, 'run_once', run_once):
+            result = self.invoke()
+        self.assertEqual(result['log'], self.output.getvalue())
+        self.assertIn('PRIOR outside.application: a completely new event\n', result['log'])
+        self.assertIs(handler.stream, self.output)
+
+    def test_existing_root_handler_is_copied_without_duplicate_json_or_reformatting(self):
+        from zontcontrol.algorithms.boiler_reset import BoilerReset
+        from zontcontrol.autonomy.contracts import AlgorithmResult, ResultStatus
+        root = logging.getLogger()
+        previous = root.handlers[:], root.level
+        handler = logging.StreamHandler(self.output)
+        handler.setFormatter(logging.Formatter('ROOT %(message)s'))
+        root.handlers, root.level = [handler], logging.INFO
+        self.addCleanup(setattr, root, 'handlers', previous[0])
+        self.addCleanup(setattr, root, 'level', previous[1])
+        def run_once(module, context):
+            logging.getLogger('vendor.root').info('ROOT_VISIBLE_RECORD')
+            return AlgorithmResult(ResultStatus.SUCCESS, {'assessment': {
+                'state_at_period_end': 'normal'}, 'reset_performed': False, 'reason': None})
+        with patch.object(BoilerReset, 'run_once', run_once):
+            result = self.invoke()
+        self.assertEqual(result['log'], self.output.getvalue())
+        self.assertEqual(result['log'].count('ROOT_VISIBLE_RECORD'), 1)
+        self.assertIn('ROOT ROOT_VISIBLE_RECORD\n', result['log'])
+        self.assertIs(handler.stream, self.output)
+        self.assertEqual(root.handlers, [handler])
+        self.assertEqual(root.level, logging.INFO)
+
+    def test_stdout_stderr_and_handlers_created_during_call_are_restored_on_failure(self):
+        errors = io.StringIO()
+        foreign = logging.getLogger('created.inside.invocation')
+        previous = foreign.handlers[:], foreign.level, foreign.propagate
+        self.addCleanup(setattr, foreign, 'handlers', previous[0])
+        self.addCleanup(setattr, foreign, 'level', previous[1])
+        self.addCleanup(setattr, foreign, 'propagate', previous[2])
+        handlers = []
+        def run_once(*args, **kwargs):
+            print('STDOUT RECORD')
+            print('STDERR RECORD', file=sys.stderr)
+            handler = logging.StreamHandler()
+            handlers.append(handler)
+            foreign.handlers, foreign.level, foreign.propagate = [handler], logging.INFO, False
+            foreign.info('CREATED HANDLER RECORD')
+            raise RuntimeError('private')
+        from zontcontrol.algorithms.boiler_reset import BoilerReset
+        with redirect_stderr(errors), \
+                patch.object(BoilerReset, 'run_once', run_once):
+            error = self.assert_safe_failure()
+        report = json.loads(str(error))
+        for text in ('STDOUT RECORD', 'STDERR RECORD', 'CREATED HANDLER RECORD'):
+            self.assertIn(text, report['log'])
+        self.assertIs(sys.stdout, self.output)
+        self.assertIs(handlers[0].stream, errors)
 
     def test_already_on_is_explicit_suppressed_and_untouched(self):
         current = self.controller.read_current.return_value
@@ -176,7 +304,10 @@ class CloudHandlerTests(unittest.TestCase):
     def assert_safe_failure(self):
         with self.assertRaises(RuntimeError) as caught:
             self.invoke(context=SimpleNamespace(request_id='invalid\nprivate'))
-        self.assertRegex(str(caught.exception), r'^Cloud once failed: [a-z_]+$')
+        report = json.loads(str(caught.exception))
+        self.assertEqual(report['status'], 'error')
+        self.assertIn(report['error'], ('timeout', 'cancelled', 'configuration_error', 'execution_failed'))
+        self.assertEqual(json.loads(report['log'].splitlines()[-1])['event'], 'cloud_invocation_failed')
         self.assertIsNone(caught.exception.__cause__)
         self.assertTrue(caught.exception.__suppress_context__)
         return caught.exception
@@ -196,7 +327,9 @@ class CloudHandlerTests(unittest.TestCase):
             self.wait.side_effect = (RuntimeError('private-wait-payload') if failure == 'wait'
                                     else lambda context, seconds: False)
             with self.subTest(failure=failure):
-                self.assert_safe_failure()
+                error = self.assert_safe_failure()
+            self.assertTrue(any(row.get('event') == 'reset_off_attempt'
+                                for row in self.log_rows(json.loads(str(error)))))
             self.assertEqual(self.events, ['on', 'off', 'transport_closed'])
         self.assertNotIn('private-wait-payload', self.output.getvalue())
 
@@ -214,14 +347,14 @@ class CloudHandlerTests(unittest.TestCase):
             self.assertNotIn('During handling', rendered)
         self.assertNotIn('private-provider-payload', self.output.getvalue())
 
-    def test_unrecognized_reason_is_not_returned_or_logged(self):
+    def test_future_reason_from_algorithm_does_not_become_platform_failure(self):
         from zontcontrol.algorithms.boiler_reset import BoilerReset
         from zontcontrol.autonomy.contracts import AlgorithmResult, ResultStatus
         result = AlgorithmResult(ResultStatus.UNKNOWN, {'assessment': {
-            'state_at_period_end': 'unknown'}, 'reset_performed': False, 'reason': 'private-result'})
+            'state_at_period_end': 'unknown'}, 'reset_performed': False, 'reason': 'future_reason'})
         with patch.object(BoilerReset, 'run_once', return_value=result):
-            self.assert_safe_failure()
-        self.assertNotIn('private-result', self.output.getvalue())
+            response = self.invoke()
+        self.assertEqual(response['reason'], 'future_reason')
 
     def test_each_call_has_new_application_only_once_and_explicit_catalog(self):
         apps = []
@@ -283,7 +416,10 @@ class CloudHandlerTests(unittest.TestCase):
                     worker.join(3)
                 self.assertFalse(worker.is_alive())
                 self.assertEqual(len(errors), 1)
-                self.assertEqual(str(errors[0]), f'Cloud once failed: {outcome if outcome == "timeout" else "cancelled"}')
+                self.assertEqual(json.loads(str(errors[0]))['error'],
+                                 outcome if outcome == 'timeout' else 'cancelled')
+                events = [row.get('event') for row in self.log_rows(json.loads(str(errors[0])))]
+                self.assertLess(events.index('reset_off_api_accepted'), events.index('cloud_invocation_failed'))
                 self.assertEqual(self.events[-2:], ['off', 'transport_closed'])
 
     def test_timeout_and_cancel_interrupt_pulse_wait_then_attempt_off(self):
@@ -324,7 +460,7 @@ class CloudHandlerTests(unittest.TestCase):
                 self.assertFalse(worker.is_alive())
                 self.assertEqual(len(errors), 1)
                 category = 'timeout' if outcome == 'timeout' else 'cancelled'
-                self.assertEqual(str(errors[0]), f'Cloud once failed: {category}')
+                self.assertEqual(json.loads(str(errors[0]))['error'], category)
                 self.assertEqual(self.events, ['on', ('wait', 40), 'off', 'transport_closed'])
 
     def test_import_is_inert_without_token_config_cli_or_network(self):

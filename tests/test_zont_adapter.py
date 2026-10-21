@@ -29,13 +29,19 @@ class ZontAdapterTests(unittest.TestCase):
         self.opener.open.return_value = io.BytesIO(json.dumps({"ok": True, **data}).encode())
 
     def test_widget_read_filters_by_explicit_device(self):
-        self.answer(devices=[{"id": 42, "name": "Дом"}])
+        self.opener.open.side_effect = [io.BytesIO(b'{"ok":true,"devices":[{"id":42,"name":"Home"}]}'),
+                                      io.BytesIO(b'{"ok":true}')]
         self.assertEqual(self.adapter.devices(42)[0]["id"], 42)
-        request = self.opener.open.call_args.args[0]
+        request = self.opener.open.call_args_list[0].args[0]
         self.assertEqual(request.get_method(), "GET")
         self.assertEqual(parse_qs(urlsplit(request.full_url).query),
                          {"device_ids": ["42"]})
         self.assertEqual(request.get_header("X-zont-token"), "test-token")
+        marker = self.opener.open.call_args_list[1].args[0]
+        self.assertEqual(marker.full_url, 'https://my.zont.online/api/update_device')
+        self.assertEqual(marker.get_method(), 'POST')
+        self.assertEqual(json.loads(marker.data)['device_id'], 42)
+        self.assertEqual(set(json.loads(marker.data)), {'device_id', 'name'})
 
 
     def test_command_body_arriving_after_budget_is_unknown_without_retry(self):
