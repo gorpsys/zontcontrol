@@ -1,9 +1,16 @@
 # Создание отдельных ресурсов Yandex Cloud для zontcontrol
 
 Дата: 20.10.2026. Task 5 согласованного
-[плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
+[плана](../plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
 Ветка: release/yandex-cloud-boiler-reset. Запись фактов начата
 2026-10-20 16:24:33 UTC (19:24:33 Europe/Moscow).
+
+Состояние первоначального provisioning на 20.10.2026; ниже сохранены
+дополнения по датам. Последующие публикация, таймер и приёмка описаны в
+[отчёте 21.10](2026-10-21-yandex-cloud-acceptance.md), сводка ресурсов —
+в [датированном реестре](../reference/yandex-cloud-resources.md).
+Этот отчёт не является живой проверкой и не задаёт нынешнюю процедуру
+bootstrap: она находится в [how-to](../reference/github-yandex-cloud-howto.md).
 
 Отдельные deploy SA, OIDC credential, закрытый ресурс функции и metadata
 Lockbox созданы. Четыре последующих IAM/OIDC readback совпали с ожиданиями.
@@ -236,7 +243,7 @@ yc; сохраняет безопасные причины upload/HEAD без с
 Офлайн-регрессии проверяют приватность токенов/контактов и запрет повторов.
 Эта диагностика не устанавливает ещё неизвестную причину отказа upload.
 
-## Следующая граница: Task 6
+## Следующая граница на момент записи: Task 6
 
 Metadata активной версии и ключа после заполнения владельцем уже проверены.
 Repository variables, выпуск 0.5.0, PR/CI и разрешённое слияние выполнены.
