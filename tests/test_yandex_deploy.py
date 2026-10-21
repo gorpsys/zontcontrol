@@ -103,8 +103,6 @@ class FakeYC:
             if self.fail_upload:
                 raise DeployError('synthetic upload outcome unknown')
             return {}
-        if 'head-object' in args:
-            return {'Metadata': {'sha256': 'unproven'}}
         if 'create' in args:
             self.after = deepcopy(self.before or {})
             self.after.update({'id': 'd4' + 'v' * 18, 'functionId': FUNCTION, 'status': 'ACTIVE',
@@ -143,12 +141,12 @@ class DeployTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             return deploy.publish(self.settings, yc, SHA, '12', '2')
 
-    def test_first_version_uses_id_explicit_profile_and_at_body(self):
+    def test_first_version_uses_id_and_reference_plain_file_body(self):
         yc = FakeYC()
         self.assertEqual(self.publish(yc), 'd4' + 'v' * 18)
         create = next(args for args in yc.calls if 'create' in args)
         upload = next(args for args in yc.calls if 'put-object' in args)
-        self.assertEqual(upload[upload.index('--body') + 1], '@' + str(self.path))
+        self.assertEqual(upload[upload.index('--body') + 1], str(self.path))
         self.assertIn(f'functions/zontcontrol/{SHA}/12-2.zip', upload)
         for flag, value in [('--function-id', FUNCTION), ('--runtime', 'python312'),
                             ('--entrypoint', 'handler.handler'), ('--memory', '256MB'),
@@ -269,12 +267,12 @@ class DeployTests(unittest.TestCase):
             self.publish(yc)
         self.assertEqual(sum('create' in a for a in yc.calls), 1)
 
-    def test_unknown_upload_reads_and_stops_without_retry(self):
+    def test_unknown_upload_stops_without_retry_or_version_creation(self):
         yc = FakeYC(); yc.fail_upload = True
         with self.assertRaises(DeployError):
             self.publish(yc)
         self.assertEqual(sum('put-object' in a for a in yc.calls), 1)
-        self.assertTrue(any('head-object' in a for a in yc.calls))
+        self.assertFalse(any('head-object' in a for a in yc.calls))
         self.assertFalse(any('create' in a for a in yc.calls))
 
     def test_unknown_create_without_latest_proof_fails_without_repeating(self):
@@ -381,12 +379,18 @@ class DeployTests(unittest.TestCase):
                 self.assertEqual(kwargs['env']['YC_IAM_TOKEN'], IAM)
                 self.assertEqual(kwargs['env']['HOME'], '/synthetic/home')
                 self.assertNotIn('YC_TOKEN', kwargs['env'])
-                self.assertNotIn('YC_SERVICE_ACCOUNT_KEY_FILE', kwargs['env'])
+                self.assertEqual(kwargs['env']['RUNNER_REFERENCE_VALUE'], 'inherited')
+                self.assertNotIn('--cloud-id', args)
+                self.assertNotIn('--endpoint', args)
                 self.assertEqual(args[args.index('--retry') + 1], '0')
                 self.assertEqual(args[args.index('--format') + 1], 'json-rest')
                 self.assertGreater(kwargs['timeout'], 0)
                 config = Path(args[args.index('--config') + 1]); paths.append(config)
-                self.assertEqual(json.loads(config.read_text())['current'], 'ci')
+                self.assertEqual(json.loads(config.read_text()), {
+                    'current': 'ci', 'profiles': {'ci': {
+                        'cloud-id': self.settings.cloud_id,
+                        'folder-id': self.settings.folder_id,
+                        'endpoint': 'api.cloud.yandex.net:443'}}})
                 self.assertNotIn(IAM, config.read_text())
                 if outcome == 'timeout':
                     raise subprocess.TimeoutExpired(args, 1, stderr=IAM.encode())
@@ -396,7 +400,8 @@ class DeployTests(unittest.TestCase):
                     b'invalid' if outcome == 'invalid' else b'{}', IAM.encode())
             with self.subTest(outcome=outcome), patch.dict(os.environ, {
                     'HOME': '/synthetic/home', 'YC_TOKEN': 'synthetic-other',
-                    'YC_SERVICE_ACCOUNT_KEY_FILE': '/do-not-read'}, clear=True), \
+                    'YC_IAM_TOKEN': 'synthetic-old-iam',
+                    'RUNNER_REFERENCE_VALUE': 'inherited'}, clear=True), \
                     patch.object(deploy.subprocess, 'run', side_effect=execute), \
                     redirect_stdout(io.StringIO()) as output:
                 yc = deploy.YandexCLI(self.settings, IAM, self.path.parent)
@@ -407,6 +412,8 @@ class DeployTests(unittest.TestCase):
                         yc.call(['test'], 'read test')
                     self.assertNotIn(IAM, str(error.exception))
                 self.assertNotIn(IAM, output.getvalue())
+                self.assertEqual(os.environ['YC_IAM_TOKEN'], 'synthetic-old-iam')
+                self.assertEqual(os.environ['YC_TOKEN'], 'synthetic-other')
                 self.assertTrue(paths)
                 self.assertTrue(all(not p.exists() and not p.parent.exists() for p in paths))
 
@@ -429,38 +436,62 @@ class DeployTests(unittest.TestCase):
                 self.assertEqual(str(caught.exception),
                     f'cloud command failed: upload package; exit=7; reason={reason}')
 
-    def test_upload_and_head_diagnostics_survive_without_retry_or_private_output(self):
+    def test_upload_failure_stops_with_safe_diagnostics_without_extra_cloud_calls(self):
         private = f'{IAM} private-contact@example.invalid'.encode()
         for invalid_json in (False, True):
-            for head_fails in (False, True):
-                with self.subTest(invalid_json=invalid_json, head_fails=head_fails):
-                    yc = FakeYC()
-                    fake_call = yc.call
-                    cli = deploy.YandexCLI(self.settings, IAM, self.path.parent)
-                    def call(args, label, **kwargs):
-                        if 'put-object' in args or 'head-object' in args:
-                            yc.calls.append(args)
-                            return cli.call(args, label, **kwargs)
-                        return fake_call(args, label, **kwargs)
-                    yc.call = call
-                    upload = subprocess.CompletedProcess([], 0 if invalid_json else 1,
-                        private if invalid_json else b'', b'AccessDenied ' + private)
-                    head = subprocess.CompletedProcess([], int(head_fails), b'{}',
-                        b'NoSuchBucket ' + private)
-                    with patch.object(deploy.subprocess, 'run', side_effect=[upload, head]), \
-                            self.assertRaises(DeployError) as caught:
-                        self.publish(yc)
-                    message = str(caught.exception)
-                    self.assertIn('upload outcome cannot be proven; write was not retried', message)
-                    self.assertIn('invalid cloud JSON: upload package' if invalid_json else
-                                  'exit=1; reason=permission_denied', message)
-                    self.assertIn('reason=not_found' if head_fails else 'HEAD succeeded', message)
-                    self.assertNotIn(private.decode(), message)
-                    self.assertNotIn(IAM, message)
-                    self.assertNotIn('private-contact@example.invalid', message)
-                    self.assertEqual(sum('put-object' in a for a in yc.calls), 1)
-                    self.assertEqual(sum('head-object' in a for a in yc.calls), 1)
-                    self.assertFalse(any('create' in a for a in yc.calls))
+            with self.subTest(invalid_json=invalid_json):
+                yc = FakeYC()
+                fake_call = yc.call
+                cli = deploy.YandexCLI(self.settings, IAM, self.path.parent)
+                def call(args, label, **kwargs):
+                    if 'put-object' in args:
+                        yc.calls.append(args)
+                        return cli.call(args, label, **kwargs)
+                    return fake_call(args, label, **kwargs)
+                yc.call = call
+                upload = subprocess.CompletedProcess([], 0 if invalid_json else 1,
+                    private if invalid_json else b'', b'AccessDenied ' + private)
+                with patch.object(deploy.subprocess, 'run', return_value=upload) as command, \
+                        self.assertRaises(DeployError) as caught:
+                    self.publish(yc)
+                message = str(caught.exception)
+                self.assertIn('invalid cloud JSON: upload package' if invalid_json else
+                              'exit=1; reason=permission_denied', message)
+                self.assertNotIn(private.decode(), message)
+                self.assertNotIn(IAM, message)
+                self.assertNotIn('private-contact@example.invalid', message)
+                self.assertEqual(sum('put-object' in a for a in yc.calls), 1)
+                command.assert_called_once()
+                self.assertFalse(any('head-object' in a for a in yc.calls))
+                self.assertFalse(any('create' in a for a in yc.calls))
+
+    def test_reference_upload_passes_existing_zip_path_to_cli_without_stdin(self):
+        yc = FakeYC()
+        cli = deploy.YandexCLI(self.settings, IAM, self.path.parent)
+        fake_call = yc.call
+        uploaded = []
+        def execute(args, **kwargs):
+            self.assertEqual(args[:3], ['yc', 'storage', 's3api'])
+            body = args[args.index('--body') + 1]
+            uploaded.append(Path(body).read_bytes())
+            self.assertEqual(body, str(self.path))
+            self.assertNotIn('input', kwargs)
+            self.assertNotIn('stdin', kwargs)
+            self.assertNotIn('cwd', kwargs)
+            self.assertEqual(kwargs['env']['YC_IAM_TOKEN'], IAM)
+            self.assertEqual(args[args.index('--bucket') + 1], self.settings.bucket)
+            self.assertEqual(args[args.index('--key') + 1],
+                             f'functions/zontcontrol/{SHA}/12-2.zip')
+            return subprocess.CompletedProcess(args, 0, b'{}', b'')
+        def call(args, label, **kwargs):
+            if 'put-object' in args:
+                return cli.call(args, label, **kwargs)
+            return fake_call(args, label, **kwargs)
+        yc.call = call
+        with patch.object(deploy.subprocess, 'run', side_effect=execute) as command:
+            self.assertEqual(self.publish(yc), 'd4' + 'v' * 18)
+        command.assert_called_once()
+        self.assertEqual(uploaded, [self.path.read_bytes()])
 
 
 class DeployHTTPTests(unittest.TestCase):

@@ -6,12 +6,15 @@ Metadata активной версии секрета также подтвер�
 слит через PR 11 и опубликован; все десять repository variables проверены
 точным readback. Автоматический deploy остановился на OIDC, затем после
 исправления credential — на upload ZIP с неизвестным исходом, до создания
-версии функции. Подготовлен PATCH 0.5.1 с безопасной диагностикой.
+версии функции. PATCH 0.5.1 с диагностикой также остановился на upload
+(local_file_unavailable), до создания версии. Подготовлен PATCH 0.5.2:
+возвращён рабочий путь загрузки образца, выполнена ревизия облачных скриптов
+на необоснованное усложнение; облачная проверка исправления ещё предстоит.
 Первый успешный deploy, таймер и облачная приёмка ещё не подтверждены.
 Основание: [постановка и уточнения](20261020165020-yandex-cloud-boiler-reset-request.md).
 Команды: [проверенный справочник yc](20261020165020-yandex-cloud-yc-commands.md).
 База zontcontrol: master c09d3c672c927013c976468087c221485911dc6f, 0.4.0.
-Образец: gorpsys/autorepeater, актуальный origin/master
+Образец: gorpsys/autorepeater, закреплённый SHA origin/master
 eb3fdffbb4ed9918c07b936e379a9c84ecf32c91. Его рабочее дерево не менялось.
 Подход выбран владельцем: Cloud Functions, ZIP, GitHub OIDC и существующие
 общие ресурсы; альтернативный runtime или Terraform не нужны.
@@ -212,6 +215,36 @@ checks для Python 3.11/3.12, чтобы она входила в уже об�
 .github/workflows/deploy-prod.yml из актуального master образца.
 Не копировать SDK, Sandbox E2E, reserve workflow и торговую бизнес-логику.
 
+Уточнение владельца 21.10.2026: использовать готовый рабочий скрипт загрузки
+с нашими параметрами; проверить все добавленные облачные scripts/workflows
+на лишнюю сложность и не менять рабочие методы без конкретного основания.
+В 0.5.2 путь yc сверяется с scripts/yandex_deploy.py образца на SHA
+eb3fdffbb4ed9918c07b936e379a9c84ecf32c91: plain --body path, унаследованное
+окружение с заменой YC_IAM_TOKEN и удалением YC_TOKEN, явный временный профиль,
+без дублирующих --cloud-id/--endpoint и дополнительного HEAD после ошибки.
+HOME остаётся унаследованным по нашему контракту. JSON list нужен bootstrap
+отдельной функции; gate, manifest, наши ресурсы и unknown create readback
+сохраняются по принятым требованиям.
+
+Итог ревизии: проверены пять облачных scripts, два workflows, handler и logger.
+Исправлено одно необоснованное отличие — @ перед путём файла --body;
+gate/bootstrap/manifest/version readback/logger сохранены по принятым требованиям.
+Других подтверждённых оснований менять рабочие методы нет; три одноразовых
+tmp-wrapper имеют конечный сценарий и не входят в продукт.
+
+Расширенная read-only ревизия охватила все 24 versioned-файла: 20 Python-модулей
+scripts/, scripts/README.md и все три .github/workflows/. Непроверенных файлов нет.
+Включены пять облачных, три build/version, 11 archive/research-модулей и __init__.
+Новых подтверждённых замечаний нет; первоначальное отличие @ уже исправлено.
+
+Два независимых read-only ревью (quality и implementation) проверили source SHA
+1fab89e37a18f2b5effaa2068ae73e079b5d190c: замечаний CRITICAL/MAJOR/MINOR нет.
+[PR 13](https://github.com/gorpsys/zontcontrol/pull/13) опубликован после восстановления GitHub;
+все четыре checks SHA 4bc1af7ea2109b0b1d128a2c4c2fb70adba3a167 успешны.
+WunderReview-alt того же SHA: PASS, 0 blocking, 1 рекомендация assert-whole-objects.
+Рекомендация отклонена: tests/test_yandex_deploy.py уже сравнивает весь объект
+профиля одним assertEqual. Код не изменён; облачная приёмка и Task 6 не завершены.
+
 Workflow запускается по workflow_run успешного Project checks push-master
 либо workflow_dispatch на master. Repo фиксирован gorpsys/zontcontrol,
 checkout — проверенный SHA. Gate требует текущий master и успешные Lint,
@@ -257,8 +290,9 @@ runtime, entrypoint, ресурсы, таймаут, concurrency, runtime SA, lo
 secret ID/version/key/env и source SHA в description. Переименование ресурса
 не меняет цель. Деплой другую функцию по имени не ищет.
 CLI вызывается с --retry 0. Команды с неопределённым исходом не повторяются
-автоматически: workflow проверяет результат чтением и при невозможности
-однозначной проверки завершает deploy ошибкой. В ручном сеансе такое чтение
+автоматически: ошибка upload сразу завершает deploy; после неизвестного create
+workflow проверяет результат чтением и при невозможности однозначной проверки
+завершает deploy ошибкой. В ручном сеансе такое чтение
 требует отдельного согласования. Логи helper — только безопасные
 категории, проверенные request/trace IDs, SHA/версия/хеш/ключ объекта.
 
