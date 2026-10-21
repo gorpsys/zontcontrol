@@ -156,7 +156,7 @@ class YandexCLI:
             raise DeployError(f'invalid cloud JSON: {label}') from None
 
 
-def cli_failure_reason(stderr):
+def cli_failure_reason(stderr: bytes) -> str:
     """Classify private CLI output; never forward provider text or arguments."""
     patterns = (
         (b'code = PermissionDenied', 'permission_denied'), (b'AccessDenied', 'permission_denied'),
