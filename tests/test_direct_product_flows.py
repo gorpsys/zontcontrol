@@ -50,6 +50,12 @@ class VirtualHTTP:
             return {'ok': True}
         if path == '/api/widget/v3/devices':
             return {'ok': True, 'devices': [deepcopy(self.raw)]}
+        if path == '/api/update_device':
+            body = json.loads(request.data)
+            if set(body) != {'device_id', 'name'} or body['device_id'] != self.raw['id']:
+                raise AssertionError('unexpected metadata update')
+            self.raw['name'] = body['name']
+            return {'ok': True}
         raise AssertionError('unexpected endpoint: '+path)
 
     def close(self):
@@ -93,8 +99,10 @@ class DirectProductFlows(unittest.TestCase):
         self.assertEqual(transport.commands, [])
         cli.handle_line("command 42 mode 20 activate '{}' --execute", context)
         self.assertEqual(transport.commands, [{}])
-        self.assertTrue(all('/api/widget/v3/' in path for path in transport.paths))
-        self.assertEqual(transport.raw['name'], 'Original device name')
+        self.assertTrue(all('/api/widget/v3/' in path or path == '/api/update_device'
+                            for path in transport.paths))
+        self.assertEqual(transport.paths.count('/api/update_device'), 1)
+        self.assertTrue(transport.raw['name'].startswith('Original device name [zontcontrol connected '))
         self.assertEqual(transport.raw['notes'], 'Existing user notes')
 
     def test_independent_applications_can_command_the_same_device(self):
@@ -104,7 +112,7 @@ class DirectProductFlows(unittest.TestCase):
             command = controller.prepare_command(42, ControlKey(42, 'mode', 20), 'activate', {})
             self.assertTrue(controller.execute_command(command).api_accepted)
             self.assertEqual(transport.commands, [{}])
-            self.assertFalse(any(path.endswith('/update_device') for path in transport.paths))
+            self.assertEqual(transport.paths.count('/api/update_device'), 1)
 
     def reset_spec(self, wait):
         return AlgorithmSpec('boiler_reset', 'Offline reset', frozenset({Mode.ONCE}),

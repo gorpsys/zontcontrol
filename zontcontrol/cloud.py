@@ -1,6 +1,7 @@
 """One ordinary application per cloud invocation, with cooperative cleanup."""
 
 from dataclasses import replace
+import json
 import logging
 
 from . import __version__
@@ -12,20 +13,12 @@ from .logging_config import configure_yc_logging
 
 
 logger = logging.getLogger(__name__)
-_STATES = frozenset({'normal', 'warning', 'confirmed_pattern', 'unknown', 'suppressed'})
-_REASONS = frozenset({'cancelled', 'already_on', 'current_reset_unknown'})
 
 
 def _response(result):
-    value = result.value
-    state = value['assessment']['state_at_period_end']
-    reason = value['reason']
-    if (state not in _STATES or reason is not None and reason not in _REASONS
-            or type(value['reset_performed']) is not bool):
-        raise ValueError('Invalid boiler_reset result')
-    return {'version': __version__, 'algorithm_id': 'boiler_reset',
-            'status': result.status.value, 'state_at_period_end': state,
-            'reset_performed': value['reset_performed'], 'reason': reason}
+    return {**result.value, 'version': __version__, 'algorithm_id': 'boiler_reset',
+            'status': result.status.value,
+            'state_at_period_end': result.value['assessment']['state_at_period_end']}
 
 
 def _log(event, message, request_id, *, level=logging.INFO):
@@ -45,10 +38,18 @@ def handler(event, context):
     close() has no wait limit: it joins the worker/finally before transport close,
     even when run_once has already published a timeout or cancellation.
     """
-    configure_yc_logging()
+    capture = configure_yc_logging(capture=True)
+    try:
+        return _invoke(context, capture)
+    finally:
+        # Includes timeout, cancellation and exceptions during report preparation.
+        capture.stop_capture()
+
+
+def _invoke(context, capture):
     request_id = getattr(context, 'request_id', None)
     _log('cloud_invocation_started', 'Cloud invocation started', request_id)
-    failure = None
+    failure, result = None, None
     try:
         app = create_application(catalog=(replace(BOILER_RESET_SPEC, modes=frozenset({Mode.ONCE})),))
         try:
@@ -64,6 +65,15 @@ def handler(event, context):
     if failure is not None:
         _log('cloud_invocation_failed', f'Cloud once failed: {failure}', request_id,
              level=logging.ERROR)
-        raise RuntimeError(f'Cloud once failed: {failure}') from None
+        completed_result = None
+        if result is not None:
+            try:
+                completed_result = _response(result)
+            except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                pass
+        report = {'version': __version__, 'algorithm_id': 'boiler_reset', 'status': 'error',
+                  'error': failure, 'result': completed_result, 'log': capture.stop_capture()}
+        raise RuntimeError(json.dumps(report, ensure_ascii=False, allow_nan=False)) from None
     _log('cloud_invocation_finished', 'Cloud invocation finished', request_id)
+    response['log'] = capture.stop_capture()
     return response

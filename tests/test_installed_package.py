@@ -107,6 +107,9 @@ with patch('socket.socket.connect', side_effect=AssertionError('network forbidde
             patch.dict('os.environ', {'ZONT_TOKEN': 'synthetic-offline'}), \\
             patch('zontcontrol.application.HttpTransport', return_value=transport):
         result = handler({'mode': 'continuous'}, None)
+    assert result.pop('assessment') == {'state_at_period_end': 'unknown'}
+    assert [json.loads(line)['event'] for line in result.pop('log').splitlines()] == [
+        'cloud_invocation_started', 'cloud_invocation_finished']
     assert result == {'version': __version__, 'algorithm_id': 'boiler_reset',
         'status': 'unknown', 'state_at_period_end': 'unknown',
         'reset_performed': False, 'reason': None}

@@ -14,8 +14,12 @@ IAM/OIDC проверены отдельными согласованными ч
 остановилась на upload ZIP с неизвестным исходом, до создания версии функции.
 Выпуск 0.5.1 также остановился на upload: yc сообщил local_file_unavailable;
 создание версии не вызывалось. В 0.5.2 возвращён рабочий метод загрузки образца;
-его успешная облачная проверка ещё предстоит.
-Успешного deploy, таймера и облачной приёмки пока нет.
+[первый успешный deploy](https://github.com/gorpsys/zontcontrol/actions/runs/39575985386)
+подтверждён на master 73ff90b, версия d4e9ig2jopbplnp8kmju ACTIVE.
+По отдельному подтверждению владельца
+создан и проверен ACTIVE таймер zontcontrol-15m, ID a1sqsgvh3u31bhlj3n9a,
+каждые 15 минут. Два плановых запуска не проверены: логи технически недоступны.
+Облачная приёмка остаётся незавершённой; наблюдаемость 0.6.0 ещё не опубликована.
 Далее — контракт согласованного
 [плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
 заменившего прежний [эскиз](../plans/yandex-cloud.md).
@@ -49,7 +53,8 @@ function/хоста вне гарантии finally. Координация пр
 Deploy SA — aje715nu0u832o93e0hd, credential — ajehfh3q51b5i5q6frcr,
 функция — d4e9enfbuhk2h59a0fj0, секрет — e6q7k3r798m1od3jc647.
 Metadata версии e6qi0n3ucqk2stmtdalb с ключом z_token подтверждены; payload не читался.
-Таймер zontcontrol-15m пока не создаётся.
+Таймер zontcontrol-15m создан и включён после первого успешного деплоя
+и отдельного разрешения владельца; его конфигурация подтверждена чтением.
 Cloud/folder, bucket autorepeater-deploy, существующая OIDC federation,
 runtime SA/invoker и default log group используются общие, согласно таблице
 в плане. Функцию, deploy SA, секрет t_token и таймер autorepeater не менять.
@@ -154,11 +159,23 @@ workflows, handler и logger не выявила других подтвержд
 Импорт библиотеки и create_application не настраивают logger; cloud
 handler сам вызывает configure_yc_logging. В облачном режиме — JSON stdout,
 INFO, propagate=False, один собственный handler, сохранение чужих handlers.
-Поля: message/level/logger и безопасные event/request_id/algorithm_id/device_id/
-state/reset_performed/elapsed_ms. WARNING → WARN, CRITICAL → FATAL. Произвольные
+Поля: timestamp (aware UTC), message/level/logger и безопасные event/request_id/algorithm_id/device_id/
+state/reset_performed/elapsed_ms.
+WARNING → WARN, CRITICAL → FATAL. Произвольные
 extras и traceback не сериализуются. Сообщения событий фиксированные, без
 текста исключений, payload event, конфигов, API-ответов и credentials.
 Успех off API не объявляется физическим восстановлением котла.
+Подготовленный handler 0.6.0 включает capture только для текущего invocation:
+logger форматирует запись один раз и копирует ту же строку в stdout и память,
+без отдельного отбора для ответа. Тот же handler временно получает root-записи
+других модулей, сохраняя чужие handlers. После worker/finally/off и close
+строка log передаётся в ответ, накопление отключается, root handler снимается,
+прежний уровень root восстанавливается. Тёплые вызовы не делят буфер;
+вне invocation logger память не копит. Платформенные START/END вне процесса
+не захватываются. Данные результата алгоритма возвращаются целиком;
+сериализация не зависит от событий/причин его бизнеса.
+При ошибке RuntimeError содержит безопасный JSON с категорией, завершённым
+результатом либо null и логом; исключение и повторы платформы сохраняются.
 
 ## Ручные действия и приёмка
 
