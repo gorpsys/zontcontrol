@@ -54,8 +54,6 @@ ID, имена и общие/отдельные ресурсы собраны в
 Выпуски перечислены в [CHANGELOG](../CHANGELOG.md), их основания —
 в [истории версий](history/versioning.md).
 
-Активная работа — [порядок в документации](plans/20261021174419-documentation-order-implementation-plan.md).
-
 ### Завершённые планы
 
 Это свидетельства исполнения, а не текущие инструкции. Архитектурные планы
@@ -70,6 +68,8 @@ ID, имена и общие/отдельные ресурсы собраны в
   — исторические этапы отменённой координации.
 - [Предметный вход отопления](plans/completed/20261020120717-typed-heating-input-implementation-plan.md).
 - [Облачный once](plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
+- [Порядок в документации](plans/completed/20261021174419-documentation-order-implementation-plan.md)
+  — выполнен локально, подготовлен draft PR; ревью и merge выполняются отдельно.
 
 Исходные постановки, заменённый облачный эскиз и команды bootstrap находятся
 в [историческом индексе](history/README.md); действующая процедура — облачный how-to выше.

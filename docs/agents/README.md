@@ -14,7 +14,7 @@
 | CLI и конфиги: `algorithms/boiler_cli.py`, `config/` | [CLI](../../README.md#cli), [конфигурация](../../config/README.md), [секреты](contracts.md#конфиги-и-секреты) | [Конфиги алгоритмов](../history/2026-10-15-algorithm-configuration.md) |
 | Тесты, пакет, CI и версии: `tests/`, `scripts/`, `Makefile` | [Разработка](development.md), [инструменты](../../scripts/README.md), [выпуск](../../scripts/README.md#версии-и-выпуск) | [История версий](../history/versioning.md) |
 | Yandex Cloud, OIDC и Lockbox: `deploy/`, `.github/workflows/`, `cloud.py` | [Полный how-to](../reference/github-yandex-cloud-howto.md), [контракт деплоя](deployment.md), [облачный вход](contracts.md#облачный-вход), [реестр ресурсов](../reference/yandex-cloud-resources.md) | [Provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md), [приёмка](../reports/2026-10-21-yandex-cloud-acceptance.md) |
-| Документация: `*.md`, `docs/` | [Правила ведения](documentation.md), [карта](../README.md) | [История решений](../history/README.md), [план упорядочения](../plans/20261021174419-documentation-order-implementation-plan.md) |
+| Документация: `*.md`, `docs/` | [Правила ведения](documentation.md), [карта](../README.md) | [История решений](../history/README.md), [выполненный план упорядочения](../plans/completed/20261021174419-documentation-order-implementation-plan.md) |
 
 Синхронизация управления удалена по
 [решению от 20.10.2026](../history/2026-10-20-remove-synchronization.md).
