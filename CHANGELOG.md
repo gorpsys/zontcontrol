@@ -2,6 +2,11 @@
 
 ## Не выпущено
 
+## [0.7.2](scripts/README.md#ci) - 2026-10-22
+
+- Во всех GitHub Actions workflow обновлены checkout и setup-python до v7
+  с Node.js 24 вместо устаревшего Node.js 20.
+
 ## [0.7.1](docs/history/versioning.md) - 2026-10-21
 
 - Упорядочены правила ведения документации, маршруты чтения и индекс находок

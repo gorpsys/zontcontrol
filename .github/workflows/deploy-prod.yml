@@ -34,11 +34,11 @@ jobs:
       sha: ${{ steps.checks.outputs.sha }}
       ready: ${{ steps.checks.outputs.ready }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Require trusted checks on the exact current master
@@ -80,11 +80,11 @@ jobs:
       LOCKBOX_ENVIRONMENT_VARIABLE: ZONT_TOKEN
       YC_CLI_VERSION: 1.40.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Build the minimal checked once ZIP
