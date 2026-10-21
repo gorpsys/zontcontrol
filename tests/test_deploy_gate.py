@@ -58,6 +58,11 @@ class FakeGitHub:
 
 
 class GateTests(unittest.TestCase):
+    def test_github_http_requests_name_the_checks_boundary(self):
+        with patch.object(gate, 'request_json', return_value={}) as request:
+            gate.GitHub('synthetic-private').read('branches/master')
+        self.assertEqual(request.call_args.kwargs, {'stage': 'GitHub checks API'})
+
     def test_only_checked_repository_master_events(self):
         self.assertEqual(gate.select_sha({'workflow_run': run_fact()}, environment()), SHA)
         self.assertEqual(gate.select_sha({}, environment(GITHUB_EVENT_NAME='workflow_dispatch')), SHA)

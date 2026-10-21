@@ -198,7 +198,9 @@ make cloud-package-check сам собирает временный ZIP с си�
 Workflow [deploy-prod](../.github/workflows/deploy-prod.yml) и stdlib helpers
 реализованы. Отдельные function/deploy SA/секрет созданы, metadata активной
 версии секрета проверены: [отчёт](../docs/reports/2026-10-20-yandex-cloud-provisioning.md).
-Настройка repository variables завершается перед PR; первого deploy и таймера нет.
+Repository variables проверены; выпуск 0.5.0 опубликован. Первый deploy
+остановился на OIDC subject, после исправления credential — на upload ZIP
+с неизвестным исходом, до создания версии. Успешного deploy и таймера нет.
 Workflow принимает успешный Project checks push-master либо workflow_dispatch
 на master. Gate проверяет актуальный SHA gorpsys/zontcontrol, Lint/Offline checks,
 GitHub Actions producer и workflow run с точным checks.yml/push/master/repo/SHA.
@@ -217,6 +219,9 @@ z_token → ZONT_TOKEN фиксированы в workflow; версия Lockbox 
 SA_ID для IAM exchange различаются. yc 1.40.0 получает IAM только через child
 env, временный явный config без credentials удаляется на всех выходах,
 HOME не меняется, команды имеют конечный timeout и --retry 0.
+HTTP-диагностика указывает фиксированную стадию, yc — exit-код и категорию
+ошибки. При неизвестном upload сохраняется причина и результат HEAD без
+произвольных ответов провайдера; успешный HEAD не доказывает хеш ZIP.
 
 Helper читает функцию по FUNCTION_ID и сверяет folder. Только успешный пустой
 version list разрешает первую версию; иначе требуется валидный ACTIVE latest.
@@ -305,7 +310,7 @@ make release-check PYTHON=python3
 ```
 
 Git-проверки требуют настоящего checkout с коммитом и полными тегами.
-Текущий подготовленный выпуск — 0.5.0. Перед слиянием CI повторяет gate на
+Текущий подготовленный выпуск — 0.5.1. Перед слиянием CI повторяет gate на
 актуальной базе/тегах. Исторические выпуски — [история версий](../docs/history/versioning.md).
 В офлайн-тестах создаются временные репозитории и bare remotes; реальные
 теги из них не публикуются.

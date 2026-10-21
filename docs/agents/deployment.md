@@ -9,7 +9,10 @@ IAM/OIDC проверены отдельными согласованными ч
 чтением: секрет ACTIVE, версия e6qi0n3ucqk2stmtdalb ACTIVE, ключ z_token есть.
 Все десять repository variables настроены и повторно прочитаны с точным
 совпадением ожидаемых значений; контакт и значения в отчёты не выводились.
-Версии кода, таймера и облачной приёмки пока нет.
+Выпуск 0.5.0 опубликован; первый автоматический deploy остановился до записи
+в облако из-за несовпадения OIDC subject. После исправления credential попытка 2
+остановилась на upload ZIP с неизвестным исходом, до создания версии функции.
+Успешного deploy, таймера и облачной приёмки пока нет.
 Далее — контракт согласованного
 [плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
 заменившего прежний [эскиз](../plans/yandex-cloud.md).
@@ -40,7 +43,7 @@ function/хоста вне гарантии finally. Координация пр
 
 Отдельные ресурсы: закрытая функция zontcontrol, deploy SA ci-cd-zontcontrol-sa,
 его federated credential для master и metadata секрета z_token созданы.
-Deploy SA — aje715nu0u832o93e0hd, credential — aje80bckog9ld78ondm9,
+Deploy SA — aje715nu0u832o93e0hd, credential — ajehfh3q51b5i5q6frcr,
 функция — d4e9enfbuhk2h59a0fj0, секрет — e6q7k3r798m1od3jc647.
 Metadata версии e6qi0n3ucqk2stmtdalb с ключом z_token подтверждены; payload не читался.
 Таймер zontcontrol-15m пока не создаётся.
@@ -86,8 +89,13 @@ gate непосредственно перед OIDC, в том числе вну
 Checkout закреплён на проверенном SHA. Очередь deploy-prod:
 cancel-in-progress=false, queue=max. Release tag не запускает деплой сам.
 
-OIDC subject: repo:gorpsys/zontcontrol:ref:refs/heads/master, без GitHub
-environment. GitHub AUD — https://github.com/gorpsys; IAM exchange audience —
+OIDC subject:
+`repo:gorpsys@79201964/zontcontrol@1420696677:ref:refs/heads/master`, без GitHub
+environment. Репозиторий использует immutable subject: ID владельца и
+репозитория нельзя убрать кастомизацией claims. Старый credential
+aje80bckog9ld78ondm9 с subject без ID удалён после создания и отдельной
+проверки нового. [Факты и источники](../reports/2026-10-20-yandex-cloud-provisioning.md#попытки-деплоя-и-исправление-oidc-21102026).
+GitHub AUD — https://github.com/gorpsys; IAM exchange audience —
 новый deployment SA_ID. Эти значения не взаимозаменяемы. Отсутствующие или
 неверные обязательные параметры отклонять до запроса credentials.
 
@@ -119,6 +127,11 @@ helper читает head-object и останавливается: HEAD не д�
 IAM передаётся только в YC_IAM_TOKEN окружения дочернего процесса, не в argv,
 config или logs. Временные файлы удаляются при успехе и ошибке. Не повторять
 запись с неизвестным исходом: проверить чтением или завершить deploy ошибкой.
+HTTP-ошибки различают фиксированные стадии GitHub checks API, GitHub OIDC и
+Yandex IAM exchange. Ошибки yc содержат exit-код и категорию из allowlist,
+без произвольного stderr/stdout. При отказе upload сохраняются его безопасная
+причина и результат HEAD; успешный HEAD не доказывает хеш ZIP и не разрешает
+создание версии после неизвестного исхода записи.
 
 Локальный logger настраивается только application.main для обоих CLI-входов.
 Импорт библиотеки и create_application не настраивают logger; cloud

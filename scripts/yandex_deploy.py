@@ -98,13 +98,13 @@ def exchange_token(environment, service_account_id):
     request_url = urlunsplit(url._replace(query=urlencode([*query, ('audience', audience)])))
     request_token = text(environment.get('ACTIONS_ID_TOKEN_REQUEST_TOKEN'), 'OIDC request token')
     oidc = text(record(request_json(Request(request_url, headers={
-        'Authorization': f'Bearer {request_token}'}))).get('value'), 'OIDC token')
+        'Authorization': f'Bearer {request_token}'}), stage='GitHub OIDC')).get('value'), 'OIDC token')
     body = urlencode({'grant_type': 'urn:ietf:params:oauth:grant-type:token-exchange',
                       'requested_token_type': 'urn:ietf:params:oauth:token-type:access_token',
                       'audience': iam_audience, 'subject_token': oidc,
                       'subject_token_type': 'urn:ietf:params:oauth:token-type:id_token'}).encode()
     response = record(request_json(Request('https://auth.yandex.cloud/oauth/token', data=body,
-        headers={'Content-Type': 'application/x-www-form-urlencoded'})))
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}), stage='Yandex IAM exchange'))
     expires = response.get('expires_in')
     if response.get('token_type') != 'Bearer' or type(expires) is not int or expires <= 0:
         raise DeployError('invalid IAM token response')
@@ -143,7 +143,8 @@ class YandexCLI:
         except (OSError, subprocess.TimeoutExpired):
             raise DeployError(f'cloud command unavailable or timed out: {label}') from None
         if result.returncode:
-            raise DeployError(f'cloud command failed: {label}')
+            raise DeployError(f'cloud command failed: {label}; exit={result.returncode}; '
+                              f'reason={cli_failure_reason(result.stderr)}')
         if len(result.stdout) > MAX_RESPONSE_BYTES:
             raise DeployError(f'cloud response exceeds size limit: {label}')
         try:
@@ -153,6 +154,25 @@ class YandexCLI:
             return data
         except (ValueError, UnicodeError):
             raise DeployError(f'invalid cloud JSON: {label}') from None
+
+
+def cli_failure_reason(stderr):
+    """Classify private CLI output; never forward provider text or arguments."""
+    patterns = (
+        (b'code = PermissionDenied', 'permission_denied'), (b'AccessDenied', 'permission_denied'),
+        (b'code = Unauthenticated', 'unauthenticated'), (b'InvalidToken', 'unauthenticated'),
+        (b'code = NotFound', 'not_found'), (b'NoSuchBucket', 'not_found'),
+        (b'code = Unavailable', 'unavailable'), (b'code = DeadlineExceeded', 'deadline_exceeded'),
+        (b'context deadline exceeded', 'deadline_exceeded'),
+        (b'code = InvalidArgument', 'invalid_argument'),
+        (b'code = FailedPrecondition', 'failed_precondition'),
+        (b'code = ResourceExhausted', 'resource_exhausted'),
+        (b'code = Internal', 'internal'), (b'code = Unimplemented', 'unimplemented'),
+        (b'unknown flag:', 'unsupported_flag'),
+        (b'no such file or directory', 'local_file_unavailable'),
+        (b'Failed to get credentials', 'credentials_missing'),
+    )
+    return next((reason for pattern, reason in patterns if pattern in stderr), 'unknown')
 
 
 def package_digest(path, sha):
@@ -342,14 +362,16 @@ def publish(settings, yc, sha, run_id, attempt):
     try:
         yc.call(['storage', 's3api', 'put-object', '--body', '@' + str(settings.archive),
                  '--bucket', settings.bucket, '--key', key], 'upload package', timeout=120)
-    except DeployError:
+    except DeployError as upload_error:
         # Read the real object once. A mere HEAD cannot prove its full byte hash.
         try:
             yc.call(['storage', 's3api', 'head-object', '--bucket', settings.bucket,
                      '--key', key], 'inspect uncertain upload')
-        except DeployError:
-            pass
-        raise DeployError('upload outcome cannot be proven; write was not retried') from None
+            inspection = 'HEAD succeeded; byte hash remains unproven'
+        except DeployError as head_error:
+            inspection = str(head_error)
+        raise DeployError('upload outcome cannot be proven; write was not retried; '
+                          f'upload: {upload_error}; inspection: {inspection}') from None
     created = None
     try:
         created = record(yc.call(arguments, 'create function version', timeout=900))

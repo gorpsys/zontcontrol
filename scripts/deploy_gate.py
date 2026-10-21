@@ -54,7 +54,7 @@ class GitHub:
         return request_json(Request(f'https://api.github.com/repos/{REPOSITORY}/{route}',
             headers={'Authorization': f'Bearer {self.token}',
                      'Accept': 'application/vnd.github+json',
-                     'X-GitHub-Api-Version': '2022-11-28'}))
+                     'X-GitHub-Api-Version': '2022-11-28'}), stage='GitHub checks API')
 
     def master_sha(self):
         return commit_sha(record(record(self.read('branches/master')).get('commit')).get('sha'))

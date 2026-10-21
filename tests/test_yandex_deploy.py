@@ -410,8 +410,89 @@ class DeployTests(unittest.TestCase):
                 self.assertTrue(paths)
                 self.assertTrue(all(not p.exists() and not p.parent.exists() for p in paths))
 
+    def test_cli_failure_reports_only_exit_and_fixed_reason(self):
+        private = f'{IAM} private-contact@example.invalid'
+        cases = [(b'code = PermissionDenied', 'permission_denied'),
+                 (b'AccessDenied', 'permission_denied'),
+                 (b'code = Unauthenticated', 'unauthenticated'),
+                 (b'NoSuchBucket', 'not_found'),
+                 (b'unknown flag:', 'unsupported_flag'),
+                 (b'open /private: no such file or directory', 'local_file_unavailable'),
+                 (b'unrecognized provider message', 'unknown')]
+        for detail, reason in cases:
+            with self.subTest(reason=reason), patch.object(deploy.subprocess, 'run',
+                    return_value=subprocess.CompletedProcess([], 7, private.encode(),
+                        detail + b' ' + private.encode())):
+                yc = deploy.YandexCLI(self.settings, IAM, self.path.parent)
+                with self.assertRaises(DeployError) as caught:
+                    yc.call(['test'], 'upload package')
+                self.assertEqual(str(caught.exception),
+                    f'cloud command failed: upload package; exit=7; reason={reason}')
+
+    def test_upload_and_head_diagnostics_survive_without_retry_or_private_output(self):
+        private = f'{IAM} private-contact@example.invalid'.encode()
+        for invalid_json in (False, True):
+            for head_fails in (False, True):
+                with self.subTest(invalid_json=invalid_json, head_fails=head_fails):
+                    yc = FakeYC()
+                    fake_call = yc.call
+                    cli = deploy.YandexCLI(self.settings, IAM, self.path.parent)
+                    def call(args, label, **kwargs):
+                        if 'put-object' in args or 'head-object' in args:
+                            yc.calls.append(args)
+                            return cli.call(args, label, **kwargs)
+                        return fake_call(args, label, **kwargs)
+                    yc.call = call
+                    upload = subprocess.CompletedProcess([], 0 if invalid_json else 1,
+                        private if invalid_json else b'', b'AccessDenied ' + private)
+                    head = subprocess.CompletedProcess([], int(head_fails), b'{}',
+                        b'NoSuchBucket ' + private)
+                    with patch.object(deploy.subprocess, 'run', side_effect=[upload, head]), \
+                            self.assertRaises(DeployError) as caught:
+                        self.publish(yc)
+                    message = str(caught.exception)
+                    self.assertIn('upload outcome cannot be proven; write was not retried', message)
+                    self.assertIn('invalid cloud JSON: upload package' if invalid_json else
+                                  'exit=1; reason=permission_denied', message)
+                    self.assertIn('reason=not_found' if head_fails else 'HEAD succeeded', message)
+                    self.assertNotIn(private.decode(), message)
+                    self.assertNotIn(IAM, message)
+                    self.assertNotIn('private-contact@example.invalid', message)
+                    self.assertEqual(sum('put-object' in a for a in yc.calls), 1)
+                    self.assertEqual(sum('head-object' in a for a in yc.calls), 1)
+                    self.assertFalse(any('create' in a for a in yc.calls))
+
 
 class DeployHTTPTests(unittest.TestCase):
+    def test_http_boundary_names_do_not_expose_provider_errors(self):
+        from urllib.error import HTTPError
+        private = f'{IAM} private-contact@example.invalid'
+        error = HTTPError('https://example.invalid/' + private, 401, private, {},
+                          io.BytesIO(private.encode()))
+        for stage in ('GitHub checks API', 'GitHub OIDC', 'Yandex IAM exchange'):
+            with self.subTest(stage=stage), patch.object(support, 'build_opener') as opener:
+                opener.return_value.open.side_effect = error
+                with self.assertRaises(DeployError) as caught:
+                    support.request_json(deploy.Request('https://example.invalid'), stage=stage)
+                self.assertEqual(str(caught.exception), f'{stage} failed (status 401)')
+
+    def test_oidc_names_the_failed_http_boundary(self):
+        from urllib.error import HTTPError
+        private = f'{IAM} private-contact@example.invalid'
+        error = HTTPError('https://example.invalid', 401, private, {}, io.BytesIO(private.encode()))
+        env = environment(Path('/unused.zip'))
+        for fail_at, stage in ((0, 'GitHub OIDC'), (1, 'Yandex IAM exchange')):
+            with self.subTest(stage=stage), patch.object(support, 'build_opener') as opener:
+                response = opener.return_value.open.return_value.__enter__.return_value
+                response.read.return_value = b'{"value":"synthetic-oidc"}'
+                if fail_at:
+                    opener.return_value.open.side_effect = [opener.return_value.open.return_value, error]
+                else:
+                    opener.return_value.open.side_effect = error
+                with self.assertRaises(DeployError) as caught:
+                    deploy.exchange_token(env, DEPLOY_SA)
+                self.assertEqual(str(caught.exception), f'{stage} failed (status 401)')
+
     def test_http_errors_bodies_redirects_and_size_limits_are_private(self):
         from urllib.error import HTTPError, URLError
         from urllib.request import Request

@@ -172,11 +172,75 @@ e6q7k3r798m1od3jc647 / e6qi0n3ucqk2stmtdalb / key=z_token / env=ZONT_TOKEN.
 этом документальном шаге не требуются. Облачные запросы, ZONT и сетевой
 вызов handler в этих проверках отсутствовали.
 
+## Попытки деплоя и исправление OIDC, 21.10.2026
+
+Выпуск 0.5.0 слит через [PR 11](https://github.com/gorpsys/zontcontrol/pull/11)
+в master 5003b9cf33d774c267f4c4ecb69757c7eab47f04. Его
+[Project checks](https://github.com/gorpsys/zontcontrol/actions/runs/39517478702)
+завершились успешно; Release tag автоматически опубликовал v0.5.0.
+
+Первая попытка [deploy-prod](https://github.com/gorpsys/zontcontrol/actions/runs/39517570420)
+остановилась в helper с безопасной ошибкой HTTP 401 до вызовов yc.
+Текущая диагностика не называла HTTP-границу, поэтому конкретный endpoint
+не был установлен по журналу. Чтение GitHub
+`GET /repos/gorpsys/zontcontrol/actions/oidc/customization/sub` выявило
+`use_default=true`, `use_immutable_subject=true` и prefix
+`repo:gorpsys@79201964/zontcontrol@1420696677`.
+Созданный ранее credential ожидал subject без числовых ID; это несовпадение
+исправлено. Попытка PUT с `use_default=true, use_immutable_subject=false`
+вернула успех, но отдельный GET показал прежний immutable prefix.
+
+GitHub использует immutable default для новых репозиториев после 15.07.2026.
+В этом формате ID владельца и репозитория нельзя убрать даже через
+`include_claim_keys`: [immutable subject](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims),
+[ограничение кастомизации](https://docs.github.com/en/actions/reference/security/oidc#customizing-the-subject-claims-for-an-organization-or-repository).
+Общие настройки владельца и федерации не менялись.
+
+Владелец отдельно подтвердил три ручных запроса yc: создание нового
+credential, независимый list для проверки и удаление прежнего credential.
+Подтверждённые поля нового credential:
+
+```text
+id=ajehfh3q51b5i5q6frcr
+service_account_id=aje715nu0u832o93e0hd
+federation_id=ajej9j37pt8j7ns962vr
+external_subject_id=repo:gorpsys@79201964/zontcontrol@1420696677:ref:refs/heads/master
+```
+
+List подтвердил точное совпадение этих полей. Последующее удаление прежнего
+aje80bckog9ld78ondm9 завершилось с exit=0; отдельного list после удаления
+не выполнялось. Значение AUD и выданные роли не менялись.
+
+После исправления credential разрешённый повтор только упавших jobs дал
+[попытку 2](https://github.com/gorpsys/zontcontrol/actions/runs/39517570420/attempts/2).
+Gate, получение credentials, чтение функции и пустого списка версий прошли.
+Шаг публикации напечатал SHA и provenance ZIP:
+
+```text
+source_sha=5003b9cf33d774c267f4c4ecb69757c7eab47f04
+sha256=44cd3d46d5cf605dd8026004c7196800b300f490e9fff0b9d8bc00c26d15762a
+object=functions/zontcontrol/5003b9cf33d774c267f4c4ecb69757c7eab47f04/39517570420-2.zip
+```
+
+Затем helper остановился: `upload outcome cannot be proven; write was not retried`.
+Вызван один put-object и один контрольный head-object; низкая причина upload
+и результат HEAD были скрыты прежней диагностикой. Исход записи ZIP неизвестен;
+создание версии функции после этого по управляющему потоку не вызывалось.
+Повторная запись для диагностики не выполнялась. Локальные `yc --version`
+и `yc storage s3api put-object --help` без облачных запросов подтвердили
+точную версию 1.40.0 и документированное `--body @path/to/file`.
+Менять body по отличию от образца оснований нет.
+
+PATCH 0.5.1 добавляет фиксированные стадии HTTP, exit-код и allowlist категорий
+yc; сохраняет безопасные причины upload/HEAD без сырых ответов провайдера.
+Офлайн-регрессии проверяют приватность токенов/контактов и запрет повторов.
+Эта диагностика не устанавливает ещё неизвестную причину отказа upload.
+
 ## Следующая граница: Task 6
 
 Metadata активной версии и ключа после заполнения владельцем уже проверены.
-Далее нужны repository variables, выпуск/PR/CI и отдельно разрешённое слияние.
-Первый автоматический deploy должен подтвердить version ID, ACTIVE,
+Repository variables, выпуск 0.5.0, PR/CI и разрешённое слияние выполнены.
+Далее нужен первый успешный автоматический deploy с version ID, ACTIVE,
 provenance SHA/manifest и все параметры. До этого таймер отсутствует.
 Создание и включение таймера требуют отдельного подтверждения владельца;
 после них нужны два наблюдаемых плановых once с фактическими результатами
