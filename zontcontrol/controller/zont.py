@@ -126,6 +126,19 @@ class ZontAdapter:
         data = self._request(f"{FULL_API_URL}/devices", body={"load_io": True})
         return _devices(data, device_id)[0]
 
+    def write_notes(self, device_id: int, notes: str) -> None:
+        _device_id(device_id)
+        if not isinstance(notes, str):
+            raise InvalidArguments()
+        self._request(f'{FULL_API_URL}/update_device',
+                      body={'device_id': device_id, 'notes': notes}, write=True)
+
+    def read_notes(self, device_id: int) -> dict[str, Any]:
+        """Return selected raw metadata and mark this client's first scoped read."""
+        raw = self.full_device(device_id)
+        self._mark_connection(raw)
+        return raw
+
     def send_command(self, command: PreparedCommand):
         """Send one command already validated by the controller."""
         if not isinstance(command, PreparedCommand):

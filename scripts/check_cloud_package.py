@@ -25,8 +25,11 @@ def offline(event, args):
         raise AssertionError('network forbidden')
 sys.addaudithook(offline)
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from contextlib import redirect_stdout
+from io import StringIO
 import importlib
+import json
 import logging
 import pkgutil
 with patch.object(Path, 'read_text', side_effect=AssertionError('import read config')), \
@@ -65,6 +68,10 @@ class Controller:
         assert device_id == config.device_id and keys == config.history_keys
         calls.append('history')
         return HistoryResult(device_id, start, end, datetime.now(timezone.utc), ())
+    def read_notes(self, device_id):
+        assert device_id == config.device_id
+        calls.append('notes_read')
+        return json.dumps(['previous\n', 'older\n', 'expired\n'])
     def unexpected(self, *args, **kwargs):
         raise AssertionError('unexpected control operation')
     list_devices = read_current = prepare_command = execute_command = unexpected
@@ -84,6 +91,33 @@ try:
 finally:
     assert app.close()
 assert calls == ['describe', 'history', 'closed']
+
+# Exercise the packaged handler too: publication failures preserve job success,
+# so checking only the algorithm result would miss a broken notes composition.
+calls.clear()
+registry = AlgorithmRegistry(load_registry_config(), controller,
+    close_controller=lambda: calls.append('closed'))
+registry.register_all((replace(BOILER_RESET_SPEC, modes=frozenset({Mode.ONCE})),))
+app = Application(controller, registry)
+transport = Mock()
+transport.request.return_value = {'ok': True}
+output = StringIO()
+with redirect_stdout(output), \
+        patch('zontcontrol.cloud.create_application', return_value=app), \
+        patch.dict(os.environ, {'ZONT_TOKEN': 'synthetic-offline'}), \
+        patch('zontcontrol.application.HttpTransport', return_value=transport):
+    report = handler.handler({}, None)
+assert report['status'] == 'unknown'
+assert report['notes_saved'] is True and report['notes_error'] is None
+assert report['log'] == output.getvalue() and report['log']
+assert calls == ['describe', 'history', 'notes_read', 'closed']
+transport.request.assert_called_once()
+request = transport.request.call_args.args[0]
+assert request.full_url == 'https://my.zont.online/api/update_device'
+payload = json.loads(request.data)
+assert set(payload) == {'device_id', 'notes'} and payload['device_id'] == config.device_id
+assert json.loads(payload['notes']) == [report['log'], 'previous\n', 'older\n']
+transport.close.assert_called_once_with()
 assert not any(name.startswith(('zontcontrol.algorithms.boiler_cli',
     'zontcontrol.algorithms.charts', 'zontcontrol.get_token', 'zontcontrol.__main__',
     'zontcontrol.cli')) for name in sys.modules)
@@ -97,7 +131,7 @@ def offline_environment():
 
 
 def smoke_package(entries):
-    """Manual extraction follows exact composition/type/CRC validation; no handler invoke."""
+    """Extract validated entries and invoke once/handler with synthetic metadata I/O."""
     with TemporaryDirectory(prefix='zontcontrol-cloud-smoke-') as directory:
         target = Path(directory)
         for name, data in entries.items():

@@ -94,6 +94,11 @@ class RegistryTests(unittest.TestCase):
         unsupported.assert_not_called()
         self.assertIs(registry.run_once('healthy'), SUCCESS)
 
+    def test_notes_metadata_capabilities_are_available_to_registered_algorithms(self):
+        registry, report = self.registry([spec(requirements=frozenset({'read_notes', 'write_notes'}))])
+        self.assertIsNone(report['reset'].error)
+        self.assertIs(registry.run_once('reset'), SUCCESS)
+
     def test_autostart_continuous_only_and_dual_explicit_start_busy_and_restart(self):
         made = []
 

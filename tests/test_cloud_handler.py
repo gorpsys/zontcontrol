@@ -64,6 +64,9 @@ class CloudHandlerTests(unittest.TestCase):
         self.transport_type = self.stack.enter_context(patch(
             'zontcontrol.application.HttpTransport', return_value=self.transport))
         self.controller = Mock()
+        self.controller.read_notes.return_value = ''
+        self.publication = self.stack.enter_context(patch('zontcontrol.cloud.create_controller'))
+        self.publication.return_value.__enter__.return_value = self.controller
         original = history()
         data = replace(original, device_id=700877, series=tuple(
             replace(row, key=replace(row.key, device_id=700877)) for row in original.series))
@@ -118,7 +121,8 @@ class CloudHandlerTests(unittest.TestCase):
                 self.assertEqual(result, {'version': __version__, 'algorithm_id': 'boiler_reset',
                     'status': status, 'state_at_period_end': state, 'reset_performed': False,
                     'reason': None, 'assessment': {'state_at_period_end': state},
-                    'log': self.output.getvalue()[output_start:]})
+                    'log': self.output.getvalue()[output_start:],
+                    'notes_saved': True, 'notes_error': None})
                 self.assertTrue(result['log'])
                 self.assertEqual(self.events, ['transport_closed'])
                 self.assertEqual(self.controller.read_history.call_args.args[0], 700877)
@@ -136,6 +140,80 @@ class CloudHandlerTests(unittest.TestCase):
         self.assertEqual(result['assessment']['device_id'], 700877)
         self.assertIn('requested_period', result['assessment'])
         self.assertIn('events', result['assessment'])
+
+    def test_notes_snapshot_includes_worker_cleanup_transport_close_and_final_event(self):
+        def close():
+            print('TRANSPORT CLOSE OUTPUT')
+            self.events.append('transport_closed')
+        self.transport.close.side_effect = close
+        def publish(device_id, notes):
+            self.assertEqual(self.events[-1], 'transport_closed')
+            self.assertEqual(device_id, 700877)
+            self.assertIn('TRANSPORT CLOSE OUTPUT', json.loads(notes)[0])
+        self.controller.write_notes.side_effect = publish
+        result = self.invoke()
+        self.assertEqual(json.loads(self.controller.write_notes.call_args.args[1]), [result['log']])
+        self.assertEqual(result['log'], self.output.getvalue())
+        self.assertTrue(result['notes_saved'])
+        self.assertIsNone(result['notes_error'])
+        self.publication.assert_called_once_with()
+
+    def test_four_invocations_rotate_exact_original_logs(self):
+        notes, reports = '', []
+        def read(device_id):
+            self.assertEqual(device_id, 700877)
+            return notes
+        def write(device_id, value):
+            nonlocal notes
+            self.assertEqual(device_id, 700877)
+            notes = value
+        self.controller.read_notes.side_effect = read
+        self.controller.write_notes.side_effect = write
+        for number in range(4):
+            reports.append(self.invoke(context=SimpleNamespace(request_id=f'call-{number}')))
+            self.assertEqual(json.loads(notes), [row['log'] for row in reversed(reports[-3:])])
+
+    def test_notes_failure_does_not_repeat_or_fail_successful_algorithm(self):
+        for error, expected in ((DeviceUnavailable(), 'write_failed'),
+                                 (CommandOutcomeUnknown(), 'write_unknown')):
+            self.events.clear()
+            self.controller.write_notes.reset_mock(side_effect=True)
+            self.controller.write_notes.side_effect = error
+            with self.subTest(error=expected):
+                result = self.invoke()
+                self.assertEqual(result['status'], 'success')
+                self.assertEqual((result['notes_saved'], result['notes_error']), (False, expected))
+                self.controller.write_notes.assert_called_once()
+                self.assertEqual(self.events.count('on'), 1)
+                self.assertEqual(self.events.count('off'), 1)
+
+    def test_unreadable_or_foreign_notes_are_preserved_without_publication(self):
+        for value, error, expected in (('foreign text', None, 'invalid_history'),
+                                      ('[null]', None, 'invalid_history'),
+                                      ('', DeviceUnavailable(), 'read_failed')):
+            self.publication.reset_mock()
+            self.controller.read_notes.return_value = value
+            self.controller.read_notes.side_effect = error
+            with self.subTest(expected=expected):
+                report = self.invoke()
+                self.assertEqual(report['status'], 'success')
+                self.assertEqual((report['notes_saved'], report['notes_error']), (False, expected))
+                self.publication.assert_not_called()
+
+    def test_failure_log_is_saved_without_changing_platform_error(self):
+        self.controller.execute_command.side_effect = DeviceUnavailable()
+        error = self.assert_safe_failure()
+        report = json.loads(str(error))
+        self.assertTrue(report['notes_saved'])
+        self.assertEqual(json.loads(self.controller.write_notes.call_args.args[1]), [report['log']])
+
+    def test_publication_close_failure_preserves_known_write_acceptance(self):
+        self.publication.return_value.__exit__.side_effect = RuntimeError('private')
+        report = self.invoke()
+        self.assertEqual(report['status'], 'success')
+        self.assertEqual((report['notes_saved'], report['notes_error']),
+                         (True, 'publication_cleanup_failed'))
+        self.assertNotIn('private', json.dumps(report))
 
     def test_warm_invocations_do_not_share_logs_and_post_response_does_not_accumulate(self):
         first = self.invoke(context=SimpleNamespace(request_id='first'))
@@ -165,6 +243,8 @@ class CloudHandlerTests(unittest.TestCase):
         report = json.loads(str(error))
         self.assertEqual(report['result']['state_at_period_end'], 'confirmed_pattern')
         self.assertTrue(report['result']['reset_performed'])
+        self.assertTrue(report['notes_saved'])
+        self.assertEqual(json.loads(self.controller.write_notes.call_args.args[1]), [report['log']])
         self.assertEqual(json.loads(report['log'].splitlines()[-1])['event'], 'cloud_invocation_failed')
         self.assertIs(sys.stdout, self.output)
 
@@ -421,6 +501,9 @@ class CloudHandlerTests(unittest.TestCase):
                 events = [row.get('event') for row in self.log_rows(json.loads(str(errors[0])))]
                 self.assertLess(events.index('reset_off_api_accepted'), events.index('cloud_invocation_failed'))
                 self.assertEqual(self.events[-2:], ['off', 'transport_closed'])
+                report = json.loads(str(errors[0]))
+                self.assertTrue(report['notes_saved'])
+                self.assertEqual(json.loads(self.controller.write_notes.call_args.args[1])[0], report['log'])
 
     def test_timeout_and_cancel_interrupt_pulse_wait_then_attempt_off(self):
         for outcome in ('timeout', 'cancel'):

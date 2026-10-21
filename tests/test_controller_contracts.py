@@ -199,7 +199,7 @@ class ControllerContractTests(unittest.TestCase):
             api.Snapshot(1, END, (reading(),), token="private")
         self.assertEqual(set(name for name in vars(api.Controller) if not name.startswith("_")), {
             "list_devices", "describe_values", "read_current", "read_history", "list_controls",
-            "prepare_command", "execute_command",
+            "prepare_command", "execute_command", "read_notes", "write_notes",
         })
 
     def test_offline_import_has_no_transport_cli_or_environment_dependency(self):

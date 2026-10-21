@@ -88,6 +88,8 @@ with patch('socket.socket.connect', side_effect=AssertionError('network forbidde
     Path('config').mkdir()
     configs = {
         'controller': {'contact': 'installed@example.invalid', 'http_timeout_seconds': 15},
+        'boiler_reset': {'device_id': 42, 'circuit_id': 10, 'air_sensor_id': 7,
+            'coolant_sensor_id': 8, 'reset_control_id': 31, 'check_interval_seconds': 60},
         'registry': {'once_timeouts': {'boiler_reset': {
             'minimum_seconds': 170, 'recommended_seconds': 300}}}}
     for name, data in configs.items():
@@ -101,22 +103,39 @@ with patch('socket.socket.connect', side_effect=AssertionError('network forbidde
             return AlgorithmResult(ResultStatus.UNKNOWN, {
                 'assessment': {'state_at_period_end': 'unknown'},
                 'reset_performed': False, 'reason': None})
-    transport = Mock()
+    transport, publication_transport = Mock(), Mock()
+    transport.request.return_value = {
+        'devices': [{'id': 42, 'name': 'synthetic', 'notes': ''}]}
+    publication_transport.request.return_value = {'ok': True}
     spec = replace(BOILER_RESET_SPEC, factory=Once)
     with patch('zontcontrol.cloud.BOILER_RESET_SPEC', spec), \\
             patch.dict('os.environ', {'ZONT_TOKEN': 'synthetic-offline'}), \\
-            patch('zontcontrol.application.HttpTransport', return_value=transport):
+            patch('zontcontrol.application.HttpTransport',
+                  side_effect=[transport, publication_transport]):
         result = handler({'mode': 'continuous'}, None)
     assert result.pop('assessment') == {'state_at_period_end': 'unknown'}
-    assert [json.loads(line)['event'] for line in result.pop('log').splitlines()] == [
-        'cloud_invocation_started', 'cloud_invocation_finished']
+    log = result.pop('log')
+    assert [json.loads(line)['event'] for line in log.splitlines()] == [
+        'cloud_invocation_started', 'client_connection_marked', 'cloud_invocation_finished']
     assert result == {'version': __version__, 'algorithm_id': 'boiler_reset',
         'status': 'unknown', 'state_at_period_end': 'unknown',
-        'reset_performed': False, 'reason': None}
+        'reset_performed': False, 'reason': None, 'notes_saved': True, 'notes_error': None}
     assert len(calls) == 1
     assert calls[0].deadline is not None
-    transport.request.assert_not_called()
+    assert transport.request.call_count == 2
+    assert json.loads(transport.request.call_args_list[0].args[0].data) == {'load_io': True}
+    marker = json.loads(transport.request.call_args_list[1].args[0].data)
+    assert set(marker) == {'device_id', 'name'}
+    assert marker['device_id'] == 42
+    publication_transport.request.assert_called_once()
+    publication = publication_transport.request.call_args.args[0]
+    assert publication.full_url == 'https://my.zont.online/api/update_device'
+    payload = json.loads(publication.data)
+    assert set(payload) == {'device_id', 'notes'}
+    assert payload['device_id'] == 42
+    assert json.loads(payload['notes']) == [log]
     transport.close.assert_called_once_with()
+    publication_transport.close.assert_called_once_with()
     assert 'zontcontrol.algorithms.boiler_cli' not in sys.modules
     assert 'zontcontrol.algorithms.charts' not in sys.modules
 '''
@@ -125,7 +144,8 @@ with patch('socket.socket.connect', side_effect=AssertionError('network forbidde
                 env=offline_environment(), capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         events = [json.loads(line)['event'] for line in result.stdout.splitlines()]
-        self.assertEqual(events, ['cloud_invocation_started', 'cloud_invocation_finished'])
+        self.assertEqual(events, ['cloud_invocation_started', 'client_connection_marked',
+                                  'cloud_invocation_finished'])
 
     def test_console_and_python_module_configure_local_text_logging(self):
         code = '''
