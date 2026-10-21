@@ -224,8 +224,18 @@ eb3fdffbb4ed9918c07b936e379a9c84ecf32c91: plain --body path, унаследов�
 без дублирующих --cloud-id/--endpoint и дополнительного HEAD после ошибки.
 HOME остаётся унаследованным по нашему контракту. JSON list нужен bootstrap
 отдельной функции; gate, manifest, наши ресурсы и unknown create readback
-сохраняются по принятым требованиям. В остальных scripts/workflows, handler
-и logger подтверждённых причин менять рабочие методы не найдено.
+сохраняются по принятым требованиям.
+
+Итог ревизии: проверены пять облачных scripts, два workflows, handler и logger.
+Исправлено одно необоснованное отличие — @ перед путём файла --body;
+gate/bootstrap/manifest/version readback/logger сохранены по принятым требованиям.
+Других подтверждённых оснований менять рабочие методы нет; три одноразовых
+tmp-wrapper имеют конечный сценарий и не входят в продукт.
+
+Два независимых read-only ревью (quality и implementation) проверили source SHA
+1fab89e37a18f2b5effaa2068ae73e079b5d190c: замечаний CRITICAL/MAJOR/MINOR нет.
+Публикация PR, CI точного SHA, WunderReview и облачная приёмка ещё не выполнены;
+GitHub недоступен (SSH connection refused, HTTPS/API 502), Task 6 не завершён.
 
 Workflow запускается по workflow_run успешного Project checks push-master
 либо workflow_dispatch на master. Repo фиксирован gorpsys/zontcontrol,
