@@ -231,12 +231,12 @@ Event/Barrier. Сценарии гонок запускать управляем
 
 ## Реализация по этапам
 
-### Task 1: Закрытие входа и ожидание исполнителя
+### Задача 1: Закрытие входа и ожидание исполнителя
 
-**Files:**
+**Файлы:**
 
-- Modify: `zontcontrol/controller/ownership.py`.
-- Modify: `tests/test_control_ownership.py`.
+- Изменить: `zontcontrol/controller/ownership.py`.
+- Изменить: `tests/test_control_ownership.py`.
 
 - [x] Сначала написать падающие тесты: закрытый executor не выдаёт binding,
   не вызывает gate для нового acquire, но позволяет существующему владельцу
@@ -268,15 +268,15 @@ Event/Barrier. Сценарии гонок запускать управляем
 - [x] Запустить `python3 -m unittest tests.test_control_ownership` и
   `make check PYTHON=python3`; завершить этап только после успеха.
 
-### Task 2: Включение executor drain в shutdown приложения
+### Задача 2: Включение executor drain в shutdown приложения
 
-**Files:**
+**Файлы:**
 
-- Modify: `zontcontrol/autonomy/registry.py`.
-- Modify: `zontcontrol/application.py`.
-- Modify: `tests/test_algorithm_registry.py`.
-- Modify: `tests/test_application.py`.
-- Modify: `tests/test_application_coordination.py`.
+- Изменить: `zontcontrol/autonomy/registry.py`.
+- Изменить: `zontcontrol/application.py`.
+- Изменить: `tests/test_algorithm_registry.py`.
+- Изменить: `tests/test_application.py`.
+- Изменить: `tests/test_application_coordination.py`.
 
 - [x] Сначала написать падающие тесты раннего hook и порядка
   close admission → cancel all → runtime finally → executor idle → resources.
@@ -305,12 +305,12 @@ Event/Barrier. Сценарии гонок запускать управляем
   tests.test_application tests.test_application_coordination` одной командой
   и `make check PYTHON=python3`.
 
-### Task 3: Интеграционные регрессии публичного app.controller()
+### Задача 3: Интеграционные регрессии публичного app.controller()
 
-**Files:**
+**Файлы:**
 
-- Modify: `tests/test_product_flows.py`.
-- Modify: `tests/test_application_coordination.py`, если нужен управляемый clock.
+- Изменить: `tests/test_product_flows.py`.
+- Изменить: `tests/test_application_coordination.py`, если нужен управляемый clock.
 
 - [x] На VirtualHTTP/FakeZontServer воспроизвести issue: остановить принятую off
   в HTTP, вызвать ограниченный close, проверить False, живой транспорт/координацию;
@@ -328,16 +328,16 @@ Event/Barrier. Сценарии гонок запускать управляем
 - [x] Запустить `python3 -m unittest tests.test_product_flows
   tests.test_application_coordination` одной командой и `make check PYTHON=python3`.
 
-### Task 4: Документация и выпуск исправления
+### Задача 4: Документация и выпуск исправления
 
-**Files:**
+**Файлы:**
 
-- Modify: `docs/agents/architecture.md`.
-- Modify: `docs/agents/contracts.md`.
-- Modify: `README.md` — пример внешнего Python-потребителя и порядок release/close.
-- Modify: `zontcontrol/controller/contracts.py` — docstring жизненного цикла сессии.
-- Modify: `zontcontrol/__init__.py`, `CHANGELOG.md`.
-- Modify: этот план; после завершения Move: `docs/plans/completed/`.
+- Изменить: `docs/agents/architecture.md`.
+- Изменить: `docs/agents/contracts.md`.
+- Изменить: `README.md` — пример внешнего Python-потребителя и порядок release/close.
+- Изменить: `zontcontrol/controller/contracts.py` — docstring жизненного цикла сессии.
+- Изменить: `zontcontrol/__init__.py`, `CHANGELOG.md`.
+- Изменить: этот план; после завершения перенести в: `docs/plans/completed/`.
 
 - [x] Описать реализованное разделение begin shutdown/drain/закрытия ресурсов,
   ответственность внешнего владельца и поведение ограниченного close; явно
@@ -396,7 +396,7 @@ Event/Barrier. Сценарии гонок запускать управляем
 - Runtime-сигнатуры не менялись; токен, личные конфиги, реальный ZONT,
   физический котёл и постоянные алгоритмы для проверки не использовались.
 
-## Исправление по comprehensive review, итерация 1
+## Исправление по итогам комплексного ревью, итерация 1
 
 - Подтверждена одна гонка в двух местах: между `closing=True` и первым
   `_release_remote`, а также между последним decrement `in_flight` и

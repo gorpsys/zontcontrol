@@ -1,9 +1,13 @@
 # Повторное холодное ревью плана Yandex Cloud
 
+> Датированное ревью от 20.10.2026: повторная проверка плана облачного запуска в указанной ниже редакции.
+> Текущий [контракт деплоя](../agents/deployment.md) хранится отдельно.
+> Первоначальные вердикты и принятые риски сохранены; это не список нынешних нерешённых проблем.
+
 Дата: 20.10.2026. Новый независимый субагент, без истории обсуждения.
-Проверены текущие [план](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
-[постановка](../plans/20261020165020-yandex-cloud-boiler-reset-request.md)
-и [справочник yc](../plans/20261020165020-yandex-cloud-yc-commands.md),
+Проверены текущие [план](../plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
+[постановка](../history/2026-10-20-yandex-cloud-request.md)
+и [справочник yc](../history/2026-10-20-yandex-cloud-bootstrap-commands.md),
 код/тесты/документация zontcontrol и autorepeater.
 
 Исходники образца читались через git show origin/master на

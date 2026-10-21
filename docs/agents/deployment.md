@@ -1,31 +1,14 @@
 # Контракт Yandex Cloud-деплоя
 
-Статус: once-композиция, stdlib local/YC logger, облачный handler, профиль,
-минимальный ZIP и deploy workflow реализованы и проверяются офлайн.
-Отдельные deploy SA, OIDC credential, функция и metadata секрета созданы;
-IAM/OIDC проверены отдельными согласованными чтениями 20.10.2026.
-Факты и ID — в [отчёте provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md).
-После сообщения владельца metadata секрета проверены отдельным согласованным
-чтением: секрет ACTIVE, версия e6qi0n3ucqk2stmtdalb ACTIVE, ключ z_token есть.
-Все десять repository variables настроены и повторно прочитаны с точным
-совпадением ожидаемых значений; контакт и значения в отчёты не выводились.
-Выпуск 0.5.0 опубликован; первый автоматический deploy остановился до записи
-в облако из-за несовпадения OIDC subject. После исправления credential попытка 2
-остановилась на upload ZIP с неизвестным исходом, до создания версии функции.
-Выпуск 0.5.1 также остановился на upload: yc сообщил local_file_unavailable;
-создание версии не вызывалось. В 0.5.2 возвращён рабочий метод загрузки образца;
-[первый успешный deploy](https://github.com/gorpsys/zontcontrol/actions/runs/39575985386)
-подтверждён на master 73ff90b, версия d4e9ig2jopbplnp8kmju ACTIVE.
-По отдельному подтверждению владельца
-создан и проверен ACTIVE таймер zontcontrol-15m, ID a1sqsgvh3u31bhlj3n9a,
-каждые 15 минут. Два плановых запуска не проверены: логи технически недоступны.
-Наблюдаемость 0.6.0 опубликована; реальный ручной запуск подтвердил ответ и лог,
-normal без сброса за 495 мс при 45 пригодных отсчётах. Затем владелец отключил
-таймер для проверки наблюдаемости. Облачная приёмка остаётся незавершённой;
-история логов в notes 0.7.0 ещё не опубликована.
-Далее — контракт согласованного
-[плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
-заменившего прежний [эскиз](../plans/yandex-cloud.md).
+Настройка с нуля и перенос в другой репозиторий —
+[пошаговое how-to](../reference/github-yandex-cloud-howto.md).
+
+Этот документ задаёт обязательные проверки и границы полномочий.
+ID и имена ресурсов, даты проверок и то, что удалось подтвердить, указаны
+в [реестре](../reference/yandex-cloud-resources.md). Создание, попытки публикации
+и исправление OIDC сохранены в [provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md),
+наблюдаемые вызовы и измерения — в [приёмке](../reports/2026-10-21-yandex-cloud-acceptance.md).
+Датированные отчёты не подтверждают нынешнее состояние облака.
 
 ## Цель и границы
 
@@ -43,7 +26,7 @@ run_once('boiler_reset', timeout=300), в finally ждёт worker/cleanup, за�
 Облачные config/*.json формируются из отдельного deploy/cloud-config профиля,
 не из рабочих локальных конфигов. Контакт поступает при сборке из ZONT_CONTACT.
 
-Плановые настройки: python312, handler.handler, 256MB, concurrency=1,
+Фиксированные настройки: python312, handler.handler, 256MB, concurrency=1,
 platform timeout=420s, once timeout=300s, HTTP timeout=15s. Запас для cleanup
 не является доказанной верхней границей задержек ZONT. Жёсткое завершение
 function/хоста вне гарантии finally. Координация приборов, watchdog и журнал
@@ -51,26 +34,21 @@ function/хоста вне гарантии finally. Координация пр
 
 ## Раздельные и общие ресурсы
 
-Отдельные ресурсы: закрытая функция zontcontrol, deploy SA ci-cd-zontcontrol-sa,
-его federated credential для master и metadata секрета z_token созданы.
-Deploy SA — aje715nu0u832o93e0hd, credential — ajehfh3q51b5i5q6frcr,
-функция — d4e9enfbuhk2h59a0fj0, секрет — e6q7k3r798m1od3jc647.
-Metadata версии e6qi0n3ucqk2stmtdalb с ключом z_token подтверждены; payload не читался.
-Таймер zontcontrol-15m создан и включён после первого успешного деплоя
-и отдельного разрешения владельца; его конфигурация подтверждена чтением.
-Позже владелец отключил его; повторное включение не следует из публикации версии.
-Cloud/folder, bucket autorepeater-deploy, существующая OIDC federation,
-runtime SA/invoker и default log group используются общие, согласно таблице
-в плане. Функцию, deploy SA, секрет t_token и таймер autorepeater не менять.
+Функция, deploy SA, credential для master, секрет и таймер zontcontrol
+отделены от исходных ресурсов autorepeater. Cloud/folder, bucket, OIDC
+federation, runtime SA/invoker и default log group используются общие;
+точные ID и имена — в [реестре](../reference/yandex-cloud-resources.md).
+Функцию, deploy SA, секрет и таймер autorepeater не менять.
+Публикация версии сама по себе не разрешает включать отключённый таймер.
 Объекты ZIP имеют отдельный префикс functions/zontcontrol/ и уникальный ключ
 по SHA/run ID/attempt. Проверять manifest, происхождение SHA и SHA256 ZIP.
 
-Новый deploy SA получил functions.admin и storage.editor на общем folder,
-iam.serviceAccounts.user на invoker; на общем runtime SA добавлен binding
-для нового deploy SA. Runtime SA получил lockbox.payloadViewer на новый
-секрет. Все четыре роли проверены readback. Статические IAM-ключи не создаются.
-Владелец добавляет
-значение z_token в Lockbox; агент читает только metadata, никогда payload.
+Deploy SA нужны functions.admin и storage.editor на общем folder,
+iam.serviceAccounts.user на runtime SA. Runtime SA нужен lockbox.payloadViewer
+на отдельный секрет; invoker — право вызова закрытой функции.
+Bootstrap назначает bindings адресно, не заменяя остальные policies.
+Статические IAM-ключи не создаются. Владелец добавляет значение z_token
+в Lockbox; агент читает только metadata, никогда payload.
 Runtime получает его через secret binding в ZONT_TOKEN.
 
 Обязательные repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
@@ -78,10 +56,10 @@ FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
 YC_OIDC_AUDIENCE, ZONT_CONTACT. Runtime, entrypoint, 256MB/420s/concurrency1,
 LOCKBOX_KEY=z_token и LOCKBOX_ENVIRONMENT_VARIABLE=ZONT_TOKEN фиксируются
 в workflow. [Пример](../../deploy/yandex.example.json) отражает этот набор;
-он не читается helper и не является вторым источником настройки. Подтверждённые
-ID ресурсов и версии секрета внесены в пример; ZONT_CONTACT остаётся null
-только в публикуемом примере. В GitHub все десять variables настроены и
-проверены readback. Подстановка ID образца запрещена.
+он не читается helper и не является вторым источником настройки. Контакт
+в публикуемом примере null; при сборке требуется валидное значение.
+Подстановка ID другого проекта запрещена. Адреса и pinned версия секрета
+сверяются с [реестром](../reference/yandex-cloud-resources.md).
 Префикс GITHUB_ запрещён GitHub для repository variables; workflow передаёт
 YC_OIDC_AUDIENCE во внутренний env GITHUB_OIDC_AUDIENCE helper.
 Общие cloud/folder/runtime SA/bucket и GitHub AUD проверяются по согласованным
@@ -101,15 +79,15 @@ gate непосредственно перед OIDC, в том числе вну
 Checkout закреплён на проверенном SHA. Очередь deploy-prod:
 cancel-in-progress=false, queue=max. Release tag не запускает деплой сам.
 
-OIDC subject:
-`repo:gorpsys@79201964/zontcontrol@1420696677:ref:refs/heads/master`, без GitHub
-environment. Репозиторий использует immutable subject: ID владельца и
-репозитория нельзя убрать кастомизацией claims. Старый credential
-aje80bckog9ld78ondm9 с subject без ID удалён после создания и отдельной
-проверки нового. [Факты и источники](../reports/2026-10-20-yandex-cloud-provisioning.md#попытки-деплоя-и-исправление-oidc-21102026).
-GitHub AUD — https://github.com/gorpsys; IAM exchange audience —
-новый deployment SA_ID. Эти значения не взаимозаменяемы. Отсутствующие или
-неверные обязательные параметры отклонять до запроса credentials.
+OIDC subject должен совпадать с фактическим claim для master без GitHub
+environment. Формат этого репозитория —
+`repo:OWNER@OWNER_ID/REPOSITORY@REPOSITORY_ID:ref:refs/heads/master`;
+точный subject и GitHub AUD приведены в [реестре](../reference/yandex-cloud-resources.md#oidc-и-iam).
+Immutable ID владельца и репозитория нельзя убрать кастомизацией claims.
+При переносе subject проверяют по реальным claims, как в how-to.
+GitHub AUD — URL, IAM exchange audience — ID deploy SA.
+Эти значения не взаимозаменяемы. Отсутствующие или неверные обязательные
+параметры отклонять до запроса credentials.
 
 Публиковать строго по FUNCTION_ID, проверив folder/functionId. Первая версия
 создаётся только после успешного version list с пустым списком; ошибка чтения
@@ -134,8 +112,7 @@ Description содержит SHA, SHA256 и уникальный ключ объ
 ## Учётные данные и диагностика
 
 Все cloud операции выполняются через yc 1.40.0 с --retry 0; IAM OIDC exchange —
-через HTTPS. Метод yc перенесён из scripts/yandex_deploy.py образца autorepeater
-на SHA eb3fdffbb4ed9918c07b936e379a9c84ecf32c91: обычный путь --body без @,
+через HTTPS. Используются обычный путь --body без @,
 dict(os.environ, YC_IAM_TOKEN=token), удаление YC_TOKEN из дочернего окружения,
 явные --config/--profile/--folder-id и json-rest, timeout, --retry 0.
 Endpoint/cloud/folder задаются в профиле; дублирующие CLI-флаги не нужны.
@@ -149,15 +126,10 @@ Yandex IAM exchange. Ошибки yc содержат exit-код и катег�
 без произвольного stderr/stdout. При отказе upload сохраняется его безопасная
 причина; создание версии после неизвестного исхода загрузки запрещено.
 
-Отличия от образца ограничены принятыми требованиями: HOME остаётся
-унаследованным, JSON-список нужен для первой версии отдельной функции,
-gate/manifest проверяют наш master/ZIP, параметры адресуют наши SA/function/
-secret/prefix. Таймаут 420s, concurrency1 и once задаёт приложение ZONT;
-unknown create проверяется чтением уникального provenance. Минимальный
-allowlist ZIP и офлайн once smoke заданы Task 3. Ревизия облачных scripts,
-workflows, handler и logger не выявила других подтверждённых причин менять
-рабочие методы. Офлайн-тесты проверяют argv/env и чтение файла по --body
-подставным subprocess; они не доказывают семантику настоящего yc или deploy.
+Минимальный allowlist ZIP, manifest и офлайн once smoke обязательны:
+[команды сборки](../../scripts/README.md#облачный-запуск-и-деплой).
+Офлайн-тесты проверяют argv/env и чтение файла по --body подставным subprocess;
+они не доказывают семантику настоящего yc или успешный deploy.
 
 Локальный logger настраивается только application.main для обоих CLI-входов.
 Импорт библиотеки и create_application не настраивают logger; cloud
@@ -169,21 +141,23 @@ WARNING → WARN, CRITICAL → FATAL. Произвольные
 extras и traceback не сериализуются. Сообщения событий фиксированные, без
 текста исключений, payload event, конфигов, API-ответов и credentials.
 Успех off API не объявляется физическим восстановлением котла.
-Handler включает capture только для текущего invocation:
+Handler захватывает вывод только на время текущего вызова:
 tee Python stdout/stderr передаёт исходный текст и в исходные потоки, и в общий
 буфер, без отдельного отбора для ответа. Существующие StreamHandler этих
-потоков временно перенаправляются в tee, включая root/private логгеры с
-propagate=False; форматы и уровни не меняются, дополнительного root handler нет.
-После worker/finally/off и close строка log передаётся в ответ; finally
-восстанавливает sys/handler streams, включая созданные внутри вызова, и
-закрывает буфер. Тёплые вызовы не делят память. Log может содержать JSONL и
-обычный текст. Прямой FD/native вывод, файловые handlers и платформенные
-START/END вне процесса не захватываются. Данные результата алгоритма
-возвращаются целиком; сериализация не зависит от событий/причин его бизнеса.
+потоков временно перенаправляются в tee, включая обработчики корневого и отдельных логгеров с
+propagate=False; форматы и уровни не меняются, дополнительный обработчик
+корневого логгера не добавляется.
+После завершения рабочего потока, включая попытку off в finally, и закрытия
+транспорта строка log передаётся в ответ. В finally обработчик восстанавливает
+sys.stdout, sys.stderr и потоки обработчиков логов, включая созданные внутри
+вызова, и закрывает буфер. Тёплые вызовы не делят память. Log может содержать JSONL и
+обычный текст. Прямой вывод через файловые дескрипторы ОС или нативный код, файловые
+обработчики логов и платформенные START/END вне процесса не захватываются. Данные результата алгоритма
+возвращаются целиком; сериализация не разбирает события и причины, определённые алгоритмом.
 При ошибке RuntimeError содержит безопасный JSON с категорией, завершённым
 результатом либо null и логом; исключение и повторы платформы сохраняются.
 
-В подготовленном 0.7.0 handler сохраняет этот же полный log в notes устройства
+Handler сохраняет этот же полный log в notes устройства
 из load_config boiler_reset. Прежнюю историю читает через публичный
 read_notes после stop(wait_timeout=None), до close основного Application.
 Полный основной лог, включая shutdown, фиксируется до публикации. Для записи
@@ -208,8 +182,9 @@ JSON ошибки. Сбой notes не меняет исход алгоритм�
 Таймер не создаётся до заполнения секрета, успешного первого деплоя и
 отдельного подтверждения владельца на создание и включение плановых реальных
 сбросов. No-op версия и предварительный pause/resume не нужны. Таймер v2
-вызывает новую функцию $latest через invoker: cron 0/15 * ? * * *,
-retry_attempts=1, interval=10s, как у образца. При публикации версии флаг
+вызывает функцию $latest через invoker; расписание и retry policy сверяются
+с [реестром](../reference/yandex-cloud-resources.md#отдельные-ресурсы-и-привязки).
+При публикации версии флаг
 --async-max-retries явно не задаётся; это не отключение повторов платформы.
 Повтор таймера заново выполняет весь once и может инициировать новый сброс;
 автоматических повторов отдельных команд котлу нет.

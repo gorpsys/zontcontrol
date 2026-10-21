@@ -64,7 +64,7 @@ TDD. Выбор альтернативных архитектур не повт�
 | --- | --- |
 | `zontcontrol/client.py`: ZontClient, авторизация, Widget v3 и полный API | Разделить на controller/auth, transport, zont и service/ownership; затем удалить исходный client.py и ZontClient |
 | `inventory.py`, `commands.py`: категории, действия, предпросмотр и проверки | Переиспользовать для списка возможностей и подготовленных команд |
-| `history.py`: Delta-time, нормализация температур, контуров и web_elements | Переиспользовать, добавив проекцию значений и честную агрегацию частей архива |
+| `history.py`: Delta-time, нормализация температур, контуров и web_elements | Переиспользовать, добавив проекцию значений и агрегацию частей архива с сохранением пропусков и неполного покрытия |
 | `anomaly.py`, `detection_profile.py`, `monitor.py` | Сохранить пороги и поведение; assess_history принимает историю одного выбранного прибора |
 | `cli.py`, `control.py`, `get_token.py`, `__main__.py` | Заменить входы прототипа новым application/boiler_cli; утилиту токена перевести на выделенный auth, старые cli.py/control.py удалить |
 | `tests/test_*.py`, unittest, подставные HTTP-ответы | Перенести проверки требуемого поведения в новую структуру, убрать утверждения о совместимости старого API |
@@ -153,7 +153,7 @@ R1=`notes` содержит лидерство и запрос/heartbeat. R2 —
 немедленный отзыв. Риск совместных записей R1 принят, статистика обязательна.
 
 Внешний ЛК остаётся доступным. Человек контролирует редкие вмешательства
-и принимает риск, автоматический finally сохраняется. API-успех команды
+и принимает риск, автоматический finally сохраняется. Успешный ответ API на команду
 не называется физическим восстановлением отопления.
 
 ## Технические детали
@@ -258,7 +258,7 @@ AlgorithmSpec: уникальный ID, modes, factory, требования и 
 minimum. RegistryConfig: disabled_modules, autostart_dual_mode=false,
 minimum/recommended once timeouts, без module_configs. Собственный конфиг
 алгоритм читает и валидирует сам. Технический minimum сброса
-выводится из бюджетов здорового прохода, чтений, grant, 40 с и cleanup;
+выводится из бюджетов штатного выполнения, чтений, grant, 40 с и cleanup;
 иллюстративные 120/180 не копировать как доказанные значения. Конкуренция
 может дать Busy/Timeout и при корректном minimum.
 
@@ -288,7 +288,7 @@ ZONT_TOKEN приходит из env; ошибка отсутствия с ин�
 сохранять --contact/--timeout/ZONT_CONTACT и их приоритеты не требуется.
 Новый boiler_cli читает свой фиксированный конфиг, получает готовый фасад через
 DI и управляет только с действующей сессией. Общие контакт/HTTP-таймауты задаёт
-controller.json. Отсутствие обязательного файла даёт ошибку с путём до сети.
+controller.json. Отсутствие обязательного файла приводит к ошибке с указанием его пути ещё до обращения к сети.
 Новые --help/--version и чистая prepare_command не требуют файлов, токена
 и создания клиента.
 
@@ -328,10 +328,10 @@ handler, ZIP функции, deploy scripts, OIDC и изменений ресу
 
 ### 1. Зафиксировать контракт управляющего API v1
 
-**Files:**
-- Create: `zontcontrol/controller/__init__.py`, `zontcontrol/controller/contracts.py`.
-- Create: `tests/__init__.py`, `tests/fakes/__init__.py`, `tests/fakes/clock.py`, `tests/fakes/zont.py`.
-- Create: `tests/test_controller_contracts.py`.
+**Файлы:**
+- Создать: `zontcontrol/controller/__init__.py`, `zontcontrol/controller/contracts.py`.
+- Создать: `tests/__init__.py`, `tests/fakes/__init__.py`, `tests/fakes/clock.py`, `tests/fakes/zont.py`.
+- Создать: `tests/test_controller_contracts.py`.
 
 - [x] RED: описать контракт DTO, адресацию двух приборов с одинаковыми element_id, неизменяемость и типизированные ошибки.
 - [x] GREEN: реализовать Protocol, DTO и ошибки без импортов transport/CLI; фиксировать API_VERSION=1, параметр lease_seconds и локальный expires_at сессии.
@@ -341,11 +341,11 @@ handler, ZIP функции, deploy scripts, OIDC и изменений ресу
 
 ### 2. Типизировать транспорт и дать внутреннее чтение/изменение метаданных
 
-**Files:**
-- Modify: `zontcontrol/client.py`, `tests/test_client.py`, `tests/test_commands.py`.
-- Modify as needed during extraction: `zontcontrol/get_token.py`, `tests/test_version.py`.
-- Create: `zontcontrol/controller/auth.py`, `zontcontrol/controller/transport.py`, `zontcontrol/controller/zont.py`.
-- Create: `tests/test_auth.py`, `tests/test_transport.py`, `tests/test_zont_adapter.py`.
+**Файлы:**
+- Изменить: `zontcontrol/client.py`, `tests/test_client.py`, `tests/test_commands.py`.
+- Изменить при необходимости во время выделения модулей: `zontcontrol/get_token.py`, `tests/test_version.py`.
+- Создать: `zontcontrol/controller/auth.py`, `zontcontrol/controller/transport.py`, `zontcontrol/controller/zont.py`.
+- Создать: `tests/test_auth.py`, `tests/test_transport.py`, `tests/test_zont_adapter.py`.
 
 - [x] RED: тесты чтений, pre-send ошибок, явного отказа API, timeout после применения и безопасных ошибок без секретов.
 - [x] GREEN: извлечь HTTP в transport, авторизацию/выдачу токена в auth, методы ZONT в zont; не строить новый фасад поверх монолитного ZontClient. Адаптер отображает типизированные исходы в контракт v1, не парсит приватный текст ZontError.
@@ -356,13 +356,13 @@ handler, ZIP функции, deploy scripts, OIDC и изменений ресу
 
 ### 3. Построить фасад чтения, каталог значений и историю
 
-**Files:**
-- Create: `zontcontrol/controller/service.py`, `tests/test_controller_reads.py`.
-- Modify: `zontcontrol/controller/zont.py`, `zontcontrol/history.py`, `zontcontrol/inventory.py`, `tests/test_history.py`, `tests/test_inventory.py`, `tests/test_zont_adapter.py`.
+**Файлы:**
+- Создать: `zontcontrol/controller/service.py`, `tests/test_controller_reads.py`.
+- Изменить: `zontcontrol/controller/zont.py`, `zontcontrol/history.py`, `zontcontrol/inventory.py`, `tests/test_history.py`, `tests/test_inventory.py`, `tests/test_zont_adapter.py`.
 
 - [x] RED: список приборов, current/describe_values, calculated targets и все controls, два устройства с совпадающими ID и скрытый контур.
 - [x] GREEN: реализовать read API поверх существующей нормализации; фактические датчики, цели, worktime, выбранный датчик и reset доступны по объявленным ключам.
-- [x] RED/GREEN для исторической проекции, событий reset между минутами, unsupported history, null, measured_at=null и честного качества/покрытия.
+- [x] RED/GREEN для исторической проекции, событий reset между минутами, unsupported history, null, measured_at=null и сохранения исходного качества и фактического покрытия.
 - [x] Для длинных интервалов реализовать ограниченное разбиение запросов и объединение реальных точек; time_truncated/неполнота не исчезают при агрегации. Не достраивать измерения и не подставлять скрытый контур.
 - [x] Дополнить тесты границ частей, повторных меток, частично отсутствующей истории и защиты от смешения current с historical.
 - [x] REFACTOR и `make check PYTHON=python3`.
@@ -378,9 +378,9 @@ handler, ZIP функции, deploy scripts, OIDC и изменений ресу
 
 ### 4. Ввести локальную монополию и исполнитель команд
 
-**Files:**
-- Create: `zontcontrol/controller/ownership.py`, `tests/test_control_ownership.py`.
-- Modify: `zontcontrol/controller/service.py`, `zontcontrol/controller/zont.py`.
+**Файлы:**
+- Создать: `zontcontrol/controller/ownership.py`, `tests/test_control_ownership.py`.
+- Изменить: `zontcontrol/controller/service.py`, `zontcontrol/controller/zont.py`.
 
 - [x] RED: два потока/один прибор, разные приборы параллельно, чужая/освобождённая/неверно адресованная сессия, чтение при занятом приборе.
 - [x] GREEN: identity-bound интерфейс через DI, явный try-acquire, immediate Busy, повторный захват владельцем без счётчика вложенности, release только владельцем.
@@ -407,10 +407,10 @@ Gate I/O, HTTP и чтения не держат общую блокировку
 
 ### 5. Зафиксировать кодек и store R1/R2
 
-**Files:**
-- Create: `zontcontrol/coordination/__init__.py`, `zontcontrol/coordination/models.py`, `zontcontrol/coordination/store.py`.
-- Create: `tests/test_coordination_store.py`.
-- Modify: `zontcontrol/controller/zont.py`, `tests/fakes/zont.py`.
+**Файлы:**
+- Создать: `zontcontrol/coordination/__init__.py`, `zontcontrol/coordination/models.py`, `zontcontrol/coordination/store.py`.
+- Создать: `tests/test_coordination_store.py`.
+- Изменить: `zontcontrol/controller/zont.py`, `tests/fakes/zont.py`.
 
 - [x] RED: round-trip R1/R2, FREE, неизвестная версия, повреждённая запись, большой seq, UUID/token, настоящий исходный префикс.
 - [x] GREEN: codecs и store; notes очищается пустой строкой, name содержит узнаваемый суффикс и человеческую индикацию grant без изменения исходного имени.
@@ -421,10 +421,10 @@ Gate I/O, HTTP и чтения не держат общую блокировку
 
 ### 6. Реализовать условный выбор лидера и ограниченную аренду
 
-**Files:**
-- Create: `zontcontrol/coordination/clock.py`, `zontcontrol/coordination/leader.py`.
-- Create: `tests/test_leader_election.py`.
-- Modify: `tests/fakes/clock.py`, `tests/fakes/zont.py`.
+**Файлы:**
+- Создать: `zontcontrol/coordination/clock.py`, `zontcontrol/coordination/leader.py`.
+- Создать: `tests/test_leader_election.py`.
+- Изменить: `tests/fakes/clock.py`, `tests/fakes/zont.py`.
 
 - [x] RED: FREE/expired захват, две кандидатуры, W, drift всех четырёх ступеней rho, неистёкшая аренда, renewal, неизвестный исход и release.
 - [x] GREEN: CLOCK_BOOTTIME, вычисление K/V/T_r/poll, L по ожиданиям кандидата с сохранением clock_rho, V>=8*Delta, W>K_delta*Delta, deadline от send и barrier от ack; для cap независимый K_term.
@@ -435,10 +435,10 @@ Gate I/O, HTTP и чтения не держат общую блокировку
 
 ### 7. Реализовать запросы и аренду исполнителя через R2
 
-**Files:**
-- Create: `zontcontrol/coordination/grants.py`, `tests/test_executor_grants.py`.
-- Modify: `zontcontrol/controller/ownership.py`, `zontcontrol/coordination/models.py`, `zontcontrol/coordination/store.py`.
-- Modify: `tests/test_coordination_store.py` (привязка heartbeat/finished к grant).
+**Файлы:**
+- Создать: `zontcontrol/coordination/grants.py`, `tests/test_executor_grants.py`.
+- Изменить: `zontcontrol/controller/ownership.py`, `zontcontrol/coordination/models.py`, `zontcontrol/coordination/store.py`.
+- Изменить: `tests/test_coordination_store.py` (привязка heartbeat/finished к grant).
 
 - [x] RED: request → grant → heartbeat/renew → finished → release, неверные owner/request/grant/leader_token и несколько независимых приложений.
 - [x] GREEN: исполнители публикуют/повторяют запрос R1; лидер один пишет R2 после свежей проверки собственной роли, не заменяет действующий grant.
@@ -461,10 +461,10 @@ try_acquire не продлевает сессию. Повтор release пос�
 
 ### 8. Добавить статистику и воспроизводимые сценарии риска
 
-**Files:**
-- Create: `zontcontrol/coordination/statistics.py`, `scripts/analyze_orchestration.py`.
-- Create: `tests/test_orchestration_statistics.py`, `tests/test_coordination_scenarios.py`.
-- Modify: `zontcontrol/coordination/leader.py`, `zontcontrol/coordination/grants.py`, `tests/fakes/zont.py`.
+**Файлы:**
+- Создать: `zontcontrol/coordination/statistics.py`, `scripts/analyze_orchestration.py`.
+- Создать: `tests/test_orchestration_statistics.py`, `tests/test_coordination_scenarios.py`.
+- Изменить: `zontcontrol/coordination/leader.py`, `zontcontrol/coordination/grants.py`, `tests/fakes/zont.py`.
 
 - [x] RED: события/агрегаты, потоки одновременно пишут наблюдения, известный конфликт определяется oracle, неизвестный исход не считается успешным наблюдением.
 - [x] GREEN: callback/sink и JSONL наблюдений в reports, bounded события без credentials/сырых provider bodies; ошибки sink видны, но не отменяют принятые команды или finally.
@@ -475,9 +475,9 @@ try_acquire не продлевает сессию. Повтор release пос�
 
 ### 9. Описать конфигурацию и контракты алгоритмов
 
-**Files:**
-- Create: `zontcontrol/config.py`, `zontcontrol/autonomy/__init__.py`, `zontcontrol/autonomy/contracts.py`.
-- Create: `tests/test_configuration.py`, `config/README.md`, `config/controller.example.json`, `config/registry.example.json`, `config/registry.headless.example.json`.
+**Файлы:**
+- Создать: `zontcontrol/config.py`, `zontcontrol/autonomy/__init__.py`, `zontcontrol/autonomy/contracts.py`.
+- Создать: `tests/test_configuration.py`, `config/README.md`, `config/controller.example.json`, `config/registry.example.json`, `config/registry.headless.example.json`.
 
 - [x] RED: AlgorithmSpec/modes, отдельные фиксированные registry.json/controller.json, disabled_modules, minimum/recommended, autostart_dual_mode=false, отказ до сети при неверных собственных настройках.
 - [x] GREEN: общий JSON-reader, валидация инфраструктурных настроек и контракт фабрики/результатов/состояний; регистратор не содержит схемы и module_configs алгоритмов. Секрет отсутствует в config, token читает только composition root из env.
@@ -487,11 +487,11 @@ try_acquire не продлевает сессию. Повтор release пос�
 
 ### 10. Реализовать поточный runtime и внешний timeout результата once
 
-**Files:**
-- Create: `zontcontrol/autonomy/runtime.py`, `tests/test_algorithm_runtime.py`.
-- Modify: `zontcontrol/autonomy/contracts.py`.
+**Файлы:**
+- Создать: `zontcontrol/autonomy/runtime.py`, `tests/test_algorithm_runtime.py`.
+- Изменить: `zontcontrol/autonomy/contracts.py`.
 
-- [x] RED: результат, исключение, внешний deadline once, отмена ожидания, cleanup после Timeout once, некоперативный поток и независимые алгоритмы.
+- [x] RED: результат, исключение, внешний deadline once, отмена ожидания, cleanup после Timeout once, некооперативный поток и независимые алгоритмы.
 - [x] GREEN: отдельные потоки, supervisor таймера once и cancel-сигнал; bootstrap once входит в бюджет, блокирующий HTTP не выполняется потоком таймера. У контекста continuous нет deadline регистратора.
 - [x] stopping сохраняется до выхода, finally/API доступны, повторный запуск не создаёт второй экземпляр; завершившийся после Timeout результат не меняет уже возвращённую ошибку.
 - [x] Continuous имеет stop/restart, ошибку failed и отсутствие бесконечного respawn; close не закрывает фасад раньше cleanup.
@@ -501,9 +501,9 @@ try_acquire не продлевает сессию. Повтор release пос�
 
 ### 11. Реализовать каталог, регистратор и обычный DI
 
-**Files:**
-- Create: `zontcontrol/autonomy/catalog.py`, `zontcontrol/autonomy/registry.py`, `tests/test_algorithm_registry.py`.
-- Modify: `zontcontrol/autonomy/contracts.py`, `zontcontrol/config.py`.
+**Файлы:**
+- Создать: `zontcontrol/autonomy/catalog.py`, `zontcontrol/autonomy/registry.py`, `tests/test_algorithm_registry.py`.
+- Изменить: `zontcontrol/autonomy/contracts.py`, `zontcontrol/config.py`.
 
 - [x] RED: register_all/list/run_once/run_all_once/start/stop/close, все разрешённые и запрет disabled.
 - [x] GREEN: явный каталог factories без сканирования пакетов, конструкторный DI и отчёт регистрации каждого модуля. На этом этапе каталог тестируется подставными алгоритмами; не импортировать отсутствующие builtins.
@@ -522,11 +522,11 @@ run-методов. Этот экземпляр отбрасывается. Ка
 
 ### 12. Подключить boiler_reset в once и continuous
 
-**Files:**
-- Create: `zontcontrol/algorithms/__init__.py`, `zontcontrol/algorithms/boiler_reset.py`, `tests/test_boiler_reset.py`.
-- Create: `config/boiler_reset.example.json`.
-- Modify: `zontcontrol/autonomy/catalog.py`.
-- Reuse without threshold changes: `zontcontrol/monitor.py`, `zontcontrol/anomaly.py`, `zontcontrol/detection_profile.py`.
+**Файлы:**
+- Создать: `zontcontrol/algorithms/__init__.py`, `zontcontrol/algorithms/boiler_reset.py`, `tests/test_boiler_reset.py`.
+- Создать: `config/boiler_reset.example.json`.
+- Изменить: `zontcontrol/autonomy/catalog.py`.
+- Использовать повторно без изменения порогов: `zontcontrol/monitor.py`, `zontcontrol/anomaly.py`, `zontcontrol/detection_profile.py`.
 
 - [x] RED: история одного явного прибора → текущий confirmed_pattern → получение монополии → on → 40 с → off → release.
 - [x] GREEN: адаптировать lossless HistoryResult в assess_history, передавать IDs/профиль конфига; не менять чистый детектор и не брать цель скрытого котла.
@@ -535,44 +535,44 @@ run-методов. Этот экземпляр отбрасывается. Ка
 - [x] RED/GREEN для cancel/исключения/неизвестного on: немедленный off из finally, затем release даже при ошибке off. Сохранить обычные проверки сессии, отразить потерю grant как ошибку, не как успех.
 - [x] Continuous ждёт 5 минут после off, обычный интервал из config; once не ждёт лишние 5 минут, не вводит счётчики/rearm/store. Собственное ожидание pending grant прерываемое и не повторяет on.
 - [x] В continuous интервалы проверок и внутренние таймауты принадлежат boiler_reset; configured once timeout не ограничивает проверку, импульс или пятиминутную паузу. Общий runtime участвует только в start/stop и состоянии, а управляющий модуль — в монополии и командах.
-- [x] Добавить spec в каталог, вычислить healthy-pass minimum с 40 с и cleanup; тесты неизменности решения на имеющихся fixtures и отсутствия нового ручного пересчёта.
+- [x] Добавить spec в каталог, вычислить минимум для штатного выполнения с 40 с и cleanup; тесты неизменности решения на имеющихся fixtures и отсутствия нового ручного пересчёта.
 - [x] REFACTOR и `make check PYTHON=python3`; только виртуальный котёл.
 
 ### 13. Добавить графики истории без runtime-зависимостей
 
-**Files:**
-- Create: `zontcontrol/algorithms/charts.py`, `tests/test_charts.py`.
-- Reuse: параметры рядов/графиков передаёт boiler_cli, общий конфиг регистратора не расширяется.
+**Файлы:**
+- Создать: `zontcontrol/algorithms/charts.py`, `tests/test_charts.py`.
+- Использовать повторно: параметры рядов/графиков передаёт boiler_cli, общий конфиг регистратора не расширяется.
 
 - [x] RED: воздух факт/цель, вода факт/расчётная цель, произвольные объявленные пары, UTC-интервал и timezone отображения.
-- [x] GREEN: SVG stdlib, ступенчатые цели, разрывы null, подписи единиц/серий и честные метки/покрытие; никаких математически достроенных показаний.
+- [x] GREEN: SVG stdlib, ступенчатые цели, разрывы null, подписи единиц/серий и метки/покрытие, соответствующие исходным данным; никаких математически достроенных показаний.
 - [x] Валидировать доступные keys и интервалы, безопасно формировать пути/экранировать подписи; выводить только выбранные устройства.
 - [x] RED/GREEN для пустых/неполных данных, совпадающих ID разных приборов, специальных символов и отсутствия matplotlib/browser/network в тестах.
 - [x] REFACTOR и `make check PYTHON=python3`.
 
 ### 14. Подключить постоянный boiler_cli
 
-**Files:**
-- Create: `zontcontrol/algorithms/boiler_cli.py`, `tests/test_boiler_cli.py`.
-- Create: `config/boiler_cli.example.json`.
-- Modify: `zontcontrol/autonomy/catalog.py`.
+**Файлы:**
+- Создать: `zontcontrol/algorithms/boiler_cli.py`, `tests/test_boiler_cli.py`.
+- Создать: `config/boiler_cli.example.json`.
+- Изменить: `zontcontrol/autonomy/catalog.py`.
 
 - [x] RED: continuous-only, регистрационный старт, обновления раз в минуту, ввод при параллельном чтении, stop/start и headless failed.
 - [x] GREEN: таблица доступных current значений/качества/давности, конфиг devices/controls/graphs и явные пользовательские команды только через новый фасад.
 - [x] RED/GREEN: CLI сам загружает config/boiler_cli.json, проверяет devices/controls/graphs и собственные параметры; отсутствующий/неверный файл даёт ошибку модуля до эффектов. Регистратор не разбирает этот JSON.
-- [x] Управление: адресат и предпросмотр, явная отправка, получение/освобождение сессии; Busy/unknown показываются честно. Между вводами монополия не удерживается.
+- [x] Управление: адресат и предпросмотр, явная отправка, получение/освобождение сессии; Busy/unknown показываются без подмены успехом. Между вводами монополия не удерживается.
 - [x] Graph-команда получает историю через фасад, сохраняет SVG/показывает путь; viewer вызывается только по явному действию. Терминалом владеет один экземпляр, данные/ввод не блокируют таймер регистратора.
 - [x] RED/GREEN для ошибок чтения, пропущенного обновления, недоступного элемента, границ температуры, сброса, отключения TTY и отсутствия скрытого управления другими алгоритмами.
 - [x] Добавить builtin в каталог; REFACTOR и `make check PYTHON=python3`.
 
 ### 15. Собрать новое приложение и удалить остатки прототипа
 
-**Files:**
-- Create: `zontcontrol/application.py`, `tests/test_application.py`, `tests/test_entrypoints.py`, `tests/test_get_token.py`, `tests/test_module_boundaries.py`.
-- Modify: `zontcontrol/get_token.py`, `zontcontrol/__main__.py`, `zontcontrol/__init__.py`, `pyproject.toml`.
-- Modify: `scripts/collect_history.py`, `scripts/analyze_history.py`, `tests/test_collection.py`, `tests/test_version.py`.
-- Modify remaining prototype-dependent tests: `tests/test_commands.py`, `tests/test_history.py`, `tests/test_inventory.py`, `tests/test_monitor.py`.
-- Delete after transferring behavior checks: `zontcontrol/client.py`, `zontcontrol/cli.py`, `zontcontrol/control.py`, `tests/test_client.py`.
+**Файлы:**
+- Создать: `zontcontrol/application.py`, `tests/test_application.py`, `tests/test_entrypoints.py`, `tests/test_get_token.py`, `tests/test_module_boundaries.py`.
+- Изменить: `zontcontrol/get_token.py`, `zontcontrol/__main__.py`, `zontcontrol/__init__.py`, `pyproject.toml`.
+- Изменить: `scripts/collect_history.py`, `scripts/analyze_history.py`, `tests/test_collection.py`, `tests/test_version.py`.
+- Изменить оставшиеся тесты, зависящие от прототипа: `tests/test_commands.py`, `tests/test_history.py`, `tests/test_inventory.py`, `tests/test_monitor.py`.
+- Удалить после переноса проверок поведения: `zontcontrol/client.py`, `zontcontrol/cli.py`, `zontcontrol/control.py`, `tests/test_client.py`.
 
 - [x] RED: создание приложения из config/env, новый entrypoint list/once/all/длительный host, явный старт dual-mode и закрытие без утечки токена.
 - [x] GREEN: composition root создаёт transport/auth/controller/coordinator/registry, подставляет зависимости; отсутствие ZONT_TOKEN даёт инструкцию отдельной утилиты получения токена и имя переменной.
@@ -586,10 +586,10 @@ run-методов. Этот экземпляр отбрасывается. Ка
 
 ### 16. Проверить полный продукт, упаковку и офлайн-CI
 
-**Files:**
-- Create: `tests/test_product_flows.py`, `tests/test_installed_package.py`.
-- Modify: `.github/workflows/checks.yml`, `Makefile`, `pyproject.toml` where needed.
-- Preserve technical contracts: `.github/workflows/release-tag.yml`, `scripts/release_version.py`, `tests/test_release_version.py`, literal `zontcontrol.__version__`.
+**Файлы:**
+- Создать: `tests/test_product_flows.py`, `tests/test_installed_package.py`.
+- Изменить: `.github/workflows/checks.yml`, `Makefile`, `pyproject.toml` при необходимости.
+- Сохранить технические контракты: `.github/workflows/release-tag.yml`, `scripts/release_version.py`, `tests/test_release_version.py`, литеральное значение `zontcontrol.__version__`.
 
 - [x] RED: end-to-end без сети — два устройства, независимые приложения, registered once/continuous, reset/CLI конкуренция и завершение с ошибками.
 - [x] GREEN: устранить найденные интеграционные несовместимости без изменения порогов и принятых правил; сверить каждый критерий архитектуры с проверкой.
@@ -608,7 +608,7 @@ composition root с виртуальным HTTP: два устройства/н�
 поддельной и истёкшей сессии, сохранение unknown и изоляцию ошибки run_all_once.
 Существующие тесты ownership/runtime/registry проверяют принятую до истечения
 команду и кооперативную остановку; coordination_scenarios — воспроизводимую
-гонку R1 с независимым oracle, orchestration_statistics — её честный учёт.
+гонку R1 с независимым oracle, orchestration_statistics — её учёт с сохранением обнаруженного конфликта.
 Это не подтверждение строгой безопасности или достигнутых 99.9%.
 
 RED упаковки подтверждён отсутствовавшим `make package-check` и фактическим
@@ -626,13 +626,13 @@ checkout; `make package-check PYTHON=python3` отдельно выполняе�
 
 ### 17. Обновить документацию и завершить план
 
-**Files:**
-- Modify: `README.md`, `scripts/README.md`, `CHANGELOG.md`, `AGENTS.md`.
-- Modify: `docs/agents/contracts.md`, `docs/agents/architecture.md`, `docs/agents/README.md`.
-- Modify: `docs/reference/leader-election.md`, `docs/reference/boiler-reset.md`, `docs/reference/zont-api.md`, `docs/reference/orchestration-risk.md`.
-- Modify: `docs/plans/yandex-cloud.md` only to synchronize decisions/status, not cloud implementation.
-- Create: `docs/history/2026-10-15-architecture-implementation.md` with actual completion date if different.
-- Move after completion: this file to `docs/plans/completed/` and fix incoming/relative links.
+**Файлы:**
+- Изменить: `README.md`, `scripts/README.md`, `CHANGELOG.md`, `AGENTS.md`.
+- Изменить: `docs/agents/contracts.md`, `docs/agents/architecture.md`, `docs/agents/README.md`.
+- Изменить: `docs/reference/leader-election.md`, `docs/reference/boiler-reset.md`, `docs/reference/zont-api.md`, `docs/reference/orchestration-risk.md`.
+- Изменить: `docs/plans/yandex-cloud.md` — только согласовать решения и статус, без реализации облачной части.
+- Создать: `docs/history/2026-10-15-architecture-implementation.md` с фактической датой завершения, если она отличается.
+- Перенести после завершения: этот файл в `docs/plans/completed/` и исправить входящие и относительные ссылки.
 
 - [x] Описать только реализованные интерфейсы, запуск из checkout/wheel, фиксированные JSON config, env token, режимы и полную замену прототипа без обратной совместимости.
 - [x] Обновить статус архитектуры по факту, показать последствия stopping, ручного ЛК и принятое отсутствие строгой безопасности/доказанных 99.9%.
@@ -652,7 +652,7 @@ read-only измерения RTT/полных окон и подбор Delta. Т
 **Физическая проверка:** подтверждённая аномалия, on/off и остановка во время
 импульса рядом с котлом; реальные команды только в рамках конкретного сценария
 владельца. План, unit tests и сборка не выполняют эту проверку автоматически.
-Ручной ЛК доступен с принятой ответственностью человека и видимой занятостью.
+Ручной ЛК доступен, занятость видна; за ручные вмешательства отвечает человек.
 
 **Эксплуатационные данные:** собирать статистику реальных эпизодов и покрытия,
 дорабатывать по результатам, отдельно по версиям/нагрузке. 99.9% не является

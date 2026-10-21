@@ -17,3 +17,6 @@ htmlcov/
 # Local controller and algorithm settings; keep shareable examples.
 /config/*.json
 !/config/*.example.json
+
+# Local plan execution logs.
+/docs/plans/progress-*.txt

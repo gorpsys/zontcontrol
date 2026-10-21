@@ -195,54 +195,37 @@ make cloud-package-check сам собирает временный ZIP с си�
 без ZONT_TOKEN, site-packages и сети. Облачный handler только импортируется;
 его production-вызов для диагностики не выполняется.
 
-Workflow [deploy-prod](../.github/workflows/deploy-prod.yml) и stdlib helpers
-реализованы. Отдельные function/deploy SA/секрет созданы, metadata активной
-версии секрета проверены: [отчёт](../docs/reports/2026-10-20-yandex-cloud-provisioning.md).
-Repository variables проверены; выпуск 0.5.0 опубликован. Первый deploy
-остановился на OIDC subject, после исправления credential — на upload ZIP
-с неизвестным исходом, до создания версии. Успешного deploy и таймера нет.
-Workflow принимает успешный Project checks push-master либо workflow_dispatch
-на master. Gate проверяет актуальный SHA gorpsys/zontcontrol, Lint/Offline checks,
-GitHub Actions producer и workflow run с точным checks.yml/push/master/repo/SHA.
-Commit statuses не заменяют checks. Перед OIDC проверка повторяется в workflow
-и внутри helper; checkout и manifest закреплены на этом SHA.
+Workflow [deploy-prod](../.github/workflows/deploy-prod.yml) вызывает существующие
+helpers из checkout точного SHA. Их команды в подготовленном CI-окружении:
+
+```sh
+python3 -m scripts.deploy_gate --check-once
+python3 -m scripts.yandex_deploy
+```
+
+Это сетевые helpers публикации, не офлайн-диагностика: gate использует GitHub,
+deploy — GitHub OIDC и YC. Для обычного деплоя запускайте согласованный workflow,
+который подготавливает служебное окружение и повторяет gate перед OIDC.
+`make yandex-archive` проверяет состав, manifest и конфиги ZIP перед сохранением
+и повторно проверяет готовый архив. Эта офлайн-сборка не публикует его.
 
 Обязательные repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
 FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
-YC_OIDC_AUDIENCE, ZONT_CONTACT. [Пример](../deploy/yandex.example.json)
-содержит подтверждённые ID ресурсов и версии секрета; контакт остаётся null,
-helper пример не читает. GitHub запрещает префикс GITHUB_ в repository variables:
-workflow передаёт YC_OIDC_AUDIENCE во внутренний env GITHUB_OIDC_AUDIENCE helper.
-Runtime/handler/256MB/420s/concurrency1 и binding
-z_token → ZONT_TOKEN фиксированы в workflow; версия Lockbox закреплена ID.
-Пустые/некорректные настройки отклоняются до OIDC. GitHub AUD и новый deployment
-SA_ID для IAM exchange различаются. yc 1.40.0 получает IAM только через child
-env, временный явный config без credentials удаляется на всех выходах,
-HOME не меняется, команды имеют конечный timeout и --retry 0.
-HTTP-диагностика указывает фиксированную стадию, yc — exit-код и категорию
-ошибки. При ошибке upload деплой сразу останавливается без дополнительного
-HEAD, повторов или создания версии; произвольные ответы провайдера не выводятся.
+YC_OIDC_AUDIENCE, ZONT_CONTACT. Workflow передаёт YC_OIDC_AUDIENCE под внутренним
+именем GITHUB_OIDC_AUDIENCE helper и задаёт фиксированные runtime, entrypoint,
+memory/timeout/concurrency и secret binding. [JSON-пример](../deploy/yandex.example.json)
+показывает форму, но helper его не читает; рабочий контакт в Git не хранится.
 
-Helper читает функцию по FUNCTION_ID и сверяет folder. Только успешный пустой
-version list разрешает первую версию; иначе требуется валидный ACTIVE latest.
-Env, прочие секреты и поддерживаемые operational settings сохраняются;
-неизвестные поля/неподдерживаемые настройки запрещают upload. ZIP проверяется
-существующим verifier, включая dirty=false/source_sha=DEPLOY_SHA, и загружается
-через --body path под functions/zontcontrol/<sha>/<run-id>-<attempt>.zip —
-готовым методом scripts/yandex_deploy.py образца на SHA
-eb3fdffbb4ed9918c07b936e379a9c84ecf32c91. Окружение yc наследуется, YC_IAM_TOKEN
-заменяется, YC_TOKEN удаляется только у дочернего процесса; HOME сохраняется.
-Endpoint/cloud/folder находятся в явном временном профиле, без лишних флагов.
-После create проверяются latest ID/functionId/ACTIVE/settings/secrets и
-SHA/hash/object в description. Неопределённая запись не повторяется: результат
-проверяется чтением; непроверяемый исход завершает deploy ошибкой. Function,
-IAM и таймер этот workflow не создаёт и не меняет.
-
-[Согласованный план](../docs/plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md)
-и [контракт](../docs/agents/deployment.md) задают отдельные подтверждённые
-ручные шаги создания ресурсов. Таймер создаётся и включается после успешного
-первого автоматического деплоя и отдельного подтверждения владельца.
-Сборка/CI не означают публикации или разрешения плановых сбросов.
+Полная настройка, OIDC claims, IAM/Lockbox, таймер, диагностика, ротация и откат —
+[how-to](../docs/reference/github-yandex-cloud-howto.md).
+Gate, два audience, bootstrap/update, сохранение настроек и неизвестный исход —
+[контракт деплоя](../docs/agents/deployment.md).
+ID, имена и дата подтверждения — [реестр ресурсов](../docs/reference/yandex-cloud-resources.md).
+Попытки настройки сохранены в [provisioning](../docs/reports/2026-10-20-yandex-cloud-provisioning.md),
+наблюдаемые вызовы и измерения — в [приёмке](../docs/reports/2026-10-21-yandex-cloud-acceptance.md).
+Сборка/CI не доказывают публикации. Таймер создаётся/включается только после
+успешного первого деплоя и отдельного подтверждения владельца; каждый ручной
+запрос yc, включая чтение, подтверждается отдельно.
 
 ## Версии и выпуск
 
@@ -259,9 +242,9 @@ pyproject.toml не содержит второго номера. CLI, исхо�
 - Описание изменения.
 ```
 
-Пустой раздел «Не выпущено» перед первым выпуском допустим. До первого
-опубликованного тега 0.1.0 остаётся подготовленным номером, не свидетельством
-релиза. .dev/dirty-версии из Git больше не вычисляются.
+Пустой раздел «Не выпущено» перед первым выпуском допустим. Подготовленный
+номер сам по себе не подтверждает публикацию тега или деплой.
+.dev/dirty-версии из Git не вычисляются.
 
 | Уровень | Изменения |
 | --- | --- |
@@ -273,14 +256,10 @@ pyproject.toml не содержит второго номера. CLI, исхо�
 При MAJOR сбрасываются MINOR/PATCH, при MINOR — PATCH. Смешанный выпуск
 получает наиболее значимый уровень изменений приложения. Новые технические
 скрипты и обвязка относятся к PATCH. Несовместимость требует инструкции перехода.
-Для подготовленного 0.x выпуска 0.5.0 текущий контракт — Controller API v2
-с прямыми командами и упрощёнными конфигами. Прежние методы монополии и
-поля coordination/statistics/lease/grant удалены. Переход —
-[config/README](../config/README.md#переход). Этот PR остаётся одним выпуском;
-не публиковать отдельные теги для промежуточных экспериментов.
-В 0.4.0 новая нормализация температур может менять решения monitor, поэтому
-выбран MINOR. Потребители Python используют HeatingHistory и явный адаптер;
-прежние сигнатуры monitor/history_packet удалены. Конфиги и CLI не меняются.
+Текущие интерфейсы описаны в [контрактах](../docs/agents/contracts.md),
+схемы конфигурации — в [config/README](../config/README.md).
+Обоснования уровней прежних выпусков — в
+[CHANGELOG](../CHANGELOG.md) и [истории версий](../docs/history/versioning.md).
 
 Все изменения одного нового PR образуют один выпуск с наиболее значимым
 уровнем. Промежуточные коммиты не тегируются. Номер строго выше всех SemVer
@@ -289,7 +268,8 @@ pyproject.toml не содержит второго номера. CLI, исхо�
 объединения PR описываются в истории; текущий gate не пропускает PR с тем же
 номером, что уже в базе. Историю Git не переписывать.
 
-1. В PR выбрать номер, обновить __version__ и первый раздел
+1. Сверить актуальную базу PR и полные теги, выбрать следующий свободный
+   номер по SemVer. В PR обновить __version__ и первый раздел
    [CHANGELOG](../CHANGELOG.md) с датой, изменениями и необходимой инструкцией перехода.
 2. Закоммитить эти файлы. Локально получить теги и проверить относительно
    полной SHA актуальной базы PR. Изменённые незакоммиченные файлы версии
@@ -303,8 +283,13 @@ pyproject.toml не содержит второго номера. CLI, исхо�
    SHA прежнего мержа. Run workflow на master проверяет текущий master,
    а не прежний неуспешный выпуск. Тег на том же SHA можно отправить повторно;
    конфликтующий или lightweight тег автоматически не заменяется.
-6. Результат и SHA записать в [историю версий](../docs/history/versioning.md).
-   Успех выпуска не подтверждает production; будущий деплой проверяется отдельно.
+6. В [истории версий](../docs/history/versioning.md) сохранить подтверждённые
+   номер, дату, точный SHA, тег, PR или связанные PR, причину MAJOR/MINOR/PATCH
+   и несовместимости. Объединения старых PR описывать как исторические пакеты
+   с причиной. При наличии deploy или приёмки дать ссылку на датированный
+   отчёт с объектом проверки и ограничениями. Различать подготовленные
+   исходники, опубликованный тег, версию функции и наблюдаемые вызовы:
+   успех выпуска не подтверждает production или физический результат.
 
 ```sh
 git fetch origin master --tags
@@ -314,8 +299,8 @@ make release-check PYTHON=python3
 ```
 
 Git-проверки требуют настоящего checkout с коммитом и полными тегами.
-Текущий подготовленный выпуск — 0.5.2. Перед слиянием CI повторяет gate на
-актуальной базе/тегах. Исторические выпуски — [история версий](../docs/history/versioning.md).
+Перед слиянием CI повторяет gate на актуальной базе/тегах.
+Исторические выпуски — [история версий](../docs/history/versioning.md).
 В офлайн-тестах создаются временные репозитории и bare remotes; реальные
 теги из них не публикуются.
 
