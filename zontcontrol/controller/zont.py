@@ -5,9 +5,11 @@ explicitly distinguished from effects when translating transport failures.
 """
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 import logging
 import re
+from typing import Any
 from urllib.parse import urlencode
 from urllib.request import Request
 
@@ -62,13 +64,14 @@ def _devices(data, device_id=None):
 
 
 class ZontAdapter:
-    def __init__(self, transport: HttpTransport, headers: dict[str, str], *, clock=None):
+    def __init__(self, transport: HttpTransport, headers: dict[str, str], *,
+                 clock: Callable[[], datetime] | None = None) -> None:
         self._transport = transport
         self._headers = dict(headers)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
-        self._connection_attempted = set()
+        self._connection_attempted: set[int] = set()
 
-    def _mark_connection(self, device):
+    def _mark_connection(self, device: dict[str, Any]) -> None:
         """One best-effort metadata update per selected device and client lifetime."""
         device_id = device['id']
         if device_id in self._connection_attempted:
@@ -107,7 +110,7 @@ class ZontAdapter:
         except TransportError as error:
             raise_controller_error(error, write=write)
 
-    def devices(self, device_id=None):
+    def devices(self, device_id: int | None = None) -> list[dict[str, Any]]:
         query = {}
         if device_id is not None:
             _device_id(device_id)

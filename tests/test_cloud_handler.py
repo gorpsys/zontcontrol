@@ -110,17 +110,18 @@ class CloudHandlerTests(unittest.TestCase):
         for state, status in (('normal', 'success'), ('unknown', 'unknown'),
                               ('suppressed', 'suppressed'), ('warning', 'success')):
             self.events.clear()
+            output_start = len(self.output.getvalue())
             with self.subTest(state=state), patch('zontcontrol.algorithms.boiler_reset.assess_history',
                     return_value={'state_at_period_end': state}):
                 result = self.invoke({'algorithm_id': 'boiler_cli', 'mode': 'continuous',
                     'device_id': 1, 'execute': False, 'token': 'event-private'})
-            self.assertEqual({key: value for key, value in result.items() if key not in ('assessment', 'log')},
-                {'version': __version__, 'algorithm_id': 'boiler_reset',
-                 'status': status, 'state_at_period_end': state, 'reset_performed': False, 'reason': None})
-            self.assertEqual(result['assessment'], {'state_at_period_end': state})
-            self.assertTrue(result['log'])
-            self.assertEqual(self.events, ['transport_closed'])
-            self.assertEqual(self.controller.read_history.call_args.args[0], 700877)
+                self.assertEqual(result, {'version': __version__, 'algorithm_id': 'boiler_reset',
+                    'status': status, 'state_at_period_end': state, 'reset_performed': False,
+                    'reason': None, 'assessment': {'state_at_period_end': state},
+                    'log': self.output.getvalue()[output_start:]})
+                self.assertTrue(result['log'])
+                self.assertEqual(self.events, ['transport_closed'])
+                self.assertEqual(self.controller.read_history.call_args.args[0], 700877)
         self.assertNotIn('event-private', self.output.getvalue())
 
     def test_confirmed_sends_one_real_policy_pulse_then_closes(self):

@@ -3,11 +3,13 @@
 from dataclasses import replace
 import json
 import logging
+from io import StringIO
+from typing import Any, cast
 
 from . import __version__
 from .application import create_application
 from .autonomy.catalog import BOILER_RESET_SPEC
-from .autonomy.contracts import AlgorithmCancelled, AlgorithmTimeout, Mode
+from .autonomy.contracts import AlgorithmCancelled, AlgorithmResult, AlgorithmTimeout, Mode
 from .config import ConfigurationError
 from .logging_config import capture_console_output, configure_yc_logging
 
@@ -15,10 +17,11 @@ from .logging_config import capture_console_output, configure_yc_logging
 logger = logging.getLogger(__name__)
 
 
-def _response(result):
-    return {**result.value, 'version': __version__, 'algorithm_id': 'boiler_reset',
+def _response(result: AlgorithmResult) -> dict[str, Any]:
+    value = cast(dict[str, Any], result.value)
+    return {**value, 'version': __version__, 'algorithm_id': 'boiler_reset',
             'status': result.status.value,
-            'state_at_period_end': result.value['assessment']['state_at_period_end']}
+            'state_at_period_end': value['assessment']['state_at_period_end']}
 
 
 def _log(event, message, request_id, *, level=logging.INFO):
@@ -30,7 +33,7 @@ def _log(event, message, request_id, *, level=logging.INFO):
         pass
 
 
-def handler(event, context):
+def handler(event: object, context: object) -> dict[str, Any]:
     """Ignore invocation payload: bindings and execution mode come from the profile.
 
     ZONT_TOKEN is injected by Lockbox into the environment. The existing
@@ -43,7 +46,7 @@ def handler(event, context):
         return _invoke(context, capture)
 
 
-def _invoke(context, capture):
+def _invoke(context: object, capture: StringIO) -> dict[str, Any]:
     request_id = getattr(context, 'request_id', None)
     _log('cloud_invocation_started', 'Cloud invocation started', request_id)
     failure, result = None, None

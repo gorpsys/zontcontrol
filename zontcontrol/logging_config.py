@@ -11,16 +11,18 @@ import math
 import re
 import sys
 from datetime import datetime, timezone
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from contextlib import AbstractContextManager, contextmanager, redirect_stderr, redirect_stdout
+from collections.abc import Iterator
 from io import StringIO
 from threading import RLock
+from typing import Any, TextIO
 
 
 LOGGER_NAME = 'zontcontrol'
 _IDENTIFIER = re.compile(r'[A-Za-z0-9_.:-]{1,128}\Z')
 
 
-def _fields(record):
+def _fields(record: logging.LogRecord) -> dict[str, Any]:
     fields = {'timestamp': datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
               'message': record.getMessage(),
               'level': {'WARNING': 'WARN', 'CRITICAL': 'FATAL'}.get(
@@ -53,7 +55,7 @@ class YcLoggingFormatter(logging.Formatter):
 
 
 class _LocalFormatter(logging.Formatter):
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         fields = _fields(record)
         metadata = ' '.join(f'{name}={value}' for name, value in fields.items()
                             if name not in ('timestamp', 'message', 'level', 'logger'))
@@ -66,20 +68,21 @@ class _ApplicationHandler(logging.StreamHandler):
 
 
 class _Tee:
-    def __init__(self, stream, buffer, lock):
+    def __init__(self, stream: TextIO, buffer: StringIO,
+                 lock: AbstractContextManager[object]) -> None:
         self.stream, self.buffer, self.lock = stream, buffer, lock
 
-    def write(self, text):
+    def write(self, text: str) -> int | None:
         with self.lock:
             count = self.stream.write(text)
             self.buffer.write(text if count is None else text[:count])
             return count
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self.stream, name)
 
 
-def _stream_handlers():
+def _stream_handlers() -> set[logging.StreamHandler]:
     loggers = [logging.getLogger(), *(logger for logger in tuple(logging.Logger.manager.loggerDict.values())
                                      if isinstance(logger, logging.Logger))]
     return {handler for logger in loggers for handler in logger.handlers
@@ -87,7 +90,7 @@ def _stream_handlers():
 
 
 @contextmanager
-def capture_console_output():
+def capture_console_output() -> Iterator[StringIO]:
     """Copy Python stdout/stderr, including already configured stream handlers."""
     with StringIO() as buffer:
         lock = RLock()
@@ -107,7 +110,7 @@ def capture_console_output():
                         handler.setStream(handler.stream.stream)
 
 
-def _configure(handler, formatter):
+def _configure(handler: _ApplicationHandler, formatter: logging.Formatter) -> _ApplicationHandler:
     logger = logging.getLogger(LOGGER_NAME)
     for previous in logger.handlers[:]:
         if isinstance(previous, _ApplicationHandler):
@@ -120,11 +123,11 @@ def _configure(handler, formatter):
     return handler
 
 
-def configure_local_logging():
+def configure_local_logging() -> None:
     """Human-readable diagnostics on stderr; terminal UI remains unchanged."""
     _configure(_ApplicationHandler(sys.stderr), _LocalFormatter())
 
 
-def configure_yc_logging():
+def configure_yc_logging() -> _ApplicationHandler:
     """Cloud diagnostics on stdout; configure anew safely for warm invocations."""
     return _configure(_ApplicationHandler(sys.stdout), YcLoggingFormatter())
