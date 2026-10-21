@@ -239,8 +239,11 @@ scripts/, scripts/README.md и все три .github/workflows/. Непрове�
 
 Два независимых read-only ревью (quality и implementation) проверили source SHA
 1fab89e37a18f2b5effaa2068ae73e079b5d190c: замечаний CRITICAL/MAJOR/MINOR нет.
-Публикация PR, CI точного SHA, WunderReview и облачная приёмка ещё не выполнены;
-GitHub недоступен (SSH connection refused, HTTPS/API 502), Task 6 не завершён.
+[PR 13](https://github.com/gorpsys/zontcontrol/pull/13) опубликован после восстановления GitHub;
+все четыре checks SHA 4bc1af7ea2109b0b1d128a2c4c2fb70adba3a167 успешны.
+WunderReview-alt того же SHA: PASS, 0 blocking, 1 рекомендация assert-whole-objects.
+Рекомендация отклонена: tests/test_yandex_deploy.py уже сравнивает весь объект
+профиля одним assertEqual. Код не изменён; облачная приёмка и Task 6 не завершены.
 
 Workflow запускается по workflow_run успешного Project checks push-master
 либо workflow_dispatch на master. Repo фиксирован gorpsys/zontcontrol,
