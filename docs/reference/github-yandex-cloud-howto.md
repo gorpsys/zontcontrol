@@ -386,8 +386,10 @@ make check
 make package-check
 make cloud-package-check
 make yandex-archive
-python3 -m scripts.build_yandex_archive --verify build/yandex-function.zip
 ```
+
+`make yandex-archive` проверяет состав, manifest и конфиги ZIP перед сохранением
+и повторно проверяет готовый архив; при успехе выводит JSON со `status: ok`.
 
 Для production архив собирается в CI из чистого checkout точного SHA.
 Manifest содержит версию, `source_sha`, `dirty` и хеши файлов. Helper требует

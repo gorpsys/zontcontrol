@@ -206,11 +206,8 @@ python3 -m scripts.yandex_deploy
 Это сетевые helpers публикации, не офлайн-диагностика: gate использует GitHub,
 deploy — GitHub OIDC и YC. Для обычного деплоя запускайте согласованный workflow,
 который подготавливает служебное окружение и повторяет gate перед OIDC.
-Офлайн-проверка готового архива не публикует его:
-
-```sh
-python3 -m scripts.build_yandex_archive --verify build/yandex-function.zip
-```
+`make yandex-archive` проверяет состав, manifest и конфиги ZIP перед сохранением
+и повторно проверяет готовый архив. Эта офлайн-сборка не публикует его.
 
 Обязательные repository variables: CLOUD_ID, FOLDER_ID, SA_ID, FUNCTION_ID,
 FUNCTION_SA_ID, BUCKET, LOCKBOX_SECRET_ID, LOCKBOX_VERSION_ID,
