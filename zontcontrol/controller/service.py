@@ -126,6 +126,20 @@ class ReadControllerService:
         return result
 
     @_safe_data
+    def read_notes(self, device_id: int) -> str:
+        """Read account metadata, including for an offline device."""
+        self._keys(device_id, None)
+        raw = self._adapter.read_notes(device_id)
+        if type(raw.get('id')) is not int or raw['id'] != device_id:
+            raise InvalidArguments()
+        notes = raw.get('notes')
+        if notes is None:
+            return ''
+        if not isinstance(notes, str):
+            raise InvalidArguments()
+        return notes
+
+    @_safe_data
     def describe_values(self, device_id):
         self._keys(device_id, None)
         return value_descriptors(self._device(device_id))
@@ -200,6 +214,13 @@ class ReadControllerService:
 
 class ControllerService(ReadControllerService):
     """Commands have no device lock, ownership session or background worker."""
+
+    def write_notes(self, device_id: int, notes: str) -> None:
+        """Replace notes metadata once, without retrying an unknown outcome."""
+        self._keys(device_id, None)
+        if not isinstance(notes, str):
+            raise InvalidArguments()
+        self._adapter.write_notes(device_id, notes)
 
     def execute_command(self, command: ValidatedCommand) -> CommandResult:
         prepared = self._prepare(command, require_online=True)

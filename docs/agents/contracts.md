@@ -1,6 +1,6 @@
 # Текущие контракты приложения
 
-Controller API_VERSION=2, подготовленный выпуск 0.6.0.
+Controller API_VERSION=2, подготовленный выпуск 0.7.0.
 Удаление API монополии — намеренная несовместимость; заглушек прежних
 session/request/acquire/release методов нет.
 [Архитектура](architecture.md), [решение](../history/2026-10-20-remove-synchronization.md).
@@ -13,6 +13,8 @@ session/request/acquire/release методов нет.
 | Метод | Результат |
 | --- | --- |
 | list_devices() | tuple[DeviceInfo, ...]: ID, имя, модель, online |
+| read_notes(device_id) | str: точный текст notes; null/отсутствующее значение — пустая строка |
+| write_notes(device_id, notes) | None: полная замена notes одной отправкой |
 | describe_values(device_id) | Доступные значения, источник, единицы, current/history |
 | read_current(device_id, value_keys=None) | Snapshot |
 | read_history(device_id, value_keys, start, end) | HistoryResult с качеством и покрытием |
@@ -48,7 +50,18 @@ UnsupportedAction, InvalidArguments, IncompleteHistory, RateLimited,
 CommandOutcomeUnknown. Они не принимают произвольный текст upstream.
 CommandOutcomeUnknown означает неизвестный исход отправленной команды;
 автоповтора нет. CommandResult.api_accepted не доказывает физический результат.
-ReadControllerService/create_read_controller не предоставляют execute_command.
+read_notes и write_notes работают с метаданными ЛК, включая offline-прибор:
+они не отправляют физических команд и не требуют online. device_id — явный
+положительный int (bool недопустим), notes — str, включая пустую строку для
+очистки. Другие поля устройства не изменяются. Некорректные типы отклоняются
+до HTTP; неизвестный исход записи не повторяется.
+ReadControllerService/create_read_controller предоставляют read_notes, но не
+предоставляют execute_command или write_notes.
+create_controller — контекстный менеджер полного Controller без регистратора
+и алгоритмов: `with create_controller() as controller:`. Он читает только
+config/controller.json и ZONT_TOKEN, создаёт собственный транспорт и закрывает
+его при выходе. Вызовы завершают внутри этого блока. Чтение notes также
+отмечает первое адресное подключение в name; write_notes меняет только notes.
 
 ## Предметный вход отопления
 
@@ -85,8 +98,9 @@ requested_period описывает исходный запрос 46 минут;
 ## Автономные алгоритмы
 
 AlgorithmSpec содержит algorithm_id, описание, factory, modes,
-required_capabilities и minimum_seconds. Capabilities совпадают с семью
-методами Controller. Конструктор читает конфиг и проверяет зависимости,
+required_capabilities и minimum_seconds. Capabilities соответствуют девяти
+публичным методам Controller, включая read_notes/write_notes.
+Конструктор читает конфиг и проверяет зависимости,
 но не запускает потоки/сеть. DI передаёт один общий контроллер.
 
 OnceAlgorithm.run_once(context) возвращает AlgorithmResult;
@@ -164,8 +178,37 @@ Python-процесса не захватываются. Секреты запр
 результат или null) и log. Код не пишет текст upstream и chained traceback;
 ошибка и принятые повторы платформы сохраняются. Безопасный request_id берётся
 из context только для логов; event не выводится.
-Первый deploy v0.5.2 и ACTIVE таймер подтверждены; два плановых запуска ещё
-не проверены из-за недоступности логов. Наблюдаемость 0.6.0 пока не опубликована.
+
+Перед закрытием основного приложения handler ждёт worker через
+stop('boiler_reset', wait_timeout=None) и читает прежние notes через его
+Controller. device_id берёт из load_config алгоритма, включая случаи сбоя
+до результата; event и содержимое лога целью не являются. После полного
+основного cleanup, close и конечного cloud-сообщения строка log фиксируется.
+Далее отдельный create_controller без регистратора/алгоритмов отправляет
+ровно одну запись notes. Эта служебная публикация не пишет собственных
+success-логов и не является частью сохраняемого основного лога.
+
+notes — JSON-массив строк, newest-first, максимум три запуска. Каждый элемент
+буквально равен log ответа соответствующего вызова, включая Unicode, переводы
+строк, stdout/stderr и ошибки основного cleanup. Пустое поле начинает историю;
+невалидный JSON, не массив или нестроковый элемент не затираются. Нет лимита
+с обрезанием текста: отказ API сохранит полный log в ответе и даст notes_error.
+Конкурентная read→write ротация не атомарна: другой запуск/клиент может потерять
+запись. Координация, fencing и автоматические повторы не добавляются.
+
+В успешном ответе и JSON ошибки есть notes_saved и notes_error. notes_saved=True
+означает подтверждённую API запись, включая последующий сбой закрытия её
+транспорта. notes_error — null либо фиксированная категория unavailable,
+read_failed, invalid_history, publication_unavailable, write_failed,
+write_unknown, publication_cleanup_failed. Без доступной цели/истории запись
+не предпринимается. Сбой публикации не меняет основной исход алгоритма и не
+инициирует его повтор; неизвестная запись не повторяется. Ошибки основного
+вызова по-прежнему остаются исключением для платформы.
+
+Первый deploy v0.5.2 и публикация наблюдаемости 0.6.0 подтверждены; один реальный
+ручной запуск успешен (495 мс, 45 пригодных отсчётов, normal, без сброса).
+Владелец отключил таймер; два плановых запуска не проверены. 0.7.0 пока не
+опубликована в облаке.
 
 ## Конфиги и секреты
 

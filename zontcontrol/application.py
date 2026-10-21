@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterator
+from contextlib import contextmanager
 import os
 import signal
 import sys
@@ -69,6 +71,18 @@ def _close_transport(transport: HttpTransport) -> None:
     close = getattr(transport, 'close', None)
     if close is not None:
         close()
+
+
+@contextmanager
+def create_controller(*, environ: Mapping[str, str] | None = None,
+                      reader: JSONReader = read_json,
+                      transport_factory: TransportFactory | None = None) -> Iterator[Controller]:
+    """Own one controller's transport, without a registry or any algorithms."""
+    transport, adapter = _adapter(environ, reader, transport_factory or HttpTransport)
+    try:
+        yield ControllerService(adapter)
+    finally:
+        _close_transport(transport)
 
 
 class Application:

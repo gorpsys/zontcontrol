@@ -19,6 +19,7 @@ from ..controller.contracts import Controller
 CAPABILITIES = frozenset({
     'list_devices', 'describe_values', 'read_current', 'read_history',
     'list_controls', 'prepare_command', 'execute_command',
+    'read_notes', 'write_notes',
 })
 
 

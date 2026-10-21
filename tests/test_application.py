@@ -40,6 +40,40 @@ class ApplicationTests(unittest.TestCase):
             defaults.assert_not_called()
             configure.assert_not_called()
 
+    def test_controller_context_needs_only_controller_config_and_owns_transport(self):
+        from zontcontrol.application import create_controller
+        transport = Mock()
+        paths = []
+        def read(path):
+            paths.append(str(path))
+            return {'contact': 'metadata@example.invalid', 'http_timeout_seconds': 5}
+        with patch('zontcontrol.application.AlgorithmRegistry') as registry, \
+                patch('zontcontrol.application.builtin_specs') as algorithms, \
+                create_controller(environ={'ZONT_TOKEN': 'synthetic'}, reader=read,
+                    transport_factory=lambda **kwargs: transport) as controller:
+            self.assertTrue(callable(controller.read_notes))
+            self.assertTrue(callable(controller.write_notes))
+            transport.request.assert_not_called()
+            transport.close.assert_not_called()
+        self.assertEqual(paths, ['config/controller.json'])
+        transport.close.assert_called_once_with()
+        registry.assert_not_called()
+        algorithms.assert_not_called()
+
+    def test_controller_context_closes_after_unknown_write_without_retry(self):
+        from zontcontrol.application import create_controller
+        from zontcontrol.controller.contracts import CommandOutcomeUnknown
+        from zontcontrol.controller.transport import FailureKind, TransportError
+        transport = Mock()
+        transport.request.side_effect = TransportError(FailureKind.UNCONFIRMED)
+        with self.assertRaises(CommandOutcomeUnknown), create_controller(
+                environ={'ZONT_TOKEN': 'synthetic'},
+                reader=lambda _: {'contact': 'metadata@example.invalid', 'http_timeout_seconds': 5},
+                transport_factory=lambda **kwargs: transport) as controller:
+            controller.write_notes(42, 'text')
+        transport.request.assert_called_once()
+        transport.close.assert_called_once_with()
+
     def build(self, *, catalog=(), config=None, **kwargs):
         data = settings() if config is None else config
         if not catalog:
