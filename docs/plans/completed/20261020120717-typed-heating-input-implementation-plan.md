@@ -347,17 +347,17 @@ FastTraces/assess_samples не менять: это контроль прежн�
 Пороговые expected не пересчитываются новой реализацией автоматически.
 Отмечать выполненные пункты [x] и уточнять план при изменении области работ.
 
-### Task 1: Зафиксировать поведение до изменения входа
+### Задача 1: Зафиксировать поведение до изменения входа
 
-**Files:**
-- Create: tests/fixtures/heating-assessment-cases.json.
-- Create: tests/test_heating_regressions.py.
-- Modify: tests/test_monitor.py, tests/test_boiler_reset.py.
+**Файлы:**
+- Создать: tests/fixtures/heating-assessment-cases.json.
+- Создать: tests/test_heating_regressions.py.
+- Изменить: tests/test_monitor.py, tests/test_boiler_reset.py.
 
 - [x] Вынести компактные синтетические случаи матрицы в независимые fixtures;
   заморозить полные результаты существующего monitor и проверить, что
   expected не вычисляются тестируемой функцией во время теста.
-  До снятия baseline привести metadata времени фикстур к честной доступности:
+  До снятия baseline согласовать metadata времени фикстур с доступностью данных:
   fetched_at >= requested_period.end. Например, нынешний тест reset после
   последней минуты меняет end на 00:45:30, но оставляет fetched_at=00:45:00
   при событии 00:45:20. Исправить только fetched_at этой фикстуры до end,
@@ -370,13 +370,13 @@ FastTraces/assess_samples не менять: это контроль прежн�
 - [x] Выполнить python3 -m unittest tests.test_monitor tests.test_boiler_reset
   tests.test_heating_regressions.
 
-### Task 2: Добавить предметную модель и два входных адаптера
+### Задача 2: Добавить предметную модель и два входных адаптера
 
-**Files:**
-- Create: zontcontrol/heating.py, zontcontrol/heating_adapter.py.
-- Create: scripts/heating_archive.py.
-- Create: tests/test_heating_input.py, tests/test_heating_archive.py.
-- Modify: tests/test_module_boundaries.py.
+**Файлы:**
+- Создать: zontcontrol/heating.py, zontcontrol/heating_adapter.py.
+- Создать: scripts/heating_archive.py.
+- Создать: tests/test_heating_input.py, tests/test_heating_archive.py.
+- Изменить: tests/test_module_boundaries.py.
 
 - [x] Написать тесты трех frozen типов и адаптеров по точным полям/сигнатурам
   выше: привязки, пропуски, пустой reset, качество, значения и все метаданные.
@@ -393,15 +393,15 @@ FastTraces/assess_samples не менять: это контроль прежн�
   импортирует algorithms/application/config; monitor не должен зависеть от
   controller/algorithms/scripts после этапа 3. Запустить тематические тесты.
 
-### Task 3: Атомарно перевести monitor и всех его потребителей
+### Задача 3: Атомарно перевести monitor и всех его потребителей
 
-**Files:**
-- Modify: zontcontrol/monitor.py, zontcontrol/algorithms/boiler_reset.py.
-- Modify: tests/test_monitor.py, tests/test_boiler_reset.py.
-- Modify: tests/test_heating_regressions.py, tests/test_module_boundaries.py.
-- Modify: scripts/validate_one_shot.py, scripts/tune_anomaly.py.
-- Modify: scripts/backtest_profile.py, scripts/validate_recalibration.py.
-- Create: tests/test_research_detection.py.
+**Файлы:**
+- Изменить: zontcontrol/monitor.py, zontcontrol/algorithms/boiler_reset.py.
+- Изменить: tests/test_monitor.py, tests/test_boiler_reset.py.
+- Изменить: tests/test_heating_regressions.py, tests/test_module_boundaries.py.
+- Изменить: scripts/validate_one_shot.py, scripts/tune_anomaly.py.
+- Изменить: scripts/backtest_profile.py, scripts/validate_recalibration.py.
+- Создать: tests/test_research_detection.py.
 
 - [x] Начать с red-тестов точного порядка и линейной интерполяции, включая
   пример 12:00:50/12:01:30, запрет использования точки после history.end,
@@ -448,12 +448,12 @@ FastTraces/assess_samples не менять: это контроль прежн�
   unknown/warning без команд, already_on, неизвестный on и finally off,
   timeout/stop и continuous cooldown. Выполнить make check PYTHON=python3.
 
-### Task 4: Проверить все входные пути на регрессиях и реальном архиве
+### Задача 4: Проверить все входные пути на регрессиях и реальном архиве
 
-**Files:**
-- Modify: tests/test_heating_regressions.py, tests/test_research_detection.py.
-- Modify: tests/test_recalibration.py.
-- Create locally: reports/issue-5/comparison.json (gitignored).
+**Файлы:**
+- Изменить: tests/test_heating_regressions.py, tests/test_research_detection.py.
+- Изменить: tests/test_recalibration.py.
+- Создать локально: reports/issue-5/comparison.json (gitignored).
 
 - [x] Проверить единый результат archive/controller входов на одинаковых данных
   с одинаковыми доступными значениями; качество и метаданные Controller DTO
@@ -475,19 +475,19 @@ FastTraces/assess_samples не менять: это контроль прежн�
   Калибровку и пороги без отдельного решения не менять. Проверить, что
   исходные входы и отчёты калибровки имеют прежние SHA256.
 
-### Task 5: Подтвердить границы, документацию и выпуск
+### Задача 5: Подтвердить границы, документацию и выпуск
 
-**Files:**
-- Modify: docs/agents/architecture.md, docs/agents/contracts.md.
-- Modify: docs/reference/anomaly-detection.md, docs/reference/boiler-reset.md.
-- Modify: scripts/README.md, tests/test_installed_package.py.
-- Modify on plan completion: docs/reviews/2026-10-20-issue-5-plan-review.md,
+**Файлы:**
+- Изменить: docs/agents/architecture.md, docs/agents/contracts.md.
+- Изменить: docs/reference/anomaly-detection.md, docs/reference/boiler-reset.md.
+- Изменить: scripts/README.md, tests/test_installed_package.py.
+- Изменить после завершения плана: docs/reviews/2026-10-20-issue-5-plan-review.md,
   docs/reviews/2026-10-20-issue-5-plan-review-v2.md,
   docs/reviews/2026-10-20-issue-5-plan-scope-review.md (ссылки на перенесённый план).
-- Modify: zontcontrol/__init__.py, CHANGELOG.md.
-- Create: docs/reports/2026-10-20-typed-heating-regressions.md
+- Изменить: zontcontrol/__init__.py, CHANGELOG.md.
+- Создать: docs/reports/2026-10-20-typed-heating-regressions.md
   (при реализации в другую дату использовать фактическую дату).
-- Move after completion: этот план в docs/plans/completed/.
+- Перенести после завершения: этот план в docs/plans/completed/.
 
 - [x] Описать новую цепочку и заменить пример history_packet в справочнике;
   README менять только при изменении пользовательской инструкции. Существующий

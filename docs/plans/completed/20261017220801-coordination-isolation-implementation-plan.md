@@ -284,16 +284,16 @@ CI workflows и исполняемых scripts, меняющих discovery/пр�
 Эти диагностики подтверждают перемещение кода и границы. Они не заменяют
 существующие поведенческие тесты и не усиливают принятые гарантии протокола.
 
-## Implementation Steps
+## Этапы реализации
 
-### Task 1: Общие типы и контракты зависимостей
+### Задача 1: Общие типы и контракты зависимостей
 
-**Files:**
+**Файлы:**
 
-- Create: `zontcontrol/control_types.py`, `zontcontrol/coordination/ports.py`.
-- Modify: `zontcontrol/controller/contracts.py`, `zontcontrol/controller/ownership.py`.
-- Modify: `zontcontrol/coordination/leader.py`, `grants.py`, `store.py`, `statistics.py`.
-- Tests: существующие файлы, **без изменений**.
+- Создать: `zontcontrol/control_types.py`, `zontcontrol/coordination/ports.py`.
+- Изменить: `zontcontrol/controller/contracts.py`, `zontcontrol/controller/ownership.py`.
+- Изменить: `zontcontrol/coordination/leader.py`, `grants.py`, `store.py`, `statistics.py`.
+- Тесты: существующие файлы, **без изменений**.
 
 - [x] Зафиксировать исходный SHA и неизменённый baseline: `make check PYTHON=python3`.
 - [x] Перенести семь общих типов и три helper-функции; оставить identity-реэкспорты
@@ -310,13 +310,13 @@ CI workflows и исполняемых scripts, меняющих discovery/пр�
   `tests.test_coordination_store` одной командой unittest. Проверить отсутствие
   изменений/новых файлов tests. Не переходить дальше при падении.
 
-### Task 2: Перенос runtime и coordinator worker в пакет
+### Задача 2: Перенос runtime и coordinator worker в пакет
 
-**Files:**
+**Файлы:**
 
-- Create: `zontcontrol/coordination/runtime.py`.
-- Modify: `zontcontrol/application.py`, `zontcontrol/coordination/__init__.py`.
-- Tests: существующие файлы, **без изменений**.
+- Создать: `zontcontrol/coordination/runtime.py`.
+- Изменить: `zontcontrol/application.py`, `zontcontrol/coordination/__init__.py`.
+- Тесты: существующие файлы, **без изменений**.
 
 - [x] Перенести оба класса с сохранением методов, атрибутов, timing и порядка
   операций; добавить только worker_factory DI в указанных двух местах.
@@ -332,14 +332,14 @@ CI workflows и исполняемых scripts, меняющих discovery/пр�
   изменений/новых файлов tests. Любое требование изменить patch/fixture
   вынести на отдельное согласование, а не исправлять тест автоматически.
 
-### Task 3: Закрыть импорты за поверхностью пакета
+### Задача 3: Закрыть импорты за поверхностью пакета
 
-**Files:**
+**Файлы:**
 
-- Modify: `zontcontrol/coordination/__init__.py`, `zontcontrol/application.py`.
-- Modify: `zontcontrol/config.py`, `zontcontrol/controller/ownership.py`.
-- Modify: `scripts/analyze_orchestration.py` — только импорт публичных объектов.
-- Tests: существующие файлы, **без изменений**.
+- Изменить: `zontcontrol/coordination/__init__.py`, `zontcontrol/application.py`.
+- Изменить: `zontcontrol/config.py`, `zontcontrol/controller/ownership.py`.
+- Изменить: `scripts/analyze_orchestration.py` — только импорт публичных объектов.
+- Тесты: существующие файлы, **без изменений**.
 
 - [x] Оформить перечисленный `__all__` статическими реэкспортами; не добавлять
   service locator, динамическую загрузку, глобальный runtime или side effects.
@@ -355,19 +355,19 @@ CI workflows и исполняемых scripts, меняющих discovery/пр�
 - [x] Проверить неизменность tests/тестовой инфраструктуры и green результат;
   зафиксировать фактическую границу в журнале реализации.
 
-### Task 4: Документация, выпуск и полная приёмка
+### Задача 4: Документация, выпуск и полная приёмка
 
-**Files:**
+**Файлы:**
 
-- Modify: `docs/agents/architecture.md`, `docs/agents/contracts.md`,
+- Изменить: `docs/agents/architecture.md`, `docs/agents/contracts.md`,
   `docs/agents/README.md`, `AGENTS.md`.
-- Modify: `zontcontrol/__init__.py`, `CHANGELOG.md`, этот план.
-- Modify: `README.md` — только если требуется уточнить внутреннее устройство;
+- Изменить: `zontcontrol/__init__.py`, `CHANGELOG.md`, этот план.
+- Изменить: `README.md` — только если требуется уточнить внутреннее устройство;
   новых пользовательских команд нет.
-- Tests и скрипты проверок: существующие, **без изменений**.
+- Тесты и скрипты проверок: существующие, **без изменений**.
 
-- [x] Описать ответственность пакета, dependency direction, общий слой типов,
-  внутренние детали и assembly seam. README не выдаёт структурный перенос
+- [x] Описать ответственность пакета, направление зависимостей, общий слой типов,
+  внутренние детали и точку подстановки фабрики при сборке приложения. README не выдаёт структурный перенос
   за новую функцию или улучшение надёжности протокола.
 - [x] Подготовить PATCH `0.2.1`, если свободен; иначе следующий свободный PATCH
   актуальной базы. Controller API_VERSION=1 и wire v1 не менять.
@@ -385,7 +385,8 @@ CI workflows и исполняемых scripts, меняющих discovery/пр�
 ## Критерии готовности
 
 - [x] Распределённая синхронизация и её runtime находятся в coordination,
-  application содержит только assembly/lifecycle и необходимую DI seam.
+  application содержит только сборку зависимостей, управление жизненным циклом
+  и необходимую точку подстановки зависимостей.
 - [x] У пакета нет импортов контроллера/приложения/алгоритмов/конфиг-загрузчика;
   исполнителю доступны только согласованный gate и общие типы/наблюдения.
 - [x] Нет копий алгоритма, преобразования session или второго локального mutex.

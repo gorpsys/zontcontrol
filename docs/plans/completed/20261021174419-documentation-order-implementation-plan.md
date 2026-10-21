@@ -10,7 +10,7 @@ autorepeater. В т.ч. там в документации должны быть
 
 Разработчик, оператор и агент должны находить действующую инструкцию по своей
 задаче, отличать её от истории и понимать, куда вносить следующее изменение.
-Результат — ясная навигация, устранение устаревших текущих утверждений,
+Результат — ясная навигация, устранение устаревших утверждений, представленных как актуальные,
 разделение контрактов/процедур/свидетельств и явные правила поддержания порядка.
 
 Образец — организация инструкций autorepeater на
@@ -71,7 +71,7 @@ zontcontrol/algorithms/boiler_reset.py; monitor формирует сетку д
 | docs/agents/contracts.md | Действующие Python/DTO/CLI-обязательства и ошибки | Точный список облачных ID и журналы приёмки |
 | docs/agents/development.md | Стек, тесты, сборка и правила изменения кода | Номер «текущего подготовленного выпуска» |
 | docs/agents/deployment.md | Проверяемые инварианты gate/OIDC/yc/публикации и границы разрешений | Полная последовательность bootstrap-команд и даты попыток |
-| docs/reference/github-yandex-cloud-howto.md | Сохраняемое полноценное пошаговое руководство с параметризованными примерами | Постоянно обновляемая копия реестра ресурсов конкретного окружения |
+| docs/reference/github-yandex-cloud-howto.md | Сохранить полное пошаговое руководство с параметризованными примерами | Постоянно обновляемая копия реестра ресурсов конкретного окружения |
 | docs/reference/yandex-cloud-resources.md | Единственная текущая таблица ресурсов проекта с датой проверки и источниками | Secret payload, значения env и догадки о внешнем состоянии |
 | Остальные docs/reference/*.md | Текущие детали ZONT, детектора и сброса | Условия отменённой координации как действующая спецификация |
 | docs/agents/history.md | Короткий индекс находок H01… с источником и текущим решением | Вторая нормативная спецификация, повтор длинных отчётов |
@@ -170,13 +170,13 @@ scripts.check_project уже проверяет существование фа�
 
 ## Задачи реализации
 
-### Task 1. Правила ведения и входные индексы
+### Задача 1. Правила ведения и входные индексы
 
-**Files:**
-- Create: docs/README.md.
-- Create: docs/agents/documentation.md.
-- Modify: docs/agents/README.md.
-- Modify: AGENTS.md.
+**Файлы:**
+- Создать: docs/README.md.
+- Создать: docs/agents/documentation.md.
+- Изменить: docs/agents/README.md.
+- Изменить: AGENTS.md.
 
 - [x] Создать documentation.md с 12 разделами правил, перечисленными выше,
   и канонической матрицей «что где хранится».
@@ -189,20 +189,20 @@ scripts.check_project уже проверяет существование фа�
   использовать имеющиеся отчёты и docs/history/README.
 - [x] Сократить AGENTS до обязательных ограничений и маршрутизации. Явно
   сохранить запрет возвращать координацию, секреты вне Git, stdlib, apply_patch,
-  раздельные проверки/отправку команд, запрет менять бизнес-правила под вид
+  раздельные проверки/отправку команд, запрет менять бизнес-правила под видом
   реорганизации, отдельное подтверждение каждого ручного yc и merge.
   Детальные текущие требования не теряются: на них даются адресные ссылки.
 - [x] Проверить маршруты «изменяю API», «меняю детектор», «настраиваю деплой»,
   «пишу документацию»: в каждом случае индекс ведёт прямо в нужный раздел.
 - [x] Выполнить make lint и git diff --check; исправить ссылки до Task 2.
 
-### Task 2. Текущие локальные контракты без хроники
+### Задача 2. Текущие локальные контракты без хроники
 
-**Files:**
-- Modify: README.md, scripts/README.md, config/README.md.
-- Modify: docs/agents/architecture.md, docs/agents/contracts.md.
-- Modify: docs/agents/development.md.
-- Modify: docs/history/versioning.md — раздел выпуска 0.5.0.
+**Файлы:**
+- Изменить: README.md, scripts/README.md, config/README.md.
+- Изменить: docs/agents/architecture.md, docs/agents/contracts.md.
+- Изменить: docs/agents/development.md.
+- Изменить: docs/history/versioning.md — раздел выпуска 0.5.0.
 
 - [x] В README оставить реальные сценарии установки/запуска/API и ссылки;
   таблицы времён отдельных cloud-вызовов и версии попыток заменить ссылкой на отчёт.
@@ -224,15 +224,15 @@ scripts.check_project уже проверяет существование фа�
 - [x] Проверить описания по публичным контрактам и существующим тестам;
   make lint и git diff --check. Python и tests остаются без функционального diff.
 
-### Task 3. Разделить облачный контракт, how-to, ресурсы и приёмку
+### Задача 3. Разделить облачный контракт, how-to, ресурсы и приёмку
 
-**Files:**
-- Create: docs/reference/yandex-cloud-resources.md.
-- Modify: docs/agents/deployment.md, docs/reference/github-yandex-cloud-howto.md.
-- Modify: docs/README.md, docs/agents/README.md, docs/agents/contracts.md.
-- Modify: scripts/README.md.
-- Modify: docs/reports/2026-10-20-yandex-cloud-provisioning.md.
-- Modify: docs/reports/2026-10-21-yandex-cloud-acceptance.md.
+**Файлы:**
+- Создать: docs/reference/yandex-cloud-resources.md.
+- Изменить: docs/agents/deployment.md, docs/reference/github-yandex-cloud-howto.md.
+- Изменить: docs/README.md, docs/agents/README.md, docs/agents/contracts.md.
+- Изменить: scripts/README.md.
+- Изменить: docs/reports/2026-10-20-yandex-cloud-provisioning.md.
+- Изменить: docs/reports/2026-10-21-yandex-cloud-acceptance.md.
 
 - [x] В resources.md составить таблицу cloud/folder/bucket/federation,
   function/deploy SA/runtime SA/invoker/secret/version/key/timer и cron.
@@ -254,15 +254,15 @@ scripts.check_project уже проверяет существование фа�
   про незакоммиченные документы явно датировать как состояние на момент
   составления; не утверждать публикацию будущего документационного PR.
 - [x] Проверить, что везде различены версия исходников/деплой/вызов,
-  normal/unknown и API-успех/физический результат; make lint, git diff --check.
+  normal/unknown и успешный ответ API/физический результат; make lint, git diff --check.
   Никакие внешние запросы для этой задачи не выполняются.
 
-### Task 4. Архивировать завершённые постановки и справочник bootstrap
+### Задача 4. Архивировать завершённые постановки и справочник bootstrap
 
-**Files:**
-- Move: четыре файла согласно таблице «Точные перемещения».
-- Modify: .gitignore, docs/history/README.md, docs/README.md.
-- Modify: все Markdown-файлы, ссылающиеся на эти четыре пути.
+**Файлы:**
+- Перенести: четыре файла согласно таблице «Точные перемещения».
+- Изменить: .gitignore, docs/history/README.md, docs/README.md.
+- Изменить: все Markdown-файлы, ссылающиеся на эти четыре пути.
   Включить docs/plans/completed/20261019002421-monopoly-protocol-v2-implementation-plan.md,
   docs/plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md,
   docs/reviews/2026-10-20-yandex-cloud-plan-review.md,
@@ -284,12 +284,12 @@ scripts.check_project уже проверяет существование фа�
   progress-файл сохраняется; будущие планы не удаляются.
   Выполнить make lint и git diff --check.
 
-### Task 5. Индекс находок и ясный статус исторических свидетельств
+### Задача 5. Индекс находок и ясный статус исторических свидетельств
 
-**Files:**
-- Create: docs/agents/history.md.
-- Modify: docs/history/README.md, docs/agents/README.md, docs/README.md.
-- Modify: docs/history/*.md, docs/reports/*.md, docs/reviews/*.md — только
+**Файлы:**
+- Создать: docs/agents/history.md.
+- Изменить: docs/history/README.md, docs/agents/README.md, docs/README.md.
+- Изменить: docs/history/*.md, docs/reports/*.md, docs/reviews/*.md — только
   обрамление со статусом и ссылки там, где их сейчас нет или они устарели.
 
 - [x] Создать тематический H-индекс с колонками «ID/дата», «контрпример»,
@@ -312,16 +312,16 @@ scripts.check_project уже проверяет существование фа�
   пометку со ссылкой на решение удаления; численные данные, старые критерии
   и первоначальные вердикты не переписывать.
 - [x] Для остальных отчётов/ревью указать объект и дату; не выдавать старое
-  review за перечень текущих открытых issue и не переоткрывать принятые риски.
+  review за перечень текущих нерешённых проблем и не переоткрывать принятые риски.
 - [x] Проверить каждую H-ссылку и навигацию к архивам; make lint, git diff --check.
 
-### Task 6. История выпусков и выпуск документации
+### Задача 6. История выпусков и выпуск документации
 
-**Files:**
-- Modify: docs/history/versioning.md, scripts/README.md.
-- Modify: docs/agents/development.md — ссылка на единую процедуру выпуска.
-- Modify: zontcontrol/__init__.py — только литерал __version__.
-- Modify: CHANGELOG.md.
+**Файлы:**
+- Изменить: docs/history/versioning.md, scripts/README.md.
+- Изменить: docs/agents/development.md — ссылка на единую процедуру выпуска.
+- Изменить: zontcontrol/__init__.py — только литерал __version__.
+- Изменить: CHANGELOG.md.
 
 - [x] В versioning.md переименовать «Текущий порядок выпуска, обновлено
   16.10» в датированный исторический раздел. Сохранить сведения о первоначальном
@@ -341,12 +341,12 @@ scripts.check_project уже проверяет существование фа�
 - [x] Выполнить make lint и git diff --check. Тексты существующих релизов
   менять только для исправления ссылок/явного исторического контекста.
 
-### Task 7. Приёмка, проверка ссылок и завершение плана
+### Задача 7. Приёмка, проверка ссылок и завершение плана
 
-**Files:**
-- Modify: docs/README.md, docs/agents/documentation.md — только обнаруженные
+**Файлы:**
+- Изменить: docs/README.md, docs/agents/documentation.md — только обнаруженные
   пропуски правил или навигации.
-- Move after completion: этот файл в docs/plans/completed/ с исправлением ссылок.
+- Перенести после завершения: этот файл в docs/plans/completed/ с исправлением ссылок.
 
 - [x] Пройти матрицу приёмки ниже; при провале вернуться в соответствующую
   задачу, не расширять план правками runtime или стороннего репозитория.
@@ -400,7 +400,7 @@ tests, scripts/*.py, рабочие конфиги, зависимости, IAM/
 | Найти обоснование | H-индекс ведёт к источнику и текущему правилу; история не переопределяет контракт |
 | Открыть отменённую монополию | Сразу видны исторический статус и заменившее решение; R1/R2 не предлагаются runtime |
 | Различить 0.1/0.5/0.7 | Старые номера остаются датированными примерами/историей, не объявляются текущим состоянием |
-| Прочитать конфиг | Запрос 46 минут и сетка до 45 отсчётов различены; metadata side effects описаны верно |
+| Прочитать конфиг | Запрос 46 минут и сетка до 45 отсчётов различены; побочные действия с метаданными описаны верно |
 | Проверить ссылку после переноса | make lint проверяет существование документа и якоря; старых активных путей нет |
 | Проверить границы задачи | Тесты и поведение неизменны, нет внешних эффектов или новых инструментов |
 | Проверить будущую работу | В docs/plans остаются только реально невыполненные планы; исторические постановки не маскируются под backlog |

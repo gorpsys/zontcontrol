@@ -34,8 +34,8 @@ async продвигается самостоятельно, даже без о�
 справедливость, новый протокол R1/R2, автоматический сброс при реализации.
 
 База принятых рисков — [реестр сценариев координации](../../history/coordination-failure-scenarios.md).
-R/L/A-сценарии не переоткрываются этим планом и исправляются только при слишком
-частом проявлении в эксплуатации. Новые пути, включая C02 (раскрытие
+R/L/A-сценарии не переоткрываются этим планом и исправляются только тогда, когда такие сбои
+слишком часто происходят в эксплуатации. Новые пути, включая C02 (раскрытие
 невыданной session), должны быть закрыты до приёмки изменения.
 
 Уточнение границ от 17.10.2026:
@@ -373,7 +373,7 @@ validate/release сохраняются; эти требования не вво
 ### Подтверждение и фиксация нижней session
 
 В ExecutorGate.try_acquire после успешного `_ack` создать session пока только
-как локальную переменную. Потенциально бросающий `_observe('grant_ack', ...)`
+как локальную переменную. Вызов `_observe('grant_ack', ...)`, который может выбросить исключение,
 выполнить **до** записи `_Held` и удаления `_Pending`. Затем повторно проверить
 remote-derived expiry, local_deadline и attempt_deadline; если срок истёк,
 не фиксировать `_Held` и не возвращать session. Только после этих проверок
@@ -500,8 +500,8 @@ release в finally. DENIED: вывести понятную причину и н
 result.make_error(); boiler_reset выбрасывает новый exception из make_error,
 чтобы сохранить существующий путь ControllerError. Не хранить исключение
 обратно в результате; TIMEOUT/CANCELLED/SHUTDOWN обрабатывать по reason.
-Во время ожидания отдельный минутный reader продолжает работать. Отмена
-ожидания прерывает stop; quit во время синхронного ожидания будет прочитан
+Во время ожидания отдельный минутный reader продолжает работать. stop
+прерывает ожидание; quit во время синхронного ожидания будет прочитан
 после него, дополнительного потока ввода/IPC не вводить.
 
 BoilerReset._acquire заменяется одним вызовом acquire_control с существующими
@@ -509,7 +509,7 @@ grant_wait_seconds, grant_poll_seconds и context.cancelled. При CANCELLED
 или SHUTDOWN не начинать импульс; при TIMEOUT сохранить прежний безопасный
 путь недоступной монополии без on. Другие ошибки не трактовать как normal.
 Расчёт lease_seconds, MINIMUM_SECONDS, 40-секундный импульс, finally и
-пятиминутная пауза остаются прежними. Политика повторов сброса остаётся модулю.
+пятиминутная пауза остаются прежними. Политику повторов сброса по-прежнему определяет модуль.
 
 CAPABILITIES дополнить новыми методами. BUILTIN_SPECS для обоих модулей
 требует acquire_control вместо try_acquire_control; регистратор не получает
@@ -518,7 +518,7 @@ CAPABILITIES дополнить новыми методами. BUILTIN_SPECS д�
 ## Разработка и проверки
 
 Каждая кодовая задача: падающий тест → минимальное исправление → рефакторинг
-→ зелёные целевые тесты и make check. Все edits через apply_patch. Не отмечать
+→ зелёные целевые тесты и make check. Все правки — через apply_patch. Не отмечать
 выполненным тест/проверку без фактического результата. После нового изменения
 повторять только затронутые проверки и обязательный финальный набор.
 
@@ -528,14 +528,14 @@ CAPABILITIES дополнить новыми методами. BUILTIN_SPECS д�
 ExecutorGate и VirtualHTTP для проверки первого CLI --execute; мок, который
 сразу возвращает session, такой регрессией не является.
 
-## Implementation Steps
+## Этапы реализации
 
-### Task 1: Типы handle и результата запроса
+### Задача 1: Типы handle и результата запроса
 
-**Files:**
+**Файлы:**
 
-- Modify: `zontcontrol/controller/contracts.py`.
-- Modify: `tests/test_controller_contracts.py`.
+- Изменить: `zontcontrol/controller/contracts.py`.
+- Изменить: `tests/test_controller_contracts.py`.
 
 - [x] Написать RED-тесты состояний/причин, валидных и противоречивых сочетаний
   session/reason/error_code, неизменяемости DTO и object identity handle.
@@ -548,15 +548,15 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - [x] Запустить `python3 -m unittest tests.test_controller_contracts` и
   `make check PYTHON=python3`.
 
-### Task 2: Стабильный ID и локальный abandon нижнего gate
+### Задача 2: Стабильный ID и локальный abandon нижнего gate
 
-**Files:**
+**Файлы:**
 
-- Modify: `zontcontrol/controller/ownership.py` — внутренний CoordinationGate.
-- Modify: `zontcontrol/coordination/grants.py`.
-- Modify: `zontcontrol/application.py` — _CoordinationRuntime.
-- Modify: `tests/test_executor_grants.py`, `tests/test_application_coordination.py`.
-- Modify: `tests/test_control_ownership.py` — только test gate при необходимости.
+- Изменить: `zontcontrol/controller/ownership.py` — внутренний CoordinationGate.
+- Изменить: `zontcontrol/coordination/grants.py`.
+- Изменить: `zontcontrol/application.py` — _CoordinationRuntime.
+- Изменить: `tests/test_executor_grants.py`, `tests/test_application_coordination.py`.
+- Изменить: `tests/test_control_ownership.py` — только test gate при необходимости.
 
 - [x] Написать RED-тесты одного request_id/nonce/sent на всех попытках,
   потерянной R1-заявки и uncertain без слепой повторной записи.
@@ -569,7 +569,7 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
   но session не выдавать. Использовать барьеры и тестовые BOOTTIME-часы.
 - [x] Добавить необязательные request_id/local_deadline/attempt_deadline по внутреннему DI-маршруту;
   сохранить немедленные вызовы без нового аргумента.
-- [x] RED с настоящим ExecutorGate и DI sink, бросающим SystemExit только на
+- [x] RED с настоящим ExecutorGate и DI sink, выбрасывающим SystemExit только на
   grant_ack: session не возвращена, `_Held` не сохранён, pending доступна
   abandon. Вызвать sink также с переводом часов за deadline без исключения:
   после observer нельзя commit/вернуть позднюю session. Затем перенести observer
@@ -593,14 +593,14 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
   tests.test_application_coordination tests.test_control_ownership` одной командой
   и `make check PYTHON=python3`.
 
-### Task 3: Менеджер запросов, автономное продвижение и отмена
+### Задача 3: Менеджер запросов, автономное продвижение и отмена
 
-**Files:**
+**Файлы:**
 
-- Create: `zontcontrol/controller/requests.py`.
-- Create: `tests/test_control_requests.py`.
-- Modify: `zontcontrol/controller/ownership.py`.
-- Modify: `tests/test_control_ownership.py`.
+- Создать: `zontcontrol/controller/requests.py`.
+- Создать: `tests/test_control_requests.py`.
+- Изменить: `zontcontrol/controller/ownership.py`.
+- Изменить: `tests/test_control_ownership.py`.
 
 - [x] Сначала RED-тесты локального создания без I/O, неизменного handle,
   самостоятельного продвижения без get, статуса без I/O и GC terminal handles.
@@ -662,18 +662,18 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
   чужая/issued reservation не освобождается. Общий cleanup работает и без handle session.
 - [x] RED-тесты shutdown pending и in-flight, затем включить manager в
   begin_close/wait_idle и join workers. Терминальные handles не удерживают close.
-- [x] Проверить успех и все ошибки targeted набором запросов/ownership,
+- [x] Проверить успех и все ошибки целевым набором запросов/ownership,
   затем `make check PYTHON=python3`.
 
-### Task 4: Потребительский фасад и синхронная обёртка ожидания
+### Задача 4: Потребительский фасад и синхронная обёртка ожидания
 
-**Files:**
+**Файлы:**
 
-- Modify: `zontcontrol/controller/contracts.py`, `zontcontrol/controller/service.py`.
-- Modify: `zontcontrol/controller/ownership.py`, `zontcontrol/controller/requests.py`.
-- Modify: `zontcontrol/autonomy/contracts.py` — CAPABILITIES.
-- Modify: `tests/test_control_requests.py`, `tests/test_controller_contracts.py`.
-- Modify: `tests/test_application.py`.
+- Изменить: `zontcontrol/controller/contracts.py`, `zontcontrol/controller/service.py`.
+- Изменить: `zontcontrol/controller/ownership.py`, `zontcontrol/controller/requests.py`.
+- Изменить: `zontcontrol/autonomy/contracts.py` — CAPABILITIES.
+- Изменить: `tests/test_control_requests.py`, `tests/test_controller_contracts.py`.
+- Изменить: `tests/test_application.py`.
 
 - [x] RED-тесты четырёх методов Controller, binding identity и forged/foreign
   handle; добавить Protocol и фасадные методы после реализации маршрута.
@@ -684,15 +684,15 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - [x] Проверить capability declarations и прежние тесты immediate API.
 - [x] Запустить целевые тесты контрактов/requests/application и `make check`.
 
-### Task 5: Перевод CLI и boiler_reset на ограниченное ожидание
+### Задача 5: Перевод CLI и boiler_reset на ограниченное ожидание
 
-**Files:**
+**Файлы:**
 
-- Modify: `zontcontrol/algorithms/boiler_cli.py`, `zontcontrol/algorithms/boiler_reset.py`.
-- Modify: `zontcontrol/autonomy/catalog.py`.
-- Modify: `config/boiler_cli.example.json`, `config/README.md`.
-- Modify: `tests/test_boiler_cli.py`, `tests/test_boiler_reset.py`.
-- Modify: `tests/test_algorithm_registry.py`, `tests/test_configuration.py`
+- Изменить: `zontcontrol/algorithms/boiler_cli.py`, `zontcontrol/algorithms/boiler_reset.py`.
+- Изменить: `zontcontrol/autonomy/catalog.py`.
+- Изменить: `config/boiler_cli.example.json`, `config/README.md`.
+- Изменить: `tests/test_boiler_cli.py`, `tests/test_boiler_reset.py`.
+- Изменить: `tests/test_algorithm_registry.py`, `tests/test_configuration.py`
   и тестовые consumers/mocks, реально затронутые сменой вызова.
 
 - [x] RED CLI: REQUESTED внутри исполнителя не ошибка пользователю, первый
@@ -707,14 +707,14 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 - [x] Обновить required_capabilities и подставные Controller без изменений
   пауз, бюджета once или калибровки. История и unknown/suppressed не меняются.
 - [x] Проверить старый CLI JSON без нового поля, неверные значения нового поля,
-  все existing CLI/reset tests; выполнить `make check PYTHON=python3`.
+  все существующие тесты CLI и сброса; выполнить `make check PYTHON=python3`.
 
-### Task 6: Интеграционные сценарии на настоящем composition root
+### Задача 6: Интеграционные сценарии на настоящем composition root
 
-**Files:**
+**Файлы:**
 
-- Modify: `tests/test_product_flows.py`, `tests/test_application_coordination.py`.
-- Modify: `tests/test_module_boundaries.py` при новом модуле requests.
+- Изменить: `tests/test_product_flows.py`, `tests/test_application_coordination.py`.
+- Изменить: `tests/test_module_boundaries.py` при новом модуле requests.
 
 - [x] Первый --execute на свободном виртуальном приборе сам проходит request →
   grant → один send → release, без повторного пользовательского ввода.
@@ -741,14 +741,14 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
   tests.test_application_coordination tests.test_control_requests` одной командой
   и `make check PYTHON=python3`. Отсутствие физических send при DENIED проверять явно.
 
-### Task 7: Договоры, примеры и выпуск
+### Задача 7: Договоры, примеры и выпуск
 
-**Files:**
+**Файлы:**
 
-- Modify: `README.md`, `docs/agents/architecture.md`, `docs/agents/contracts.md`.
-- Modify: `docs/reference/leader-election.md`, `docs/reference/boiler-reset.md`.
-- Modify: `AGENTS.md` — согласовать правило получения монополии, не расширять хронику.
-- Modify: `zontcontrol/__init__.py`, `CHANGELOG.md`, этот план.
+- Изменить: `README.md`, `docs/agents/architecture.md`, `docs/agents/contracts.md`.
+- Изменить: `docs/reference/leader-election.md`, `docs/reference/boiler-reset.md`.
+- Изменить: `AGENTS.md` — согласовать правило получения монополии, не расширять хронику.
+- Изменить: `zontcontrol/__init__.py`, `CHANGELOG.md`, этот план.
 
 - [x] Описать точные четыре метода, три состояния и terminal semantics,
   примеры async/status/cancel и sync. Immediate API остаётся непосредственной
@@ -785,10 +785,10 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
   retry и ack не переносят эту границу, local deadline одинаков у gate и session.
   Уже принятые составные metadata-стадии могут завершиться позднее, новые
   стадии после attempt_deadline не начинаются; поздняя session не выдаётся.
-- [x] Mixed immediate/async проверяет deadline в точке reuse; BaseException
+- [x] Смешанный сценарий immediate/async проверяет deadline в точке reuse; BaseException
   после сохранения unclaimed не оставляет вечную reservation.
 - [x] BaseException на lower grant_ack не оставляет скрытую _Held.session;
-  более короткий следующий запрос не наследует отказанное право. Ленивое
+  более короткий следующий запрос не наследует право, в котором отказано. Ленивое
   создание устройства проверяет срок между стадиями, не останавливая уже
   работающего coordinator. Reuse/release проверены в обоих порядках.
 - [x] Локальная монополия и expiry issue #3 сохранены; не закрывается транспорт
@@ -802,7 +802,7 @@ ExecutorGate и VirtualHTTP для проверки первого CLI --execute
 
 Проверки Task 7 от 17.10.2026:
 
-При последующем комплексном review удалён неиспользуемый completion Event
+При последующем комплексном ревью удалён неиспользуемый completion Event
 из RequestState: синхронный caller и worker уже ждут общую Condition.
 Это малое упрощение механизма уведомления, без изменения договора состояний.
 

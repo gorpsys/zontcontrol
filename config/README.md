@@ -2,8 +2,8 @@
 
 Файлы читаются относительно корня приложения. Рабочие controller.json,
 registry.json, boiler_reset.json и boiler_cli.json игнорируются Git;
-versioned *.example.json — шаблоны. Не помещать токен в JSON.
-Неизвестные поля, неверные типы, повторные ключи и нечисловые числа отклоняются.
+*.example.json — шаблоны, которые хранятся в Git. Не помещать токен в JSON.
+Неизвестные поля, неверные типы, повторные ключи, NaN и бесконечные значения отклоняются.
 Общих --config/ZONT_CONFIG и module_configs у регистратора нет.
 
 ## controller.json
@@ -44,7 +44,7 @@ check_interval_seconds. ID — положительные целые, датчи
 Алгоритм запрашивает 46 минут истории; monitor строит сетку до 45 минутных
 отсчётов для детектора. Импульс длится 40 с, после off в continuous — пауза
 300 с. Эти величины не настраиваются регистратором. Grant wait/poll
-и lease_seconds удалены. [Поведение](../docs/reference/boiler-reset.md).
+и lease_seconds удалены. Поведение описано в [справочнике сброса](../docs/reference/boiler-reset.md).
 
 ## boiler_cli.json
 

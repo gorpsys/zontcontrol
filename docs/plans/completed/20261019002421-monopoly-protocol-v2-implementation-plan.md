@@ -494,7 +494,7 @@ Delta или незавершённые наблюдения, не позвол�
 Это проверка корректности опытов, не новый эксплуатационный SLA.
 
 Для оставшихся считать `success_rate = GRANTED / started_requests`:
-в знаменателе все 100 запросов каждой нормальной серии, включая отказанные
+в знаменателе все 100 запросов каждой нормальной серии, включая отклонённые
 и истёкшие. Успех — пригодная сессия, полученная до исходного timeout;
 повторы nonce и polls не новые запросы. Отдельно вывести количества
 GRANTED/DECLINED/timeout/unknown; unknown делает серию неполной, а не успешной.
@@ -515,7 +515,7 @@ Timeout — цензурированная справа выборка: изве
 Натурный прогон использует тот же учёт всех начатых запросов и уже разрешённый
 сценарий управления. Офлайн-матрица и fault-матрица не означают разрешения
 воспроизводить физические отказы или импульс сброса на устройстве. Без
-натурных данных профиль остаётся инженерно выбранным, но unmeasured.
+натурных данных профиль остаётся инженерно выбранным, но не проверенным измерениями (unmeasured).
 
 ## Первый запуск и формат данных
 
@@ -587,8 +587,8 @@ R1 B до R2 B, повторный запуск B с/без previous_profile п�
 `make check PYTHON=python3`; переход к следующей задаче только после зелёного
 набора. Задача 3 — один интеграционный этап с подшагами 3.1–3.5: внутри него
 допустимы локальные red/green циклы, но не требуется невозможный полный green
-после отдельной замены DTO без потребителей. Полный набор обязателен на общей
-границе задачи 3, с одновременным переходом всех потребителей и удалением v1.
+после отдельной замены DTO без потребителей. Полный набор должен пройти после
+завершения задачи 3, с одновременным переходом всех потребителей и удалением v1.
 Не добавлять временные legacy-адаптеры и не отключать проверки ради подшагов.
 Не ослаблять прежние тесты постороннего поведения. Нет UI/browser-e2e:
 интеграционные сценарии идут через fake ZONT и реальные объекты приложения.
@@ -600,7 +600,7 @@ R1 B до R2 B, повторный запуск B с/без previous_profile п�
 
 ### 1. Шкалы времени и ограниченное окно операции
 
-**Files:** изменить `zontcontrol/coordination/clock.py`,
+**Файлы:** изменить `zontcontrol/coordination/clock.py`,
 `zontcontrol/coordination/ports.py`; создать `zontcontrol/coordination/timing.py`;
 создать `tests/test_coordination_timing.py`, изменить
 `tests/fakes/clock.py`, `tests/test_leader_election.py`.
@@ -626,7 +626,7 @@ EpochSampler отделён от Clock, чтобы существующие v1-�
 
 ### 2. Bounded metadata I/O без изменения общего транспорта
 
-**Files:** изменить `zontcontrol/coordination/ports.py`,
+**Файлы:** изменить `zontcontrol/coordination/ports.py`,
 `zontcontrol/controller/zont.py`, `zontcontrol/controller/transport.py`;
 изменить `tests/test_zont_adapter.py`,
 `tests/test_transport.py`, `tests/fakes/zont.py`.
@@ -652,15 +652,15 @@ Socket timeout не доказывает отмены или своевреме�
 
 ### 3. Единый интеграционный переход на wire v2
 
-**Files:** объединение списков 3.1–3.5 ниже: models/store/leader/grants/runtime,
+**Файлы:** объединение списков 3.1–3.5 ниже: models/store/leader/grants/runtime,
 их порты и экспорты, controller ownership/requests, config/application,
-перечисленные протокольные и интеграционные тесты. Это одна задача с одной
-полной зелёной границей; подшаги не являются отдельными законченными задачами.
+перечисленные протокольные и интеграционные тесты. Это одна задача, после завершения которой
+должен пройти полный набор тестов; подшаги не являются отдельными законченными задачами.
 Все перечисленные тестовые изменения окончательно подтверждены владельцем.
 
 #### 3.1. Wire v2 и разделение возможностей записи
 
-**Files:** изменить `zontcontrol/coordination/models.py`,
+**Файлы:** изменить `zontcontrol/coordination/models.py`,
 `zontcontrol/coordination/store.py`, `zontcontrol/coordination/__init__.py`;
 изменить `tests/test_coordination_store.py`,
 `tests/test_module_boundaries.py`, `tests/test_executor_grants.py`.
@@ -681,7 +681,7 @@ Socket timeout не доказывает отмены или своевреме�
 
 #### 3.2. Выборы и продление лидера v2
 
-**Files:** изменить `zontcontrol/coordination/leader.py`,
+**Файлы:** изменить `zontcontrol/coordination/leader.py`,
 `zontcontrol/coordination/runtime.py`; изменить
 `tests/test_leader_election.py`, `tests/test_coordination_scenarios.py`.
 
@@ -698,7 +698,7 @@ Socket timeout не доказывает отмены или своевреме�
 
 #### 3.3. Планировщик grant в R1
 
-**Files:** изменить `zontcontrol/coordination/grants.py`,
+**Файлы:** изменить `zontcontrol/coordination/grants.py`,
 `zontcontrol/coordination/models.py`; изменить
 `tests/test_executor_grants.py`, `tests/test_coordination_scenarios.py`.
 
@@ -719,7 +719,7 @@ Socket timeout не доказывает отмены или своевреме�
 
 #### 3.4. Gate и локальный executor
 
-**Files:** изменить `zontcontrol/coordination/grants.py`,
+**Файлы:** изменить `zontcontrol/coordination/grants.py`,
 `zontcontrol/coordination/ports.py`, `zontcontrol/controller/ownership.py`,
 `zontcontrol/controller/requests.py` только при необходимости интеграции;
 изменить `tests/test_control_ownership.py`,
@@ -739,9 +739,9 @@ Socket timeout не доказывает отмены или своевреме�
   timeouts/cancel, чужого UUID, delayed ack и безграничного polling;
   локальный red/green gate/ownership, затем продолжить подшаг 3.5.
 
-#### 3.5. Сборка, конфигурация и приложение; полная зелёная граница
+#### 3.5. Сборка, конфигурация и приложение; проверка полного набора тестов
 
-**Files:** изменить `zontcontrol/config.py`, `zontcontrol/application.py`,
+**Файлы:** изменить `zontcontrol/config.py`, `zontcontrol/application.py`,
 `zontcontrol/coordination/runtime.py`, `zontcontrol/coordination/ports.py`,
 `config/controller.example.json`, `config/README.md`; изменить `tests/test_configuration.py`, `tests/test_application_coordination.py`,
 `tests/test_application.py`, `tests/test_product_flows.py`.
@@ -771,7 +771,7 @@ Socket timeout не доказывает отмены или своевреме�
 
 ### 4. Измерения синхронизации и физических хвостов
 
-**Files:** изменить `zontcontrol/coordination/statistics.py`,
+**Файлы:** изменить `zontcontrol/coordination/statistics.py`,
 `zontcontrol/coordination/timing.py`, `zontcontrol/controller/ownership.py`,
 `scripts/analyze_orchestration.py`; создать `scripts/analyze_command_effects.py`;
 изменить `tests/test_orchestration_statistics.py`,
@@ -804,7 +804,7 @@ unknown. Цикл алгоритма не сравнивается с Delta_cmd.
 
 ### 5. Калибровка параметров профиля
 
-**Files:** создать `scripts/calibrate_coordination.py`; изменить
+**Файлы:** создать `scripts/calibrate_coordination.py`; изменить
 `scripts/analyze_orchestration.py`, `config/controller.example.json`,
 `config/README.md`, `scripts/README.md`; создать `tests/test_coordination_calibration.py`, изменить
 `tests/test_orchestration_statistics.py`, `tests/test_configuration.py`.
@@ -828,9 +828,9 @@ unknown. Цикл алгоритма не сравнивается с Delta_cmd.
   Если данных нет, этап натурной калибровки остаётся явно незавершённым.
   Выполнены два Schedule-only прогона; все 4 запроса сохранены, включая
   2 ранних timeout, bootstrap timeout и 1 GRANTED. Пример вручную переведён
-  на provisional poll20/retry60 по успешной натурной пробе; победитель
+  на предварительные poll20/retry60 по успешной натурной пробе; победитель
   симуляции poll1/retry5 сохранён в исходном отчёте; исправленный harness
-  revision 3 после review выбрал poll1/retry0.5. Профиль остаётся unmeasured,
+  revision 3 после review выбрал poll1/retry0.5. Профиль остаётся не проверенным измерениями (unmeasured),
   полноценная измеренная граница ZONT этим не установлена.
 - [x] В натурном сценарии использовать выбранный контур «Отопление» и
   актуальные list_controls/read_current; не подменять его скрытым «Котел».
@@ -839,7 +839,7 @@ unknown. Цикл алгоритма не сравнивается с Delta_cmd.
   одностороннего смещения. Проверить шаг/границы через prepare_command;
   если он недопустим, не заменять его большим шагом или другим воздействием.
   **Температурная серия пропущена по явному решению владельца 19.10.2026:**
-  «Только «Расписание», температурную серию пропустить»; actual step=1.0
+  «Только «Расписание», температурную серию пропустить»; фактический шаг=1.0
   несовместим с исходно разрешёнными ±0.1. Это отметка согласованного
   исключения, а не выполненной серии. Read-only list_controls/read_current
   подтвердили выбранный контур; harness проверяет известный шаг отдельно
@@ -872,7 +872,7 @@ unknown. Цикл алгоритма не сравнивается с Delta_cmd.
 
 ### 6. Первый запуск и регрессионная матрица
 
-**Files:** изменить
+**Файлы:** изменить
 `tests/test_coordination_store.py`, `tests/test_coordination_scenarios.py`,
 `tests/test_application_coordination.py`, `tests/test_installed_package.py`,
 `tests/test_entrypoints.py` при изменении импорта.
@@ -903,7 +903,7 @@ wheel smoke; протокол, runtime и discovery не изменялись.
 
 ### 7. Договорённости и выпуск
 
-**Files:** изменить `docs/agents/architecture.md`, `docs/agents/contracts.md`,
+**Файлы:** изменить `docs/agents/architecture.md`, `docs/agents/contracts.md`,
 `docs/agents/README.md`, `docs/reference/leader-election.md`,
 `docs/reference/coordination-failure-scenarios.md`,
 `docs/reference/orchestration-risk.md`, `AGENTS.md`, `README.md`,
@@ -975,8 +975,8 @@ Mock UUID остаётся свежим на сценарий и общим дл
   не считается успешно завершённой и сообщает об этом явно.
 - [x] Все отдельно согласованные тесты и существующий незатронутый набор проходят;
   реальные вызовы ZONT и физическое воздействие для этого не требуются.
-  Полная зелёная граница атомарной замены wire — конец задачи 3, а не каждый
-  её подшаг. Отказы не удаляются из калибровочного знаменателя.
+  При атомарной замене wire полный набор тестов должен пройти после завершения
+  задачи 3; после каждого её подшага это не требуется. Отказы не удаляются из калибровочного знаменателя.
 
 Проверка задачи 7: make lint PYTHON=python3 — 159 файлов, ссылки/метаданные зелёные;
 PIP_NO_INDEX=1 make package-check PYTHON=python3 — wheel 0.3.0, шесть тестов без skip.
@@ -993,9 +993,9 @@ PIP_NO_INDEX=1 make package-check PYTHON=python3 — wheel 0.3.0, шесть т�
 и подтверждение, Schedule-only серия с конечным «Расписанием». После read-only
 проверки step=1.0 владелец явно отменил температурную серию ±0.1; она пропущена,
 не измерена. Сохранены все четыре начатых запроса: один GRANTED и три timeout,
-одна mode20503/activate с readback. Provisional pacing20/60/0.25/0.25
-не смешивается с исправленным симуляционным победителем 1/0.5;
-первоначальный 1/5 сохранён в исходном отчёте, safety5/5/300 unmeasured.
+одна mode20503/activate с readback. Предварительно выбранные интервалы pacing20/60/0.25/0.25
+не смешиваются с исправленным симуляционным победителем 1/0.5;
+первоначальный 1/5 сохранён в исходном отчёте, safety5/5/300 не проверены измерениями (unmeasured).
 Реальный импульс boiler_reset для этих измерений не запускать.
 Остаточное воздействие измерять отдельно,
 только если сам алгоритм располагает соответствующим наблюдением. Сохранить

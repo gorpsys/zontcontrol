@@ -1,4 +1,4 @@
-"""Offline token utility: closed password input and dedicated auth DI."""
+"""Offline token utility: password input without echo and dedicated auth DI."""
 
 import getpass
 import io

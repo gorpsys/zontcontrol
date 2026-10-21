@@ -1,6 +1,6 @@
 """Process composition root and registrar entrypoint.
 
-Only this boundary reads token environment. Algorithms receive the shared controller,
+Only this boundary reads the token from the environment. Algorithms receive the shared controller,
 never adapters or credentials.
 Start/stop act on this application's threads; there is no remote daemon.
 """
@@ -121,7 +121,7 @@ class Application:
         """Hold this process; start/stop use this same object, never IPC.
 
         A supplied Event supports embedding. Signal handlers only request
-        shutdown; the context manager subsequently joins worker finally.
+        shutdown; the context manager then waits for the workers to finish their finally blocks.
         """
         if cancelled is not None:
             cancelled.wait()
@@ -179,10 +179,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument('--version', action='version', version=f'zontcontrol {__version__}')
     commands = parser.add_subparsers(dest='action', required=True)
     commands.add_parser('list', help='List registered modules and their state')
-    once = commands.add_parser('once', help='Run one once module')
+    once = commands.add_parser('once', help='Run one algorithm once')
     once.add_argument('algorithm_id')
     once.add_argument('--timeout', type=float)
-    commands.add_parser('all', help='Run all once modules')
+    commands.add_parser('all', help='Run all registered algorithms that support once mode')
     start = commands.add_parser('start', help='Start continuous module and hold this process')
     start.add_argument('algorithm_id')
     host = commands.add_parser('host', help='Hold autostart modules until SIGINT/SIGTERM')

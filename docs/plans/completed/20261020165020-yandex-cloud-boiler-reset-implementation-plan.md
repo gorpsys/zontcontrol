@@ -169,7 +169,7 @@ configure_local_logging() вызывается в application.main, куда в�
 Python-json-logger не добавляется.
 
 Логировать начало/завершение once, итог состояния, отправку on и попытку off,
-успех API для off и безопасную категорию ошибки. API-успех не называть
+успех API для off и безопасную категорию ошибки. Успешный ответ API не называть
 физическим восстановлением котла. Сырые API-ответы, токены, payload event,
 конфиги и произвольные exception messages в логи не включать. Это обычные
 диагностические события, не журнал восстановления и не механизм координации.
@@ -345,19 +345,19 @@ workflow проверяет результат чтением и при нево
 Для внешних действий этапов 5–6 нужны реальные доказательства, их нельзя
 отмечать выполненными как skipped/manual-not-automatable.
 
-### Task 1: Изолировать once-композицию и настроить логирование
+### Задача 1: Изолировать once-композицию и настроить логирование
 
-**Files:**
-- Create: zontcontrol/logging_config.py, tests/test_logging_config.py.
-- Modify: zontcontrol/autonomy/catalog.py, zontcontrol/application.py
+**Файлы:**
+- Создать: zontcontrol/logging_config.py, tests/test_logging_config.py.
+- Изменить: zontcontrol/autonomy/catalog.py, zontcontrol/application.py
   (настройка локального logger в main; __main__.py продолжает делегировать).
-- Modify: zontcontrol/algorithms/boiler_reset.py, tests/test_boiler_reset.py.
-- Modify: tests/test_application.py, tests/test_boiler_cli.py, tests/test_module_boundaries.py,
+- Изменить: zontcontrol/algorithms/boiler_reset.py, tests/test_boiler_reset.py.
+- Изменить: tests/test_application.py, tests/test_boiler_cli.py, tests/test_module_boundaries.py,
   tests/test_installed_package.py (console script).
-- Modify: AGENTS.md, docs/agents/deployment.md (зафиксировать новые границы).
+- Изменить: AGENTS.md, docs/agents/deployment.md (зафиксировать новые границы).
 
 - [x] Ввести BOILER_RESET_SPEC и ленивый builtin_specs, изменить default
-  create_application, сохранив локальные оба алгоритма и явный DI-каталог.
+  create_application, сохранив оба локальных алгоритма и явный DI-каталог.
 - [x] Добавить stdlib local/YC loggers и безопасные события BoilerReset,
   не меняя вычисления, команды, finally и lifecycle.
 - [x] Вызвать configure_local_logging() в application.main. Проверить оба
@@ -369,12 +369,12 @@ workflow проверяет результат чтением и при нево
   и произвольных exception messages, ошибки on/off без ложного success.
 - [x] Обновить архитектурную документацию по постановке и выполнить make check.
 
-### Task 2: Добавить handler и облачный профиль
+### Задача 2: Добавить handler и облачный профиль
 
-**Files:**
-- Create: handler.py, zontcontrol/cloud.py, deploy/cloud-config/*.json.
-- Create: tests/test_cloud_handler.py.
-- Modify: tests/test_installed_package.py, docs/agents/contracts.md.
+**Файлы:**
+- Создать: handler.py, zontcontrol/cloud.py, deploy/cloud-config/*.json.
+- Создать: tests/test_cloud_handler.py.
+- Изменить: tests/test_installed_package.py, docs/agents/contracts.md.
 
 - [x] Реализовать ровно один app.run_once('boiler_reset', 300), минимальный
   безопасный ответ и гарантированное ожидание cleanup до выхода handler.
@@ -386,12 +386,12 @@ workflow проверяет результат чтением и при нево
   импорта и CLI/continuous, закрытие транспорта после worker/finally.
 - [x] Выполнить make check и обновить installed-wheel smoke новых модулей.
 
-### Task 3: Формировать и проверять минимальный облачный ZIP
+### Задача 3: Формировать и проверять минимальный облачный ZIP
 
-**Files:**
-- Create: scripts/build_yandex_archive.py, scripts/check_cloud_package.py.
-- Create: tests/test_yandex_archive.py, tests/test_cloud_package.py.
-- Modify: Makefile, .github/workflows/checks.yml, scripts/README.md.
+**Файлы:**
+- Создать: scripts/build_yandex_archive.py, scripts/check_cloud_package.py.
+- Создать: tests/test_yandex_archive.py, tests/test_cloud_package.py.
+- Изменить: Makefile, .github/workflows/checks.yml, scripts/README.md.
 
 - [x] Добавить yandex-archive/cloud-package-check, allowlist, конфиги из
   deploy/cloud-config, подстановку контакта и manifest/atomic ZIP replacement.
@@ -403,13 +403,13 @@ workflow проверяет результат чтением и при нево
   CLI и любых сетевых обращений. Включить smoke в Offline checks 3.11/3.12.
 - [x] Выполнить make check, make cloud-package-check, make package-check.
 
-### Task 4: Адаптировать gate и автоматический deploy
+### Задача 4: Адаптировать gate и автоматический deploy
 
-**Files:**
-- Create: scripts/deploy_support.py, scripts/deploy_gate.py, scripts/yandex_deploy.py.
-- Create: .github/workflows/deploy-prod.yml.
-- Create: tests/test_deploy_gate.py, tests/test_yandex_deploy.py, tests/test_deploy_workflow.py.
-- Modify: deploy/yandex.example.json, scripts/README.md, docs/agents/deployment.md.
+**Файлы:**
+- Создать: scripts/deploy_support.py, scripts/deploy_gate.py, scripts/yandex_deploy.py.
+- Создать: .github/workflows/deploy-prod.yml.
+- Создать: tests/test_deploy_gate.py, tests/test_yandex_deploy.py, tests/test_deploy_workflow.py.
+- Изменить: deploy/yandex.example.json, scripts/README.md, docs/agents/deployment.md.
 
 - [x] Перенести только нужную stdlib-обвязку образца, адаптировать repo,
   обязательные checks/producer/path и повторный gate перед OIDC.
@@ -425,11 +425,11 @@ workflow проверяет результат чтением и при нево
   --async-max-retries, как у образца; проверить workflow permissions
   и pinned checkout/yc. Выполнить make check и обе проверки пакетов.
 
-### Task 5: Создать облачные ресурсы с отдельными подтверждениями
+### Задача 5: Создать облачные ресурсы с отдельными подтверждениями
 
-**Files:**
-- Create during implementation: docs/reports/<date>-yandex-cloud-provisioning.md.
-- Modify: deploy/yandex.example.json, docs/agents/deployment.md.
+**Файлы:**
+- Создать при реализации: docs/reports/<date>-yandex-cloud-provisioning.md.
+- Изменить: deploy/yandex.example.json, docs/agents/deployment.md.
 - Use: справочник yc рядом с планом; таймер на этом этапе не создаётся.
 
 - [x] Перед каждой ручной командой показать её и цель, получить подтверждение;
@@ -444,14 +444,14 @@ workflow проверяет результат чтением и при нево
   таймера через 10s) и make check; payload токена и credentials в
   отчёт/репозиторий не включать.
 
-### Task 6: Довести до автоматического запуска и оформить выпуск
+### Задача 6: Довести до автоматического запуска и оформить выпуск
 
-**Files:**
-- Modify: README.md, scripts/README.md, docs/agents/architecture.md,
+**Файлы:**
+- Изменить: README.md, scripts/README.md, docs/agents/architecture.md,
   docs/reference/boiler-reset.md, docs/history/versioning.md.
-- Modify: zontcontrol/__init__.py, CHANGELOG.md.
-- Create during implementation: docs/reports/<date>-yandex-cloud-acceptance.md.
-- Move after completion: этот план в docs/plans/completed/ с исправлением ссылок.
+- Изменить: zontcontrol/__init__.py, CHANGELOG.md.
+- Создать при реализации: docs/reports/<date>-yandex-cloud-acceptance.md.
+- Перенести после завершения: этот план в docs/plans/completed/ с исправлением ссылок.
 
 - [x] После сообщения владельца о заполнении z_token прочитать только metadata
   новой версии; настроить repository variables, не получая значение секрета.

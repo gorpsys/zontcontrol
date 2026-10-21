@@ -77,12 +77,12 @@ class AlgorithmBusy(AlgorithmError):
 
 class AlgorithmTimeout(AlgorithmError, TimeoutError):
     def __init__(self, algorithm_id):
-        super().__init__(algorithm_id, 'timeout', 'Algorithm once result timed out')
+        super().__init__(algorithm_id, 'timeout', 'Timed out waiting for the one-time algorithm result')
 
 
 class AlgorithmCancelled(AlgorithmError):
     def __init__(self, algorithm_id):
-        super().__init__(algorithm_id, 'cancelled', 'Algorithm once result cancelled')
+        super().__init__(algorithm_id, 'cancelled', 'Waiting for the one-time algorithm result was cancelled')
 
 
 class AlgorithmFailed(AlgorithmError):
