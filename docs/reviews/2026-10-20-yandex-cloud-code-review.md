@@ -5,7 +5,7 @@
 База: master `c09d3c672c927013c976468087c221485911dc6f`.
 Ветка: `release/yandex-cloud-boiler-reset`.
 Область: код Tasks 1–4 согласованного
-[плана](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
+[плана](../plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
 
 Пять независимых читателей проверили качество, реализацию, тестирование,
 упрощение и конвенции. Fixer повторно проверил каждое замечание по актуальному

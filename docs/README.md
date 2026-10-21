@@ -65,5 +65,5 @@ ID, имена и общие/отдельные ресурсы собраны в
 - [Предметный вход отопления](plans/completed/20261020120717-typed-heating-input-implementation-plan.md).
 - [Облачный once](plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
 
-До архивирования прежние постановки облачной работы доступны из
-[эскиза](plans/yandex-cloud.md); действующая процедура — облачный how-to выше.
+Исходные постановки, заменённый облачный эскиз и команды bootstrap находятся
+в [историческом индексе](history/README.md); действующая процедура — облачный how-to выше.

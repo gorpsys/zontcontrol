@@ -1,9 +1,9 @@
 # Холодное ревью плана Yandex Cloud
 
 Дата: 20.10.2026. Независимый субагент без истории обсуждения.
-Объект — [план реализации](../plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
-[исходная постановка](../plans/20261020165020-yandex-cloud-boiler-reset-request.md)
-и [команды yc](../plans/20261020165020-yandex-cloud-yc-commands.md).
+Объект — [план реализации](../plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md),
+[исходная постановка](../history/2026-10-20-yandex-cloud-request.md)
+и [команды yc](../history/2026-10-20-yandex-cloud-bootstrap-commands.md).
 
 Читателю предоставлены код и документация обоих репозиториев:
 gorpsys/zontcontrol и gorpsys/autorepeater. Образец проверен через

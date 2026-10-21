@@ -32,7 +32,7 @@
 - OIDC-документация приведена к подтверждённому immutable subject репозитория.
   Первый успешный deploy, таймер и облачная приёмка ещё не подтверждены.
 
-## [0.5.0](docs/plans/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md) - 2026-10-20
+## [0.5.0](docs/plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md) - 2026-10-20
 
 - Добавлены облачный handler для одного boiler_reset once, отдельный профиль
   и минимальный ZIP с manifest и офлайн-проверкой вне checkout.

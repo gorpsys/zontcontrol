@@ -730,7 +730,7 @@ gate это запрещает. При опасных эффектах снач�
 
 - [Контракт деплоя zontcontrol](../agents/deployment.md),
   [реестр ресурсов с датой проверки](yandex-cloud-resources.md),
-  [справочник команд проекта](../plans/20261020165020-yandex-cloud-yc-commands.md).
+  [исторический справочник bootstrap](../history/2026-10-20-yandex-cloud-bootstrap-commands.md).
 - [Helper autorepeater](https://github.com/gorpsys/autorepeater/blob/5bfeeeb865f6c3fdb381b27419309b41b1f5b26a/scripts/yandex_deploy.py),
   [workflow образца](https://github.com/gorpsys/autorepeater/blob/5bfeeeb865f6c3fdb381b27419309b41b1f5b26a/.github/workflows/deploy-prod.yml).
 - [GitHub OIDC reference](https://docs.github.com/en/actions/reference/security/oidc),
