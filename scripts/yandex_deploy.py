@@ -1,6 +1,7 @@
 """Publish a checked once ZIP through short-lived OIDC; never invoke the function."""
 
 import csv
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 import hashlib
 import io
@@ -22,14 +23,14 @@ from scripts.deploy_support import (
 from zontcontrol.config import ConfigurationError, load_controller_config
 
 
-def identifier(value, label):
+def identifier(value: object, label: str) -> str:
     result = text(value, label)
     if re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]*', result) is None:
         raise DeployError(f'invalid {label}')
     return result
 
 
-def resource_id(value, label):
+def resource_id(value: object, label: str) -> str:
     result = text(value, label)
     if re.fullmatch('[a-z0-9]{20}', result) is None:
         raise DeployError(f'invalid {label}')
@@ -48,12 +49,12 @@ class Settings:
     secret_id: str
     secret_version_id: str
 
-    def secret(self):
+    def secret(self) -> dict[str, str]:
         return {'id': self.secret_id, 'versionId': self.secret_version_id,
                 'key': 'z_token', 'environmentVariable': 'ZONT_TOKEN'}
 
 
-def settings_from_environment(environment):
+def settings_from_environment(environment: Mapping[str, str]) -> Settings:
     """Validate every repository variable and fixed setting before requesting OIDC."""
     shared = {'CLOUD_ID': 'b1gbga988v36vq19lmb7', 'FOLDER_ID': 'b1gdgrp5bnth11phova8',
               'FUNCTION_SA_ID': 'ajelpbq7as5bpe499962', 'BUCKET': 'autorepeater-deploy',
@@ -83,7 +84,7 @@ def settings_from_environment(environment):
                     ids['LOCKBOX_SECRET_ID'], ids['LOCKBOX_VERSION_ID'])
 
 
-def exchange_token(environment, service_account_id):
+def exchange_token(environment: Mapping[str, str], service_account_id: str) -> str:
     """GitHub federation AUD and Yandex deployment-SA audience are separate values."""
     url = urlsplit(text(environment.get('ACTIONS_ID_TOKEN_REQUEST_URL'), 'OIDC request URL'))
     if (url.scheme != 'https' or not url.hostname
@@ -115,12 +116,13 @@ def exchange_token(environment, service_account_id):
 class YandexCLI:
     """Finite commands, private output and a token-free explicit temporary profile."""
 
-    def __init__(self, settings, token, temporary_root):
+    def __init__(self, settings: Settings, token: str, temporary_root: Path) -> None:
         self.settings = settings
         self.token = text(token, 'IAM token')
         self.temporary_root = temporary_root
 
-    def call(self, arguments, label, *, timeout=30):
+    def call(self, arguments: Sequence[str], label: str, *,
+             timeout: int = 30) -> dict[str, object] | list[object]:
         # Do not inherit alternate yc credentials/profile overrides or GitHub/ZONT tokens.
         environment = {key: value for key, value in os.environ.items() if key in (
             'PATH', 'HOME', 'SYSTEMROOT', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL',
@@ -175,7 +177,7 @@ def cli_failure_reason(stderr: bytes) -> str:
     return next((reason for pattern, reason in patterns if pattern in stderr), 'unknown')
 
 
-def package_digest(path, sha):
+def package_digest(path: Path, sha: str) -> str:
     try:
         verify_archive(path, expected_sha=sha, require_clean=True)
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -183,14 +185,14 @@ def package_digest(path, sha):
         raise DeployError('invalid cloud archive or provenance') from None
 
 
-def known_fields(value, allowed):
+def known_fields(value: object, allowed: Iterable[str]) -> dict[str, object]:
     data = record(value)
     if data.keys() - set(allowed):
         raise DeployError('unsupported cloud settings')
     return data
 
 
-def environment_variables(current):
+def environment_variables(current: dict[str, object]) -> dict[str, str]:
     values = record(current.get('environment', {}))
     if any(re.fullmatch('[A-Za-z_][A-Za-z0-9_]*', key) is None
            or not isinstance(value, str) or any(char in value for char in '\x00\r\n')
@@ -199,7 +201,7 @@ def environment_variables(current):
     return values
 
 
-def read_secret_bindings(current):
+def read_secret_bindings(current: dict[str, object]) -> list[dict[str, str]]:
     values = current.get('secrets', [])
     if not isinstance(values, list):
         raise DeployError('invalid secret references')
@@ -215,12 +217,12 @@ def read_secret_bindings(current):
     return result
 
 
-def secret_bindings(settings, current):
+def secret_bindings(settings: Settings, current: dict[str, object]) -> list[dict[str, str]]:
     return [item for item in read_secret_bindings(current)
             if item['environmentVariable'] != 'ZONT_TOKEN'] + [settings.secret()]
 
 
-def logging_arguments(settings, value):
+def logging_arguments(settings: Settings, value: object) -> list[str]:
     options = known_fields(value, ('disabled', 'folderId', 'logGroupId', 'minLevel'))
     # The approved destination is this shared folder's default log group.
     if options.get('disabled', False) is not False or options.get('logGroupId') or (
@@ -235,7 +237,7 @@ def logging_arguments(settings, value):
     return args
 
 
-def preserved_arguments(settings, current):
+def preserved_arguments(settings: Settings, current: dict[str, object]) -> list[str]:
     known_fields(current, ('id', 'functionId', 'createdAt', 'runtime', 'entrypoint',
         'resources', 'executionTimeout', 'serviceAccountId', 'status', 'description',
         'tags', 'environment', 'secrets', 'concurrency', 'tmpfsSize', 'connectivity',
@@ -269,11 +271,12 @@ def preserved_arguments(settings, current):
     return args
 
 
-def description(sha, digest, object_key):
+def description(sha: str, digest: str, object_key: str) -> str:
     return f'zontcontrol source_sha={sha}; package_sha256={digest}; object={object_key}'
 
 
-def version_arguments(settings, current, object_key, digest, sha):
+def version_arguments(settings: Settings, current: dict[str, object], object_key: str,
+                      digest: str, sha: str) -> list[str]:
     if current:
         if current.get('functionId') != settings.function_id or current.get('status') != 'ACTIVE':
             raise DeployError('current version target or status mismatch')
@@ -301,7 +304,8 @@ def version_arguments(settings, current, object_key, digest, sha):
     return args + preserved
 
 
-def verify_version(settings, before, after, *, sha, digest, object_key):
+def verify_version(settings: Settings, before: dict[str, object], after: dict[str, object], *,
+                   sha: str, digest: str, object_key: str) -> None:
     resource_id(after.get('id'), 'new version ID')
     expected = {'functionId': settings.function_id, 'status': 'ACTIVE', 'runtime': 'python312',
                 'entrypoint': 'handler.handler', 'executionTimeout': '420s', 'concurrency': '1',
@@ -326,13 +330,13 @@ def verify_version(settings, before, after, *, sha, digest, object_key):
         raise DeployError('published version logging mismatch')
 
 
-def run_identity(run_id, attempt):
+def run_identity(run_id: object, attempt: object) -> None:
     if any(not isinstance(v, str) or re.fullmatch('[1-9][0-9]*', v) is None
            for v in (run_id, attempt)):
         raise DeployError('invalid deployment run identity')
 
 
-def publish(settings, yc, sha, run_id, attempt):
+def publish(settings: Settings, yc: YandexCLI, sha: str, run_id: object, attempt: object) -> str:
     """Only version publication and a unique ZIP upload mutate cloud state."""
     sha = commit_sha(sha)
     run_identity(run_id, attempt)
@@ -387,7 +391,7 @@ def publish(settings, yc, sha, run_id, attempt):
     return after['id']
 
 
-def main():
+def main() -> int:
     try:
         environment = dict(os.environ)
         if environment.get('GITHUB_REPOSITORY') != REPOSITORY or (
