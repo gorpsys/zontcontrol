@@ -232,6 +232,11 @@ gate/bootstrap/manifest/version readback/logger сохранены по прин
 Других подтверждённых оснований менять рабочие методы нет; три одноразовых
 tmp-wrapper имеют конечный сценарий и не входят в продукт.
 
+Расширенная read-only ревизия охватила все 24 versioned-файла: 20 Python-модулей
+scripts/, scripts/README.md и все три .github/workflows/. Непроверенных файлов нет.
+Включены пять облачных, три build/version, 11 archive/research-модулей и __init__.
+Новых подтверждённых замечаний нет; первоначальное отличие @ уже исправлено.
+
 Два независимых read-only ревью (quality и implementation) проверили source SHA
 1fab89e37a18f2b5effaa2068ae73e079b5d190c: замечаний CRITICAL/MAJOR/MINOR нет.
 Публикация PR, CI точного SHA, WunderReview и облачная приёмка ещё не выполнены;
