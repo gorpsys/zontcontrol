@@ -123,22 +123,19 @@ class YandexCLI:
 
     def call(self, arguments: Sequence[str], label: str, *,
              timeout: int = 30) -> dict[str, object] | list[object]:
-        # Do not inherit alternate yc credentials/profile overrides or GitHub/ZONT tokens.
-        environment = {key: value for key, value in os.environ.items() if key in (
-            'PATH', 'HOME', 'SYSTEMROOT', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL',
-            'SSL_CERT_FILE', 'SSL_CERT_DIR', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY')}
-        environment['YC_IAM_TOKEN'] = self.token
+        # Use the reference CLI environment; our contract leaves HOME inherited.
+        environment = dict(os.environ, YC_IAM_TOKEN=self.token)
+        environment.pop('YC_TOKEN', None)
         try:
             with TemporaryDirectory(prefix='yc-deploy-', dir=self.temporary_root) as directory:
                 config = Path(directory) / 'config.yaml'
                 config.write_text(json.dumps({'current': 'ci', 'profiles': {'ci': {
-                    'endpoint': 'api.cloud.yandex.net:443', 'cloud-id': self.settings.cloud_id,
-                    'folder-id': self.settings.folder_id}}}), encoding='utf-8')
+                    'cloud-id': self.settings.cloud_id, 'folder-id': self.settings.folder_id,
+                    'endpoint': 'api.cloud.yandex.net:443'}}}), encoding='utf-8')
                 config.chmod(0o600)
                 command = ['yc', *arguments, '--config', str(config), '--profile', 'ci',
-                           '--cloud-id', self.settings.cloud_id, '--folder-id', self.settings.folder_id,
-                           '--endpoint', 'api.cloud.yandex.net:443', '--format', 'json-rest',
-                           '--timeout', f'{timeout}s', '--retry', '0',
+                           '--folder-id', self.settings.folder_id,
+                           '--format', 'json-rest', '--timeout', f'{timeout}s', '--retry', '0',
                            '--no-user-output', '--no-browser']
                 result = subprocess.run(command, env=environment, capture_output=True,
                                         timeout=timeout + 15, check=False)
@@ -363,19 +360,8 @@ def publish(settings: Settings, yc: YandexCLI, sha: str, run_id: object, attempt
     if package_digest(settings.archive, sha) != digest:
         raise DeployError('cloud archive changed before upload')
     print(f'Publishing {sha}; package sha256={digest}; object={key}', flush=True)
-    try:
-        yc.call(['storage', 's3api', 'put-object', '--body', '@' + str(settings.archive),
-                 '--bucket', settings.bucket, '--key', key], 'upload package', timeout=120)
-    except DeployError as upload_error:
-        # Read the real object once. A mere HEAD cannot prove its full byte hash.
-        try:
-            yc.call(['storage', 's3api', 'head-object', '--bucket', settings.bucket,
-                     '--key', key], 'inspect uncertain upload')
-            inspection = 'HEAD succeeded; byte hash remains unproven'
-        except DeployError as head_error:
-            inspection = str(head_error)
-        raise DeployError('upload outcome cannot be proven; write was not retried; '
-                          f'upload: {upload_error}; inspection: {inspection}') from None
+    yc.call(['storage', 's3api', 'put-object', '--body', str(settings.archive),
+             '--bucket', settings.bucket, '--key', key], 'upload package', timeout=120)
     created = None
     try:
         created = record(yc.call(arguments, 'create function version', timeout=900))
