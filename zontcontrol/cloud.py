@@ -9,7 +9,7 @@ from .application import create_application
 from .autonomy.catalog import BOILER_RESET_SPEC
 from .autonomy.contracts import AlgorithmCancelled, AlgorithmTimeout, Mode
 from .config import ConfigurationError
-from .logging_config import configure_yc_logging
+from .logging_config import capture_console_output, configure_yc_logging
 
 
 logger = logging.getLogger(__name__)
@@ -38,12 +38,9 @@ def handler(event, context):
     close() has no wait limit: it joins the worker/finally before transport close,
     even when run_once has already published a timeout or cancellation.
     """
-    capture = configure_yc_logging(capture=True)
-    try:
+    configure_yc_logging()
+    with capture_console_output() as capture:
         return _invoke(context, capture)
-    finally:
-        # Includes timeout, cancellation and exceptions during report preparation.
-        capture.stop_capture()
 
 
 def _invoke(context, capture):
@@ -72,8 +69,8 @@ def _invoke(context, capture):
             except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
                 pass
         report = {'version': __version__, 'algorithm_id': 'boiler_reset', 'status': 'error',
-                  'error': failure, 'result': completed_result, 'log': capture.stop_capture()}
+                  'error': failure, 'result': completed_result, 'log': capture.getvalue()}
         raise RuntimeError(json.dumps(report, ensure_ascii=False, allow_nan=False)) from None
     _log('cloud_invocation_finished', 'Cloud invocation finished', request_id)
-    response['log'] = capture.stop_capture()
+    response['log'] = capture.getvalue()
     return response

@@ -11,6 +11,9 @@ import math
 import re
 import sys
 from datetime import datetime, timezone
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from io import StringIO
+from threading import RLock
 
 
 LOGGER_NAME = 'zontcontrol'
@@ -62,45 +65,46 @@ class _ApplicationHandler(logging.StreamHandler):
     """Distinguish our handler from handlers installed by an embedding caller."""
 
 
-class _CloudHandler(_ApplicationHandler):
-    def __init__(self, stream, *, capture):
-        super().__init__(stream)
-        self._records = [] if capture else None
-        self._root_level = None
+class _Tee:
+    def __init__(self, stream, buffer, lock):
+        self.stream, self.buffer, self.lock = stream, buffer, lock
 
-    def capture_root(self):
-        root = logging.getLogger()
-        self._root_level = root.level
-        root.addHandler(self)
-        root.setLevel(min(root.level, logging.INFO))
+    def write(self, text):
+        with self.lock:
+            count = self.stream.write(text)
+            self.buffer.write(text if count is None else text[:count])
+            return count
 
-    def emit(self, record):
-        try:
-            line = self.format(record) + self.terminator
-            if self._records is not None:
-                self._records.append(line)
-            self.stream.write(line)
-            self.flush()
-        except Exception:
-            self.handleError(record)
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
 
-    def stop_capture(self):
-        """Transfer records to the caller and release invocation memory."""
-        self.acquire()
-        try:
-            records, self._records = self._records, None
-            if self._root_level is not None:
-                root = logging.getLogger()
-                root.removeHandler(self)
-                root.setLevel(self._root_level)
-                self._root_level = None
-            return ''.join(records) if records is not None else ''
-        finally:
-            self.release()
 
-    def close(self):
-        self.stop_capture()
-        super().close()
+def _stream_handlers():
+    loggers = [logging.getLogger(), *(logger for logger in tuple(logging.Logger.manager.loggerDict.values())
+                                     if isinstance(logger, logging.Logger))]
+    return {handler for logger in loggers for handler in logger.handlers
+            if isinstance(handler, logging.StreamHandler)}
+
+
+@contextmanager
+def capture_console_output():
+    """Copy Python stdout/stderr, including already configured stream handlers."""
+    with StringIO() as buffer:
+        lock = RLock()
+        out, err = _Tee(sys.stdout, buffer, lock), _Tee(sys.stderr, buffer, lock)
+        with redirect_stdout(out), redirect_stderr(err):
+            try:
+                for handler in _stream_handlers():
+                    for tee in (out, err):
+                        if handler.stream is tee.stream:
+                            handler.setStream(tee)
+                            break
+                yield buffer
+            finally:
+                # Also detach handlers created during this invocation from its buffer.
+                for handler in _stream_handlers():
+                    if handler.stream is out or handler.stream is err:
+                        handler.setStream(handler.stream.stream)
 
 
 def _configure(handler, formatter):
@@ -121,9 +125,6 @@ def configure_local_logging():
     _configure(_ApplicationHandler(sys.stderr), _LocalFormatter())
 
 
-def configure_yc_logging(*, capture=False):
+def configure_yc_logging():
     """Cloud diagnostics on stdout; configure anew safely for warm invocations."""
-    handler = _configure(_CloudHandler(sys.stdout, capture=capture), YcLoggingFormatter())
-    if capture:
-        handler.capture_root()
-    return handler
+    return _configure(_ApplicationHandler(sys.stdout), YcLoggingFormatter())

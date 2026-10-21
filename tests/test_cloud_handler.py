@@ -1,6 +1,6 @@
 """Cloud composition against synthetic controllers; no ZONT or YC calls."""
 
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from dataclasses import replace
 import io
 import json
@@ -164,11 +164,8 @@ class CloudHandlerTests(unittest.TestCase):
         report = json.loads(str(error))
         self.assertEqual(report['result']['state_at_period_end'], 'confirmed_pattern')
         self.assertTrue(report['result']['reset_performed'])
-        self.assertEqual(self.log_rows(report)[-1]['event'], 'cloud_invocation_failed')
-        from zontcontrol.logging_config import _CloudHandler
-        capture, = [item for item in logging.getLogger('zontcontrol').handlers
-                    if isinstance(item, _CloudHandler)]
-        self.assertEqual(capture.stop_capture(), '')
+        self.assertEqual(json.loads(report['log'].splitlines()[-1])['event'], 'cloud_invocation_failed')
+        self.assertIs(sys.stdout, self.output)
 
     def test_real_recovered_assessment_is_returned_without_failure_or_retry(self):
         from tests.test_monitor import heating_history, typed_point, typed_series
@@ -189,15 +186,72 @@ class CloudHandlerTests(unittest.TestCase):
     def test_other_logger_messages_appear_in_response_exactly_as_stdout(self):
         from zontcontrol.algorithms.boiler_reset import BoilerReset
         from zontcontrol.autonomy.contracts import AlgorithmResult, ResultStatus
+        foreign = logging.getLogger('outside.application')
+        previous = foreign.handlers[:], foreign.level, foreign.propagate
+        handler = logging.StreamHandler(self.output)
+        handler.setFormatter(logging.Formatter('PRIOR %(name)s: %(message)s'))
+        foreign.handlers, foreign.level, foreign.propagate = [handler], logging.INFO, False
+        self.addCleanup(setattr, foreign, 'handlers', previous[0])
+        self.addCleanup(setattr, foreign, 'level', previous[1])
+        self.addCleanup(setattr, foreign, 'propagate', previous[2])
         def run_once(module, context):
-            logging.getLogger('outside.application').info('a completely new event')
+            foreign.info('a completely new event')
             return AlgorithmResult(ResultStatus.SUCCESS, {'assessment': {
                 'state_at_period_end': 'normal'}, 'reset_performed': False, 'reason': None})
         with patch.object(BoilerReset, 'run_once', run_once):
             result = self.invoke()
         self.assertEqual(result['log'], self.output.getvalue())
-        self.assertTrue(any(row['logger'] == 'outside.application'
-                            and row['message'] == 'a completely new event' for row in self.log_rows(result)))
+        self.assertIn('PRIOR outside.application: a completely new event\n', result['log'])
+        self.assertIs(handler.stream, self.output)
+
+    def test_existing_root_handler_is_copied_without_duplicate_json_or_reformatting(self):
+        from zontcontrol.algorithms.boiler_reset import BoilerReset
+        from zontcontrol.autonomy.contracts import AlgorithmResult, ResultStatus
+        root = logging.getLogger()
+        previous = root.handlers[:], root.level
+        handler = logging.StreamHandler(self.output)
+        handler.setFormatter(logging.Formatter('ROOT %(message)s'))
+        root.handlers, root.level = [handler], logging.INFO
+        self.addCleanup(setattr, root, 'handlers', previous[0])
+        self.addCleanup(setattr, root, 'level', previous[1])
+        def run_once(module, context):
+            logging.getLogger('vendor.root').info('ROOT_VISIBLE_RECORD')
+            return AlgorithmResult(ResultStatus.SUCCESS, {'assessment': {
+                'state_at_period_end': 'normal'}, 'reset_performed': False, 'reason': None})
+        with patch.object(BoilerReset, 'run_once', run_once):
+            result = self.invoke()
+        self.assertEqual(result['log'], self.output.getvalue())
+        self.assertEqual(result['log'].count('ROOT_VISIBLE_RECORD'), 1)
+        self.assertIn('ROOT ROOT_VISIBLE_RECORD\n', result['log'])
+        self.assertIs(handler.stream, self.output)
+        self.assertEqual(root.handlers, [handler])
+        self.assertEqual(root.level, logging.INFO)
+
+    def test_stdout_stderr_and_handlers_created_during_call_are_restored_on_failure(self):
+        errors = io.StringIO()
+        foreign = logging.getLogger('created.inside.invocation')
+        previous = foreign.handlers[:], foreign.level, foreign.propagate
+        self.addCleanup(setattr, foreign, 'handlers', previous[0])
+        self.addCleanup(setattr, foreign, 'level', previous[1])
+        self.addCleanup(setattr, foreign, 'propagate', previous[2])
+        handlers = []
+        def run_once(*args, **kwargs):
+            print('STDOUT RECORD')
+            print('STDERR RECORD', file=sys.stderr)
+            handler = logging.StreamHandler()
+            handlers.append(handler)
+            foreign.handlers, foreign.level, foreign.propagate = [handler], logging.INFO, False
+            foreign.info('CREATED HANDLER RECORD')
+            raise RuntimeError('private')
+        from zontcontrol.algorithms.boiler_reset import BoilerReset
+        with redirect_stderr(errors), \
+                patch.object(BoilerReset, 'run_once', run_once):
+            error = self.assert_safe_failure()
+        report = json.loads(str(error))
+        for text in ('STDOUT RECORD', 'STDERR RECORD', 'CREATED HANDLER RECORD'):
+            self.assertIn(text, report['log'])
+        self.assertIs(sys.stdout, self.output)
+        self.assertIs(handlers[0].stream, errors)
 
     def test_already_on_is_explicit_suppressed_and_untouched(self):
         current = self.controller.read_current.return_value
@@ -252,7 +306,7 @@ class CloudHandlerTests(unittest.TestCase):
         report = json.loads(str(caught.exception))
         self.assertEqual(report['status'], 'error')
         self.assertIn(report['error'], ('timeout', 'cancelled', 'configuration_error', 'execution_failed'))
-        self.assertEqual(self.log_rows(report)[-1]['event'], 'cloud_invocation_failed')
+        self.assertEqual(json.loads(report['log'].splitlines()[-1])['event'], 'cloud_invocation_failed')
         self.assertIsNone(caught.exception.__cause__)
         self.assertTrue(caught.exception.__suppress_context__)
         return caught.exception
