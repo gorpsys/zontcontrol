@@ -18,24 +18,25 @@ class DeployError(Exception):
 class NoRedirect(HTTPRedirectHandler):
     """Do not forward credential-bearing requests to another origin."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    def redirect_request(self, req: Request, fp: object, code: int, msg: str,
+                         headers: object, newurl: str) -> None:
         return None
 
 
-def request_json(request: Request) -> object:
+def request_json(request: Request, *, stage: str = 'HTTP request') -> object:
     try:
         with build_opener(NoRedirect()).open(request, timeout=HTTP_TIMEOUT) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
-            raise DeployError('HTTP response exceeds size limit')
+            raise DeployError(f'{stage} response exceeds size limit')
         return json.loads(raw)
     except HTTPError as error:
-        raise DeployError(f'HTTP request failed (status {error.code})') from None
+        raise DeployError(f'{stage} failed (status {error.code})') from None
     except (HTTPException, OSError, URLError, ValueError):
-        raise DeployError('HTTP request or JSON response failed') from None
+        raise DeployError(f'{stage} or JSON response failed') from None
 
 
-def record(value: object) -> dict:
+def record(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
         raise DeployError('expected a JSON object')
     return value

@@ -90,9 +90,15 @@ yc "${YC_SCOPE[@]}" iam service-account add-access-binding \
 ```bash
 yc "${YC_SCOPE[@]}" iam workload-identity federated-credential create \
   --service-account-id "$ZC_DEPLOY_SA_ID" --federation-id ajej9j37pt8j7ns962vr \
-  --external-subject-id repo:gorpsys/zontcontrol:ref:refs/heads/master \
+  --external-subject-id 'repo:gorpsys@79201964/zontcontrol@1420696677:ref:refs/heads/master' \
   --format json --jq '{id,service_account_id,federation_id,external_subject_id}'
 ```
+
+Subject исправлен после первого deploy: GitHub использует immutable prefix
+с ID владельца и репозитория. Подтверждённый новый credential —
+ajehfh3q51b5i5q6frcr; старый aje80bckog9ld78ondm9 с subject без ID удалён
+отдельно согласованной командой. Проверка и удаление также требуют отдельных
+разрешений; команды выше не являются разрешением их повторять.
 
 Отдельно согласовать чтения для проверки выданных ролей и subject:
 

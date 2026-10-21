@@ -1,6 +1,7 @@
 """Authorize only trusted successful checks for the current repository master."""
 
 import argparse
+from collections.abc import Callable, Mapping, Sequence
 import json
 import os
 from pathlib import Path
@@ -18,7 +19,7 @@ WORKFLOW_PATH = '.github/workflows/checks.yml'
 POLL_SECONDS = 15
 
 
-def validate_run(value, sha):
+def validate_run(value: object, sha: str) -> None:
     run = record(value)
     expected = {'name': 'Project checks', 'path': WORKFLOW_PATH, 'event': 'push',
                 'head_branch': 'master', 'head_sha': sha,
@@ -29,7 +30,7 @@ def validate_run(value, sha):
         raise DeployError('untrusted checks workflow run')
 
 
-def select_sha(event, environment):
+def select_sha(event: object, environment: Mapping[str, str]) -> str:
     if environment.get('GITHUB_REPOSITORY') != REPOSITORY or (
             environment.get('GITHUB_REF') != 'refs/heads/master'):
         raise DeployError('deployment requires repository master')
@@ -47,24 +48,24 @@ def select_sha(event, environment):
 class GitHub:
     """Read-only requests to a fixed repository; no cloud credentials required."""
 
-    def __init__(self, token):
+    def __init__(self, token: str) -> None:
         self.token = text(token, 'GitHub token')
 
-    def read(self, route):
+    def read(self, route: str) -> object:
         return request_json(Request(f'https://api.github.com/repos/{REPOSITORY}/{route}',
             headers={'Authorization': f'Bearer {self.token}',
                      'Accept': 'application/vnd.github+json',
-                     'X-GitHub-Api-Version': '2022-11-28'}))
+                     'X-GitHub-Api-Version': '2022-11-28'}), stage='GitHub checks API')
 
-    def master_sha(self):
+    def master_sha(self) -> str:
         return commit_sha(record(record(self.read('branches/master')).get('commit')).get('sha'))
 
-    def workflow_run(self, run_id):
+    def workflow_run(self, run_id: str) -> object:
         if re.fullmatch('[1-9][0-9]*', run_id) is None:
             raise DeployError('invalid checks run ID')
         return self.read(f'actions/runs/{run_id}')
 
-    def checks(self, sha):
+    def checks(self, sha: str) -> list[object]:
         result = []
         for page in range(1, 21):
             data = record(self.read(
@@ -80,7 +81,7 @@ class GitHub:
         raise DeployError('too many check-run pages')
 
 
-def pending_checks(client, checks, sha):
+def pending_checks(client: GitHub, checks: Sequence[object], sha: str) -> tuple[str, ...]:
     """Commit statuses cannot substitute for the named GitHub Actions checks."""
     pending, runs = [], {}
     for name in REQUIRED_CHECKS:
@@ -114,7 +115,9 @@ def pending_checks(client, checks, sha):
     return tuple(pending)
 
 
-def wait_ready(client, sha, wait_seconds, *, clock=time.monotonic, sleep=time.sleep):
+def wait_ready(client: GitHub, sha: str, wait_seconds: float, *,
+               clock: Callable[[], float] = time.monotonic,
+               sleep: Callable[[float], None] = time.sleep) -> bool:
     deadline = clock() + wait_seconds
     while True:
         if client.master_sha() != sha:
@@ -128,7 +131,7 @@ def wait_ready(client, sha, wait_seconds, *, clock=time.monotonic, sleep=time.sl
         sleep(min(POLL_SECONDS, remaining))
 
 
-def authorize(environment, *, wait_seconds=0):
+def authorize(environment: Mapping[str, str], *, wait_seconds: float = 0) -> str:
     """Revalidate the pinned commit immediately before a credential exchange."""
     event = json.loads(Path(environment['GITHUB_EVENT_PATH']).read_text(encoding='utf-8'))
     sha = select_sha(event, environment)
@@ -139,7 +142,7 @@ def authorize(environment, *, wait_seconds=0):
     return sha
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check-once', action='store_true')
     args = parser.parse_args(argv)

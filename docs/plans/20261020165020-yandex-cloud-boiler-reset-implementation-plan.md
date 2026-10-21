@@ -2,10 +2,12 @@
 
 Статус: Tasks 1–5 выполнены; код проверен офлайн, отдельные ресурсы и IAM/OIDC
 подтверждены. [Отчёт provisioning](../reports/2026-10-20-yandex-cloud-provisioning.md).
-Metadata активной версии секрета также подтверждены. Task 6 выполняется до
-premerge checkpoint: подготовлен выпуск 0.5.0, все десять repository variables
-настроены и проверены точным readback; проверки PR завершаются. Первый deploy, таймер и облачная приёмка ещё не
-выполнены. Облачная активация ожидает следующих согласованных шагов.
+Metadata активной версии секрета также подтверждены. В Task 6 выпуск 0.5.0
+слит через PR 11 и опубликован; все десять repository variables проверены
+точным readback. Автоматический deploy остановился на OIDC, затем после
+исправления credential — на upload ZIP с неизвестным исходом, до создания
+версии функции. Подготовлен PATCH 0.5.1 с безопасной диагностикой.
+Первый успешный deploy, таймер и облачная приёмка ещё не подтверждены.
 Основание: [постановка и уточнения](20261020165020-yandex-cloud-boiler-reset-request.md).
 Команды: [проверенный справочник yc](20261020165020-yandex-cloud-yc-commands.md).
 База zontcontrol: master c09d3c672c927013c976468087c221485911dc6f, 0.4.0.
@@ -45,7 +47,7 @@ CLI, continuous, получение токена и исследовательс
 | Deploy SA ZONT | aje715nu0u832o93e0hd, ci-cd-zontcontrol-sa | Создан отдельно, три роли подтверждены |
 | Runtime SA и invoker | ajelpbq7as5bpe499962, имя invoker | Переиспользовать; добавлен iam.serviceAccounts.user для нового deploy SA |
 | OIDC federation | ajej9j37pt8j7ns962vr, federated credential образца | Использовать ту же |
-| OIDC credential ZONT | aje80bckog9ld78ondm9, SA aje715nu0u832o93e0hd | Создан и проверен; subject repo:gorpsys/zontcontrol:ref:refs/heads/master |
+| OIDC credential ZONT | ajehfh3q51b5i5q6frcr, SA aje715nu0u832o93e0hd | Создан и проверен; subject repo:gorpsys@79201964/zontcontrol@1420696677:ref:refs/heads/master; прежний credential без ID удалён |
 | GitHub OIDC AUD | https://github.com/gorpsys, workflow образца | Использовать тот же |
 | Bucket | autorepeater-deploy, workflow образца | Использовать тот же с префиксом zontcontrol |
 | Логи | Default log group каталога b1gdgrp5bnth11phova8 | Использовать тот же журнал |
@@ -218,8 +220,10 @@ SHA и производителя checks/statuses. PR/fork/другой branch/�
 не получают облачных credentials. Gate повторяется сразу перед OIDC.
 Очередь deploy-prod, cancel-in-progress=false, queue=max.
 
-OIDC subject — repo:gorpsys/zontcontrol:ref:refs/heads/master, без GitHub
-environment. AUD запроса GitHub — https://github.com/gorpsys; audience
+OIDC subject — `repo:gorpsys@79201964/zontcontrol@1420696677:ref:refs/heads/master`,
+без GitHub environment. GitHub выдаёт immutable subject; ID нельзя убрать
+кастомизацией claims. [Исправление credential и источники](../reports/2026-10-20-yandex-cloud-provisioning.md#попытки-деплоя-и-исправление-oidc-21102026).
+AUD запроса GitHub — https://github.com/gorpsys; audience
 обмена Yandex IAM — новый SA_ID. IAM передаётся yc только через окружение
 дочернего процесса YC_IAM_TOKEN. Явный временный config/profile содержит
 endpoint/cloud/folder, без credentials; не переопределять HOME родителя.
@@ -416,7 +420,7 @@ CLI вызывается с --retry 0. Команды с неопределён�
 
 - [x] После сообщения владельца о заполнении z_token прочитать только metadata
   новой версии; настроить repository variables, не получая значение секрета.
-- [ ] Подготовить один MINOR 0.5.0 при базе 0.4.0 либо следующий свободный MINOR;
+- [x] Подготовить один MINOR 0.5.0 при базе 0.4.0 либо следующий свободный MINOR;
   подписанные коммиты, PR, холодное ревью/WunderReview и CI. Слияние отдельно.
 - [ ] После разрешённого merge дождаться автоматического deploy точного SHA;
   проверить ACTIVE/ID/settings/manifest provenance, исходные ресурсы не изменились.
