@@ -17,6 +17,17 @@ v0.5.0. [Project checks](https://github.com/gorpsys/zontcontrol/actions/runs/395
 [диагностика](../reports/2026-10-20-yandex-cloud-provisioning.md#попытки-деплоя-и-исправление-oidc-21102026).
 Таймера и облачной приёмки ещё нет. Номер не подтверждает активацию.
 
+В 0.5.0 внутренний каталог BUILTIN_SPECS из zontcontrol.autonomy.catalog
+заменён ленивой фабрикой builtin_specs(). Для прежнего явного импорта переход
+состоял в вызове create_application(catalog=builtin_specs()); стандартное
+локальное приложение использует create_application(), once без CLI —
+create_application(catalog=(BOILER_RESET_SPEC,)). Eager-алиас не сохранялся:
+он снова импортировал бы отсутствующий в минимальном облачном ZIP BoilerCLI.
+BUILTIN_SPECS не входил в потребительский Controller API; сам перенос
+внутреннего импорта не требовал MAJOR по
+[правилам версий](../../scripts/README.md#версии-и-выпуск).
+Текущие фабрики и границы — [архитектура](../agents/architecture.md#3-регистратор-и-запуск).
+
 ## Текущий порядок выпуска, обновлено 16.10.2026
 
 После сверки с autorepeater/master на SHA 49cb338daae8d808706ec9d2480ca3f21ea4dcfd
