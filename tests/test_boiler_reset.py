@@ -25,7 +25,7 @@ from zontcontrol.controller.contracts import (
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 from zontcontrol.heating import HeatingHistory
 from zontcontrol.heating_adapter import from_controller_history
-from zontcontrol.monitor import assess_history
+from zontcontrol.monitor import assess_history, history_samples
 from tests.fakes.clock import FakeClock
 from tests.test_heating_regressions import canonical_dates, load_cases
 
@@ -58,6 +58,19 @@ def history(data=None):
                       tuple(HistoryPoint(datetime.fromisoformat(p['time']), p['value'])
                             for p in points))
         for key, kind, series_kind, points in rows), device['time_truncated'])
+
+
+def history_response(device_id, keys, start, end, *, data=None):
+    """Return only requested bindings and period, with a fresh synthetic end."""
+    data = data or history()
+    if device_id != data.device_id:
+        raise AssertionError('unexpected history device')
+    offset = end - data.end
+    return replace(data, start=start, end=end, received_at=data.received_at + offset,
+        series=tuple(replace(row, points=tuple(
+            replace(point, measured_at=point.measured_at + offset) for point in row.points
+            if start <= point.measured_at + offset <= end))
+            for row in data.series if row.key in keys))
 
 
 class BoilerResetTests(unittest.TestCase):
@@ -114,7 +127,7 @@ class BoilerResetTests(unittest.TestCase):
         self.context = RunContext('boiler_reset', Event(), None)
         self.events = []
         self.controller = Mock()
-        self.controller.read_history.return_value = history()
+        self.controller.read_history.side_effect = history_response
         self.controller.describe_values.return_value = tuple(
             ValueDescriptor(row.key, 'virtual', row.unit, row.source, row.key.field,
                             row.value_type, True, True, row.kind)
@@ -149,11 +162,175 @@ class BoilerResetTests(unittest.TestCase):
         self.assertTrue(result.value['reset_performed'])
         self.assertEqual(self.events, ['on', ('wait', 40), 'off'])
         self.reader.assert_called_once_with(CONFIG_PATH)
-        args = self.controller.read_history.call_args.args
-        self.assertEqual(args[0], 42)
-        self.assertEqual(set(args[1]), {r.key for r in history().series})
-        self.assertEqual(args[3] - args[2], timedelta(minutes=46))
-        self.controller.read_history.assert_called_once()
+        self.assert_history_requests()
+
+    def assert_history_requests(self):
+        calls = self.controller.read_history.call_args_list
+        self.assertEqual(len(calls), 2)
+        telemetry, reset = (call.args for call in calls)
+        end = history().end
+        self.assertEqual(telemetry, (42, tuple(row.key for row in history().series
+            if row.key != self.reset), end - timedelta(minutes=46), end))
+        self.assertEqual(reset, (42, (self.reset,), telemetry[3] - timedelta(minutes=120),
+                                 telemetry[3]))
+
+    def split_history(self, points, *, telemetry=None, reset_series=True, **metadata):
+        original = history()
+        end = original.end
+        telemetry = telemetry or history_response(42, tuple(row.key for row in original.series
+            if row.key != self.reset), end - timedelta(minutes=46), end)
+        row = replace(original.series[-1], points=tuple(points))
+        # A deliberately wider valid DTO can contain a point after the requested
+        # T; assembly must still retain telemetry's end and causal cutoff.
+        reset = replace(original, start=end - timedelta(minutes=120),
+                        end=max((end, *(point.measured_at for point in points))),
+                        series=(row,) if reset_series else (), **{
+                            'received_at': max((original.received_at,
+                                *(point.measured_at for point in points))), **metadata})
+        self.controller.read_history.side_effect = [telemetry, reset]
+        return telemetry, reset
+
+    def test_older_off_keeps_telemetry_window_and_all_45_minutes(self):
+        end = history().end
+        for age in (60, 120):
+            with self.subTest(age=age):
+                self.clock = FakeClock(wall_start=end)
+                self.events.clear()
+                self.controller.read_history.reset_mock()
+                telemetry, reset = self.split_history((HistoryPoint(
+                    end - timedelta(minutes=age), False),))
+                wall_clock = Mock(return_value=end)
+                with patch('zontcontrol.algorithms.boiler_reset.assess_history',
+                           wraps=assess_history) as assess:
+                    module = self.module()
+                    module._wall_clock = wall_clock
+                    result = module.run_once(self.context)
+                wall_clock.assert_called_once_with()
+                self.assert_history_requests()
+                self.assertTrue(result.value['reset_performed'])
+                typed = assess.call_args.args[0]
+                expected = from_controller_history(telemetry, device_id=42, circuit_id=20496,
+                    air_id=8207, coolant_id=8429, reset_id=8832)
+                self.assertEqual(replace(typed, reset=None), expected)
+                self.assertEqual(typed.reset.points[0].measured_at, reset.series[0].points[0].measured_at)
+                self.assertEqual(len(list(history_samples(typed))), 45)
+                self.assertEqual(result.value['assessment']['valid_temperature_samples'], 45)
+
+    def test_reset_series_unknown_transitions_and_future_point(self):
+        end = history().end
+        def point(minutes, value, quality=Quality.GOOD):
+            return HistoryPoint(end - timedelta(minutes=minutes), value, quality)
+        cases = (
+            ('absent', None, 'unknown', 'reset_state_unknown'),
+            ('empty', (), 'unknown', 'reset_state_unknown'),
+            ('null', (point(60, False), point(1, None)), 'unknown', 'reset_state_unknown'),
+            ('stale', (point(60, False), point(1, False, Quality.STALE)), 'unknown', 'reset_state_unknown'),
+            ('unknown', (point(60, False, Quality.UNKNOWN),), 'unknown', 'reset_state_unknown'),
+            ('missing', (point(60, False, Quality.MISSING),), 'unknown', 'reset_state_unknown'),
+            ('on', (point(60, False), point(1, True)), 'suppressed', 'intentional_shutdown'),
+            ('off', (point(60, False), point(3, True), point(2, False), point(1, False)),
+             'suppressed', 'restart_grace'),
+            ('future_only', (point(-1, False),), 'unknown', 'reset_state_unknown'),
+            ('future_on', (point(60, False), point(-1, True)), 'confirmed_pattern',
+             'current_no_heating_response'),
+            ('old_off', (point(60, False), point(10, True), point(9, False), point(1, False)),
+             'normal', 'no_current_pattern'),
+        )
+        for name, points, state, reason in cases:
+            with self.subTest(name=name):
+                self.events.clear()
+                self.clock = FakeClock(wall_start=end)
+                self.split_history(points or (), reset_series=points is not None)
+                with patch('zontcontrol.algorithms.boiler_reset.assess_history',
+                           wraps=assess_history) as assess:
+                    result = self.module().run_once(self.context)
+                decision = result.value['assessment']
+                self.assertEqual((decision['state_at_period_end'], decision['decision_reason']),
+                                 (state, reason))
+                typed = assess.call_args.args[0]
+                self.assertEqual(None if typed.reset is None else tuple(
+                    (p.measured_at, p.value, p.quality) for p in typed.reset.points),
+                    None if points is None else tuple(
+                        (p.measured_at, p.value, p.quality.value) for p in points))
+                self.assertEqual(self.events, ['on', ('wait', 40), 'off']
+                                 if state == 'confirmed_pattern' else [])
+
+    def test_both_histories_preserve_quality_metadata_and_truncation(self):
+        end = history().end
+        for truncated in ('telemetry', 'reset', None):
+            for newer in ('telemetry', 'reset'):
+                with self.subTest(truncated=truncated, newer=newer):
+                    telemetry, reset = self.split_history((HistoryPoint(
+                        end - timedelta(minutes=60), False, Quality.STALE),))
+                    telemetry = replace(telemetry, received_at=end + timedelta(
+                        seconds=2 if newer == 'telemetry' else 1),
+                        series=(replace(telemetry.series[0], incomplete_reasons=('air_reason',),
+                            points=tuple(replace(point, quality=Quality.UNKNOWN)
+                                         for point in telemetry.series[0].points)),
+                            *telemetry.series[1:]),
+                        time_truncated=truncated == 'telemetry',
+                        incomplete_reasons=('telemetry_reason', 'shared'))
+                    reset = replace(reset, received_at=end + timedelta(
+                        seconds=2 if newer == 'reset' else 1),
+                        series=(replace(reset.series[0], incomplete_reasons=('reset_series_reason',)),),
+                        time_truncated=truncated == 'reset',
+                        incomplete_reasons=('shared', 'reset_reason'))
+                    self.controller.read_history.side_effect = [telemetry, reset]
+                    with patch('zontcontrol.algorithms.boiler_reset.assess_history',
+                               wraps=assess_history) as assess:
+                        result = self.module().run_once(self.context)
+                    typed = assess.call_args.args[0]
+                    self.assertEqual(typed.received_at, end + timedelta(seconds=2))
+                    self.assertEqual(typed.time_truncated, truncated is not None)
+                    self.assertEqual(typed.incomplete_reasons,
+                                     ('telemetry_reason', 'shared', 'reset_reason'))
+                    self.assertEqual(typed.reset.incomplete_reasons, ('reset_series_reason',))
+                    self.assertEqual(typed.reset.points[0].quality, 'stale')
+                    self.assertIs(typed.reset.points[0].value, False)
+                    self.assertEqual(typed.air.incomplete_reasons, ('air_reason',))
+                    self.assertEqual(tuple((p.value, p.quality) for p in typed.air.points),
+                                     tuple((p.value, 'unknown') for p in telemetry.series[0].points))
+                    self.assertEqual(result.value['assessment']['decision_reason'],
+                        'truncated_history' if truncated else 'reset_state_unknown')
+                    self.assertEqual(self.events, [])
+
+    def test_cancel_after_either_history_never_assesses_or_commands(self):
+        for cancel_after in (1, 2):
+            with self.subTest(cancel_after=cancel_after):
+                self.context.cancelled.clear()
+                self.controller.read_history.reset_mock()
+                calls = []
+                def read(*args):
+                    calls.append(args)
+                    result = history_response(*args)
+                    if len(calls) == cancel_after:
+                        self.context.cancelled.set()
+                    return result
+                self.controller.read_history.side_effect = read
+                with patch('zontcontrol.algorithms.boiler_reset.assess_history') as assess:
+                    result = self.module().run_once(self.context)
+                self.assertEqual(result.value['reason'], 'cancelled')
+                self.assertEqual(len(calls), cancel_after)
+                assess.assert_not_called()
+                self.assertEqual(self.events, [])
+
+    def test_second_history_error_cannot_assess_or_send_commands(self):
+        self.controller.read_history.side_effect = [history(), DeviceUnavailable()]
+        with patch('zontcontrol.algorithms.boiler_reset.assess_history') as assess:
+            with self.assertRaises(DeviceUnavailable):
+                self.module().run_once(self.context)
+        self.assertEqual(self.controller.read_history.call_count, 2)
+        assess.assert_not_called()
+        self.controller.read_current.assert_not_called()
+        self.assertEqual(self.events, [])
+
+    def test_reset_binding_is_still_required_before_both_reads(self):
+        rows = self.controller.describe_values.return_value
+        self.controller.describe_values.return_value = tuple(row for row in rows
+                                                            if row.key != self.reset)
+        with self.assertRaises(ConfigurationError):
+            self.module().run_once(self.context)
+        self.controller.read_history.assert_not_called()
 
     def test_adapter_decision_equals_existing_fixture_without_recalculation(self):
         selected = {'confirmed', 'old_incident_current_normal', 'missing_sensor',
@@ -362,6 +539,15 @@ class BoilerResetTests(unittest.TestCase):
         self.assertGreater(self.clock.now(), MINIMUM_SECONDS)
         self.assertTrue(all(context.deadline is None for context in contexts))
         self.assertEqual(self.events, ['on', 'off'] * 2)
+        calls = self.controller.read_history.call_args_list
+        self.assertEqual(len(calls), 4)
+        for first, second in (calls[:2], calls[2:]):
+            telemetry, reset = first.args, second.args
+            self.assertEqual(telemetry[0], 42)
+            self.assertEqual(set(telemetry[1]), set(self.module().config.history_keys) - {self.reset})
+            self.assertEqual(telemetry[3] - telemetry[2], timedelta(minutes=46))
+            self.assertEqual(reset, (42, (self.reset,), telemetry[3] - timedelta(minutes=120),
+                                     telemetry[3]))
 
     def test_registrar_once_uses_builtin_module_and_returns_after_single_pulse(self):
         spec = replace(BOILER_RESET_SPEC, factory=lambda controller: self.module())

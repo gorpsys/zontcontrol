@@ -5,7 +5,7 @@ module about every 15 minutes; continuous owns its polling and five-minute pause
 API acceptance of off is not evidence that heating recovered.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import math
 import logging
@@ -28,6 +28,7 @@ CONFIG_PATH = Path('config/boiler_reset.json')
 PULSE_SECONDS = 40
 POST_RESET_SECONDS = 300
 HISTORY_MINUTES = 46
+RESET_HISTORY_MINUTES = 120
 # Forty seconds of reset plus an engineering budget for history and HTTP.
 # This is a registrar minimum, not a bound on ZONT response times.
 MINIMUM_SECONDS = 120
@@ -162,12 +163,31 @@ class BoilerReset:
         if context.cancelled.is_set():
             return self._result(reason='cancelled')
         end = self._wall_clock()
-        data = self._controller.read_history(self.config.device_id, self.config.history_keys,
+        telemetry_keys = tuple(key for key in self.config.history_keys if key != self.config.reset_key)
+        data = self._controller.read_history(self.config.device_id, telemetry_keys,
                                             end - timedelta(minutes=HISTORY_MINUTES), end)
+        if context.cancelled.is_set():
+            return self._result(reason='cancelled')
+        reset_data = self._controller.read_history(
+            self.config.device_id, (self.config.reset_key,),
+            end - timedelta(minutes=RESET_HISTORY_MINUTES), end)
+        if context.cancelled.is_set():
+            return self._result(reason='cancelled')
         history = from_controller_history(
             data, device_id=self.config.device_id, circuit_id=self.config.circuit_id,
             air_id=self.config.air_sensor_id, coolant_id=self.config.coolant_sensor_id,
             reset_id=self.config.reset_control_id)
+        reset_history = from_controller_history(
+            reset_data, device_id=self.config.device_id, circuit_id=self.config.circuit_id,
+            air_id=self.config.air_sensor_id, coolant_id=self.config.coolant_sensor_id,
+            reset_id=self.config.reset_control_id)
+        history = replace(history, reset=reset_history.reset,
+                          received_at=max(history.received_at, reset_history.received_at),
+                          time_truncated=history.time_truncated or reset_history.time_truncated,
+                          incomplete_reasons=tuple(dict.fromkeys(
+                              (*history.incomplete_reasons, *reset_history.incomplete_reasons))))
+        if context.cancelled.is_set():
+            return self._result(reason='cancelled')
         decision = assess_history(history, config=self.config.detector_config)
         if decision['state_at_period_end'] != 'confirmed_pattern':
             return self._result(decision)

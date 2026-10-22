@@ -2,6 +2,7 @@
 
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from dataclasses import replace
+from datetime import timedelta
 import io
 import json
 import logging
@@ -23,7 +24,7 @@ from zontcontrol.controller.contracts import (
     CommandOutcomeUnknown, DeviceInfo, DeviceUnavailable, Quality, Snapshot,
     ValueDescriptor, ValueReading, ValueType,
 )
-from tests.test_boiler_reset import history
+from tests.test_boiler_reset import history, history_response
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +71,7 @@ class CloudHandlerTests(unittest.TestCase):
         original = history()
         data = replace(original, device_id=700877, series=tuple(
             replace(row, key=replace(row.key, device_id=700877)) for row in original.series))
-        self.controller.read_history.return_value = data
+        self.controller.read_history.side_effect = lambda *args: history_response(*args, data=data)
         self.controller.describe_values.return_value = tuple(
             ValueDescriptor(row.key, 'synthetic', row.unit, row.source, row.key.field,
                             row.value_type, True, True, row.kind) for row in data.series)
@@ -140,6 +141,17 @@ class CloudHandlerTests(unittest.TestCase):
         self.assertEqual(result['assessment']['device_id'], 700877)
         self.assertIn('requested_period', result['assessment'])
         self.assertIn('events', result['assessment'])
+        calls = self.controller.read_history.call_args_list
+        self.assertEqual(len(calls), 2)
+        telemetry, reset = (call.args for call in calls)
+        self.assertEqual((telemetry[0], reset[0]), (700877, 700877))
+        reset_key = self.controller.read_current.return_value.values[0].key
+        self.assertEqual(reset[1], (reset_key,))
+        self.assertEqual(telemetry[1], tuple(row.key for row in
+            self.controller.describe_values.return_value if row.key != reset_key))
+        self.assertEqual(telemetry[3] - telemetry[2], timedelta(minutes=46))
+        self.assertEqual(reset[3] - reset[2], timedelta(minutes=120))
+        self.assertEqual(telemetry[3], reset[3])
 
     def test_notes_snapshot_includes_worker_cleanup_transport_close_and_final_event(self):
         def close():

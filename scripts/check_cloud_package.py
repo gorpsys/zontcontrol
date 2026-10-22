@@ -45,7 +45,7 @@ assert Path(zontcontrol.__file__).resolve().is_relative_to(target)
 assert all('site-packages' not in entry for entry in sys.path)
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zontcontrol.algorithms.boiler_reset import load_config
 from zontcontrol.application import Application
 from zontcontrol.autonomy.catalog import BOILER_RESET_SPEC
@@ -57,6 +57,7 @@ config = load_config()
 assert load_controller_config().contact
 calls = []
 class Controller:
+    history_end = None
     def describe_values(self, device_id):
         assert device_id == config.device_id
         calls.append('describe')
@@ -65,8 +66,16 @@ class Controller:
             ValueType.INTEGER if key.field in ('worktime', 'target_sensor_id') else ValueType.NUMBER,
             True, True, SeriesKind.STEP) for key in config.history_keys)
     def read_history(self, device_id, keys, start, end):
-        assert device_id == config.device_id and keys == config.history_keys
-        calls.append('history')
+        assert device_id == config.device_id
+        if keys == (config.reset_key,):
+            assert calls[-1] == 'telemetry_history'
+            assert end == self.history_end and end - start == timedelta(minutes=120)
+            calls.append('reset_history')
+        else:
+            assert keys == tuple(key for key in config.history_keys if key != config.reset_key)
+            assert calls[-1] == 'describe' and end - start == timedelta(minutes=46)
+            self.history_end = end
+            calls.append('telemetry_history')
         return HistoryResult(device_id, start, end, datetime.now(timezone.utc), ())
     def read_notes(self, device_id):
         assert device_id == config.device_id
@@ -90,7 +99,7 @@ try:
     assert result.value['reset_performed'] is False
 finally:
     assert app.close()
-assert calls == ['describe', 'history', 'closed']
+assert calls == ['describe', 'telemetry_history', 'reset_history', 'closed']
 
 # Exercise the packaged handler too: publication failures preserve job success,
 # so checking only the algorithm result would miss a broken notes composition.
@@ -110,7 +119,7 @@ with redirect_stdout(output), \
 assert report['status'] == 'unknown'
 assert report['notes_saved'] is True and report['notes_error'] is None
 assert report['log'] == output.getvalue() and report['log']
-assert calls == ['describe', 'history', 'notes_read', 'closed']
+assert calls == ['describe', 'telemetry_history', 'reset_history', 'notes_read', 'closed']
 transport.request.assert_called_once()
 request = transport.request.call_args.args[0]
 assert request.full_url == 'https://my.zont.online/api/update_device'
