@@ -54,12 +54,6 @@ ID, имена и общие/отдельные ресурсы собраны в
 Выпуски перечислены в [CHANGELOG](../CHANGELOG.md), их основания —
 в [истории версий](history/versioning.md).
 
-### Активные планы
-
-- [История сброса за два часа и приоритет меток worktime](plans/20261022174030-reset-history-worktime-implementation-plan.md)
-  — реализация выполнена, PR и CI проверены 23.10.2026, итоговое ревью в работе;
-  [постановка и уточнения](plans/20261022174030-reset-history-worktime-request.md).
-
 ### Завершённые планы
 
 Это свидетельства исполнения, а не текущие инструкции. Архитектурные планы
@@ -75,6 +69,9 @@ ID, имена и общие/отдельные ресурсы собраны в
 - [Предметный вход отопления](plans/completed/20261020120717-typed-heating-input-implementation-plan.md).
 - [Облачный once](plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
 - [Порядок в документации](plans/completed/20261021174419-documentation-order-implementation-plan.md).
+- [История сброса за два часа и приоритет меток worktime](plans/completed/20261022174030-reset-history-worktime-implementation-plan.md)
+  — реализация и итоговое ревью завершены 23.10.2026;
+  [постановка и уточнения](plans/completed/20261022174030-reset-history-worktime-request.md).
 
 Исходные постановки, заменённый облачный эскиз и команды bootstrap находятся
 в [историческом индексе](history/README.md); действующая процедура — облачный how-to выше.
