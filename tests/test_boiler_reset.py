@@ -25,6 +25,7 @@ from zontcontrol.controller.contracts import (
 from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 from zontcontrol.heating import HeatingHistory
 from zontcontrol.heating_adapter import from_controller_history
+from zontcontrol.history import project_history
 from zontcontrol.monitor import assess_history, history_samples
 from tests.fakes.clock import FakeClock
 from tests.test_heating_regressions import canonical_dates, load_cases
@@ -215,6 +216,62 @@ class BoilerResetTests(unittest.TestCase):
                 self.assertEqual(typed.reset.points[0].measured_at, reset.series[0].points[0].measured_at)
                 self.assertEqual(len(list(history_samples(typed))), 45)
                 self.assertEqual(result.value['assessment']['valid_temperature_samples'], 45)
+
+    def test_older_off_and_absolute_worktime_with_and_without_last_temperature(self):
+        # Complete synthetic telemetry, not a replay of the unavailable cloud
+        # response. The absolute zero removes demand; it must not create a gap
+        # leaving only four usable minutes after the former conflict.
+        original = history()
+        end = original.end
+        collision = end - timedelta(minutes=5)
+        worktime = next(row for row in original.series if row.key.field == 'worktime')
+        descriptor = ValueDescriptor(worktime.key, 'virtual', worktime.unit,
+            worktime.source, 'worktime', worktime.value_type, True, True, worktime.kind)
+        raw = {'z3k_heating_circuit': {'20496': {'worktime': [
+            [int(original.start.timestamp()), 60],
+            [-int((collision - original.start).total_seconds()), 60],
+            [int(collision.timestamp()), 0]]}}}
+        points, reasons = project_history(raw, descriptor, original.start, end,
+                                         received_at=original.received_at)
+        self.assertEqual(points[-1], HistoryPoint(collision, 0, Quality.GOOD))
+        self.assertNotIn('conflicting_timestamps', reasons)
+        self.assertNotIn('null_values', reasons)
+        for last_temperature in (True, False):
+            with self.subTest(last_temperature=last_temperature):
+                self.events.clear()
+                self.controller.read_history.reset_mock()
+                telemetry = replace(original, series=tuple(
+                    replace(row, points=points, incomplete_reasons=reasons)
+                    if row.key == worktime.key else replace(row, points=tuple(
+                        point for point in row.points
+                        if last_temperature or row.key.kind != 'sensor'
+                        or point.measured_at < end))
+                    for row in original.series if row.key != self.reset))
+                # The reset-only response has no state in the telemetry window.
+                old_off = HistoryPoint(end - timedelta(minutes=60), False)
+                self.assertLess(old_off.measured_at, telemetry.start)
+                self.split_history((old_off,), telemetry=telemetry)
+                with patch('zontcontrol.algorithms.boiler_reset.assess_history',
+                           wraps=assess_history) as assess:
+                    result = self.module().run_once(self.context)
+                self.assert_history_requests()
+                typed = assess.call_args.args[0]
+                expected = from_controller_history(telemetry, device_id=42,
+                    circuit_id=20496, air_id=8207, coolant_id=8429, reset_id=8832)
+                self.assertEqual(replace(typed, reset=None), expected)
+                self.assertEqual(typed.reset.points[0].measured_at, old_off.measured_at)
+                samples = list(history_samples(typed))
+                self.assertEqual(len(samples), 45 if last_temperature else 44)
+                self.assertTrue(all(sample.worktime == 0 for sample in samples
+                                    if sample.time >= collision))
+                decision = result.value['assessment']
+                self.assertEqual((decision['state_at_period_end'], decision['anomaly'],
+                    decision['decision_reason']), ('normal', False, 'no_current_pattern'))
+                self.assertEqual(decision['valid_temperature_samples'], len(samples))
+                self.assertFalse(result.value['reset_performed'])
+                self.assertEqual(self.events, [])
+                self.controller.read_current.assert_not_called()
+                self.controller.execute_command.assert_not_called()
 
     def test_reset_series_unknown_transitions_and_future_point(self):
         end = history().end
