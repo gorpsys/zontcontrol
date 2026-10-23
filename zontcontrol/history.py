@@ -41,6 +41,12 @@ def cli_period(start: str | None, end: str | None, hours: float | None) -> tuple
 
 
 def decode_delta_array(rows: list, start: datetime, end: datetime, *, integer: bool = False) -> list[dict]:
+    return [{"time": moment.isoformat(), "value": value}
+            for moment, value, _ in _decode_delta_candidates(rows, start, end, integer=integer)]
+
+
+def _decode_delta_candidates(rows: list, start: datetime, end: datetime, *, integer: bool = False):
+    """Keep each row's timestamp origin private to history normalization."""
     if not isinstance(rows, list):
         raise ValueError("invalid history series in API response")
     points = []
@@ -65,8 +71,8 @@ def decode_delta_array(rows: list, start: datetime, end: datetime, *, integer: b
         except (OverflowError, OSError, ValueError):
             raise ValueError("invalid history timestamp in API response") from None
         if start <= moment <= end:
-            points.append({"time": moment.isoformat(), "value": value})
-    points.sort(key=lambda point: point["time"])
+            points.append((moment, value, delta > 0))
+    points.sort(key=lambda point: point[0])
     return points
 
 
@@ -102,21 +108,35 @@ def project_history(response, descriptor, start, end, *, received_at):
         if not isinstance(rows, dict):
             raise InvalidArguments()
         rows = rows.get(field, [])
-    decoded = decode_delta_array(rows, start, end, integer=descriptor.value_type in (
+    decoded = _decode_delta_candidates(rows, start, end, integer=descriptor.value_type in (
         ValueType.INTEGER, ValueType.BOOLEAN))
     reasons = []
     points = []
-    for point in decoded:
-        value = point['value']
+    worktime = key.kind == 'circuit' and key.field == 'worktime'
+    selected = {}
+    for moment, value, absolute in decoded:
         if descriptor.value_type is ValueType.BOOLEAN and value is not None:
             if value not in (0, 1):
                 raise InvalidArguments()
             value = bool(value)
-        moment = datetime.fromisoformat(point['time'])
         if moment > received_at:
             reasons.append('future_points')
             continue
-        points.append(HistoryPoint(moment, value, Quality.MISSING if value is None else Quality.GOOD))
+        point = HistoryPoint(moment, value, Quality.MISSING if value is None else Quality.GOOD)
+        if worktime:
+            old = selected.get(moment)
+            if old is None or absolute > old[0]:
+                selected[moment] = (absolute, point)
+            elif absolute == old[0] and point != old[1]:
+                selected[moment] = (absolute, HistoryPoint(moment, None, Quality.UNKNOWN))
+        else:
+            points.append(point)
+    if worktime:
+        # Resolve only within this raw response. Ordinary HistoryPoint DTOs
+        # cannot carry this priority into merge_history_points across parts.
+        points = [selected[moment][1] for moment in sorted(selected)]
+        if any(point.quality is Quality.UNKNOWN for point in points):
+            reasons.append('conflicting_timestamps')
     if not points:
         reasons.append('missing_part')
     else:

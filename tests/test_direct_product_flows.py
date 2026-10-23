@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from tests.test_boiler_cli import Terminal
-from tests.test_boiler_reset import SETTINGS, history
+from tests.test_boiler_reset import SETTINGS, history, history_response
 from tests.test_inventory import inventory_device
 from zontcontrol.algorithms.boiler_cli import BoilerCLI
 from zontcontrol.algorithms.boiler_reset import BoilerReset
@@ -123,7 +123,8 @@ class DirectProductFlows(unittest.TestCase):
         rows = tuple(ValueDescriptor(row.key, 'virtual', row.unit, row.source,
             row.key.field, row.value_type, True, True, row.kind) for row in history().series)
         return (patch('zontcontrol.controller.service.ControllerService.describe_values', return_value=rows),
-                patch('zontcontrol.controller.service.ControllerService.read_history', return_value=history()))
+                patch('zontcontrol.controller.service.ControllerService.read_history',
+                      side_effect=history_response))
 
     def test_unknown_on_still_attempts_off_once(self):
         descriptions, archive = self.history_patches()
@@ -168,7 +169,7 @@ class DirectProductFlows(unittest.TestCase):
         descriptions, archive = self.history_patches()
         incomplete = replace(history(), series=tuple(replace(row, points=()) for row in history().series))
         with descriptions, archive as read:
-            read.return_value = incomplete
+            read.side_effect = lambda *args: history_response(*args, data=incomplete)
             app, transport = self.build((self.reset_spec(lambda *_: False),))
             result = app.run_once('boiler_reset')
         self.assertIs(result.status, ResultStatus.UNKNOWN)

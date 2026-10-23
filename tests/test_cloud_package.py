@@ -102,6 +102,35 @@ class CloudPackageTests(ArchiveFixture):
         self.assertEqual(facts['smoke'], 'ok')
         self.assertEqual(facts['source_sha'], self.sha)
 
+    def test_smoke_rejects_single_history_read_and_drifted_reset_window(self):
+        path = self.root / 'zontcontrol/algorithms/boiler_reset.py'
+        original = path.read_text()
+        for body in (
+                'controller.read_history(config.device_id, config.history_keys, '
+                'end - timedelta(minutes=46), end)',
+                'controller.read_history(config.device_id, telemetry, '
+                'end - timedelta(minutes=46), end)\n'
+                '    controller.read_history(config.device_id, (config.reset_key,), '
+                'end - timedelta(minutes=46), end)',
+                'controller.read_history(config.device_id, telemetry, '
+                'end - timedelta(minutes=46), end)\n'
+                '    controller.read_history(config.device_id, (config.reset_key,), '
+                'end - timedelta(minutes=120) + timedelta(seconds=1), '
+                'end + timedelta(seconds=1))'):
+            # The isolated smoke must reject obsolete/wrong read behavior, even
+            # when the algorithm would otherwise return a valid unknown result.
+            path.write_text(original + '\n\ndef broken_once(self, context):\n'
+                '    controller, config = self._controller, self.config\n'
+                '    self._validate_bindings()\n'
+                '    end = self._wall_clock()\n'
+                '    telemetry = tuple(key for key in config.history_keys if key != config.reset_key)\n'
+                '    ' + body + '\n    return self._result()\n'
+                'BoilerReset._run_once = broken_once\n')
+            self.build()
+            with self.subTest(body=body), self.assertRaisesRegex(
+                    builder.ArchiveError, 'Cloud package offline smoke failed'):
+                checker.check_package(self.root, self.output, contact=CONTACT)
+
     def test_smoke_rejects_import_network_attempt_without_calling_production_handler(self):
         path = self.root / 'handler.py'
         path.write_text("import socket\nsocket.create_connection(('example.invalid', 443))\n")

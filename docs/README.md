@@ -46,7 +46,7 @@ ID, имена и общие/отдельные ресурсы собраны в
 ## История, результаты и планы
 
 [Исторический индекс](history/README.md) ведёт к основаниям решений,
-отменённым схемам, отчётам и ревью; [находки H01–H10](agents/history.md)
+отменённым схемам, отчётам и ревью; [находки H01–H11](agents/history.md)
 связывают конкретные контрпримеры с действующими правилами. Решение
 [об удалении синхронизации](history/2026-10-20-remove-synchronization.md)
 заменяет старые условия монополии. Отчёты в `docs/reports/` и ревью
@@ -69,6 +69,9 @@ ID, имена и общие/отдельные ресурсы собраны в
 - [Предметный вход отопления](plans/completed/20261020120717-typed-heating-input-implementation-plan.md).
 - [Облачный once](plans/completed/20261020165020-yandex-cloud-boiler-reset-implementation-plan.md).
 - [Порядок в документации](plans/completed/20261021174419-documentation-order-implementation-plan.md).
+- [История сброса за два часа и приоритет меток worktime](plans/completed/20261022174030-reset-history-worktime-implementation-plan.md)
+  — реализация и итоговое ревью завершены 23.10.2026;
+  [постановка и уточнения](plans/completed/20261022174030-reset-history-worktime-request.md).
 
 Исходные постановки, заменённый облачный эскиз и команды bootstrap находятся
 в [историческом индексе](history/README.md); действующая процедура — облачный how-to выше.
