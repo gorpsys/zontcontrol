@@ -3,7 +3,7 @@
 import math
 from datetime import datetime, timedelta, timezone
 
-from .controller.contracts import HistoryPoint, InvalidArguments, Quality, ValueType
+from .controller.contracts import HistoryPoint, InvalidArguments, Quality, SeriesKind, ValueType
 
 
 def history_period(start: datetime, end: datetime, *, preserve_precision: bool = False
@@ -45,11 +45,13 @@ def decode_delta_array(rows: list, start: datetime, end: datetime, *, integer: b
             for moment, value, _ in _decode_delta_candidates(rows, start, end, integer=integer)]
 
 
-def _decode_delta_candidates(rows: list, start: datetime, end: datetime, *, integer: bool = False):
+def _decode_delta_candidates(rows: list, start: datetime, end: datetime, *, integer: bool = False,
+                             include_previous: bool = False):
     """Keep each row's timestamp origin private to history normalization."""
     if not isinstance(rows, list):
         raise ValueError("invalid history series in API response")
     points = []
+    previous = []
     timestamp = None
     for row in rows:
         if not isinstance(row, list) or len(row) != 2 or type(row[0]) is not int or row[0] == 0:
@@ -72,7 +74,17 @@ def _decode_delta_candidates(rows: list, start: datetime, end: datetime, *, inte
             raise ValueError("invalid history timestamp in API response") from None
         if start <= moment <= end:
             points.append((moment, value, delta > 0))
+        elif include_previous and moment < start:
+            candidate = (moment, value, delta > 0)
+            if not previous or moment > previous[0][0]:
+                previous = [candidate]
+            elif moment == previous[0][0]:
+                previous.append(candidate)
     points.sort(key=lambda point: point[0])
+    # Keep every candidate at the latest prior timestamp so normal conflict
+    # handling still applies. An exact-start observation supersedes this anchor.
+    if previous and (not points or points[0][0] > start):
+        points = previous + points
     return points
 
 
@@ -87,7 +99,8 @@ def project_history(response, descriptor, start, end, *, received_at):
 
     A missing archive channel/field is an empty part, never today's value. A
     sparse state series is not interpolated, including reset pulses between
-    minute measurements. Boundary omissions are reported conservatively.
+    minute measurements. A step series retains its last observation before
+    start as an anchor, with its original timestamp and quality.
     """
     key = descriptor.key
     channel, field = {
@@ -109,7 +122,7 @@ def project_history(response, descriptor, start, end, *, received_at):
             raise InvalidArguments()
         rows = rows.get(field, [])
     decoded = _decode_delta_candidates(rows, start, end, integer=descriptor.value_type in (
-        ValueType.INTEGER, ValueType.BOOLEAN))
+        ValueType.INTEGER, ValueType.BOOLEAN), include_previous=descriptor.history_kind is SeriesKind.STEP)
     reasons = []
     points = []
     worktime = key.kind == 'circuit' and key.field == 'worktime'
@@ -140,7 +153,7 @@ def project_history(response, descriptor, start, end, *, received_at):
     if not points:
         reasons.append('missing_part')
     else:
-        if points[0].measured_at != start:
+        if points[0].measured_at > start:
             reasons.append('missing_start')
         if points[-1].measured_at != end:
             reasons.append('missing_end')
