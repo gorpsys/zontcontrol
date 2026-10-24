@@ -197,7 +197,6 @@ class WorktimeHistoryTests(unittest.TestCase):
         for kind, field, value_type in (
             ('sensor', 'value', ValueType.NUMBER),
             ('circuit', 'target_temp', ValueType.NUMBER),
-            ('circuit', 'setpoint_temp', ValueType.NUMBER),
             ('circuit', 'mode_id', ValueType.INTEGER),
             ('circuit', 'target_sensor_id', ValueType.INTEGER),
             ('toggle_buttons', 'active', ValueType.BOOLEAN),

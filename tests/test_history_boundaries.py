@@ -6,12 +6,15 @@ import unittest
 from unittest.mock import Mock
 
 from zontcontrol.algorithms.boiler_reset import BoilerReset
+from zontcontrol.anomaly import NoHeatDetector
 from zontcontrol.autonomy.contracts import ResultStatus, RunContext
 from zontcontrol.controller.contracts import (
     HistoryPoint, HistoryResult, HistorySeries, InvalidArguments, Quality,
     SeriesKind, ValueDescriptor, ValueKey, ValueType,
 )
+from zontcontrol.heating_adapter import from_controller_history
 from zontcontrol.history import decode_delta_array, merge_history_points, project_history
+from zontcontrol.monitor import assess_history, history_samples
 
 
 START = datetime.fromtimestamp(1000, timezone.utc) + timedelta(microseconds=665005)
@@ -82,6 +85,103 @@ class StepBoundaryTests(unittest.TestCase):
         self.assertIn('missing_start', reasons)
         self.assertEqual(decode_delta_array(rows, START, END), [
             {'time': datetime.fromtimestamp(1100, timezone.utc).isoformat(), 'value': 24}])
+
+
+class SetpointPriorityTests(unittest.TestCase):
+    def test_absolute_setpoint_wins_in_either_order_and_at_left_anchor(self):
+        for start in (START, START.replace(microsecond=0)):
+            for rows in (
+                [[940, 55], [-60, 57.6], [1000, 57.7]],
+                [[1000, 57.7], [940, 55], [-60, 57.6]],
+            ):
+                with self.subTest(start=start, rows=rows):
+                    points, reasons = project(rows, field='setpoint_temp', start=start)
+                    self.assertEqual(points, (HistoryPoint(START.replace(microsecond=0), 57.7),))
+                    self.assertNotIn('conflicting_timestamps', reasons)
+
+    def test_null_absolute_wins_and_discarded_null_delta_does_not_taint_quality(self):
+        for rows, value, quality, missing in (
+            ([[940, 55], [-60, 57.6], [1000, None]], None, Quality.MISSING, True),
+            ([[1000, None], [940, 55], [-60, 57.6]], None, Quality.MISSING, True),
+            ([[940, 55], [-60, None], [1000, 57.7]], 57.7, Quality.GOOD, False),
+        ):
+            with self.subTest(rows=rows):
+                points, reasons = project(rows, field='setpoint_temp')
+                self.assertEqual(points, (HistoryPoint(START.replace(microsecond=0), value, quality),))
+                self.assertEqual('null_values' in reasons, missing)
+
+    def test_equal_priority_conflicts_stay_unknown_and_equal_values_deduplicate(self):
+        for rows, value, quality in (
+            ([[1000, 57.7], [1000, 57.6]], None, Quality.UNKNOWN),
+            ([[1000, 57.7], [1000, 57.7]], 57.7, Quality.GOOD),
+            ([[940, 55], [-60, 57.7], [940, 55], [-60, 57.6]], None, Quality.UNKNOWN),
+            ([[1000, 57.7], [1000, 57.6], [940, 55], [-60, 57.7]], None, Quality.UNKNOWN),
+        ):
+            with self.subTest(rows=rows):
+                points, reasons = project(rows, field='setpoint_temp')
+                self.assertEqual(points, (HistoryPoint(START.replace(microsecond=0), value, quality),))
+                self.assertEqual('conflicting_timestamps' in reasons, quality is Quality.UNKNOWN)
+
+    def test_conflicts_between_parts_stay_unknown(self):
+        parts = [project([[1000, value]], field='setpoint_temp') for value in (57.6, 57.7)]
+        points, reasons = merge_history_points(parts)
+        self.assertEqual(points, (HistoryPoint(START.replace(microsecond=0), None, Quality.UNKNOWN),))
+        self.assertIn('conflicting_timestamps', reasons)
+
+    def test_other_fields_and_public_decoder_keep_their_conflicts(self):
+        rows = [[940, 55], [-60, 57.6], [1000, 57.7]]
+        points, reasons = project(rows, field='target_temp')
+        self.assertEqual(points, (HistoryPoint(START.replace(microsecond=0), None, Quality.UNKNOWN),))
+        self.assertIn('conflicting_timestamps', reasons)
+        decoded = decode_delta_array(rows, START.replace(microsecond=0), END)
+        self.assertEqual([p['value'] for p in decoded], [57.6, 57.7])
+
+    def test_setpoint_conflict_keeps_detector_buffer_and_normal_assessment(self):
+        end = datetime(2026, 10, 24, 21, 0, 57, 994500, tzinfo=timezone.utc)
+        start = end - timedelta(minutes=46)
+        anchor = int(start.replace(second=0, microsecond=0).timestamp())
+        conflict = anchor + 44 * 60
+        response = {
+            'z3k_temperature': {
+                '7': [[anchor + minute * 60, 23.3] for minute in range(47)],
+                '8': [[anchor + minute * 60, 40.5] for minute in range(47)],
+            },
+            'z3k_heating_circuit': {'10': {
+                'target_temp': [[anchor, 23.5]],
+                'target_sensor_id': [[anchor, 7]],
+                'setpoint_temp': [[anchor, 57.5], [-2640, 57.6], [conflict, 57.7],
+                                  [-60, 57.8], [-60, 57.9]],
+                'worktime': [[anchor, 0]],
+            }},
+            'z3k_web_element': {'9': {'state': [[anchor, 0]]}},
+        }
+        rows = []
+        for kind, element_id, field, value_type in (
+            ('sensor', 7, 'value', ValueType.NUMBER),
+            ('sensor', 8, 'value', ValueType.NUMBER),
+            ('circuit', 10, 'target_temp', ValueType.NUMBER),
+            ('circuit', 10, 'target_sensor_id', ValueType.INTEGER),
+            ('circuit', 10, 'setpoint_temp', ValueType.NUMBER),
+            ('circuit', 10, 'worktime', ValueType.INTEGER),
+            ('toggle_buttons', 9, 'active', ValueType.BOOLEAN),
+        ):
+            series_kind = SeriesKind.MEASUREMENT if kind == 'sensor' else SeriesKind.STEP
+            desc = ValueDescriptor(ValueKey(42, kind, element_id, field), 'Synthetic', None,
+                                   'archive', 'value', value_type, True, True, series_kind)
+            points, reasons = merge_history_points((project_history(
+                response, desc, start, end, received_at=end),))
+            rows.append(HistorySeries(desc.key, value_type, None, 'archive', series_kind, points, reasons))
+        history = from_controller_history(HistoryResult(42, start, end, end, tuple(rows)),
+            device_id=42, circuit_id=10, air_id=7, coolant_id=8, reset_id=9)
+        target = next(p for p in history.coolant_target.points if p.measured_at.timestamp() == conflict)
+        self.assertEqual((target.value, target.quality), (57.7, 'good'))
+        detector = NoHeatDetector(require_known_reset=True)
+        for sample in history_samples(history):
+            detector.update(sample)
+        self.assertEqual(len(detector.samples), 40)
+        assessment = assess_history(history)
+        self.assertEqual(assessment['state_at_period_end'], 'normal')
+        self.assertEqual(assessment['valid_temperature_samples'], 45)
 
 
 class HistoryAnchorContractTests(unittest.TestCase):
