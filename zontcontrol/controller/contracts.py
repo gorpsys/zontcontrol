@@ -309,14 +309,15 @@ class HistoryResult:
         _strings(self.incomplete_reasons)
         for row in self.series:
             _require(row.key.device_id == self.device_id)
-            _require(all(self.start <= point.measured_at <= self.end
-                         and point.measured_at <= self.received_at for point in row.points))
+            _require(all(point.measured_at <= self.end and point.measured_at <= self.received_at
+                         and (point.measured_at >= self.start or row.kind is SeriesKind.STEP and index == 0)
+                         for index, point in enumerate(row.points)))
 
     @property
     def complete(self) -> bool:
         """Coverage is necessary; adapters must also report gaps and truncation."""
         return bool(self.series) and not self.time_truncated and not self.incomplete_reasons and all(
-            not row.incomplete_reasons and row.coverage_start == self.start
+            not row.incomplete_reasons and row.coverage_start is not None and row.coverage_start <= self.start
             and row.coverage_end == self.end
             and all(point.value is not None and point.quality is Quality.GOOD for point in row.points)
             for row in self.series)
