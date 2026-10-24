@@ -125,7 +125,8 @@ def project_history(response, descriptor, start, end, *, received_at):
         ValueType.INTEGER, ValueType.BOOLEAN), include_previous=descriptor.history_kind is SeriesKind.STEP)
     reasons = []
     points = []
-    worktime = key.kind == 'circuit' and key.field == 'worktime'
+    # Client policy for these circuit fields, not a ZONT accuracy guarantee.
+    prefer_absolute = key.kind == 'circuit' and key.field in ('worktime', 'setpoint_temp')
     selected = {}
     for moment, value, absolute in decoded:
         if descriptor.value_type is ValueType.BOOLEAN and value is not None:
@@ -136,7 +137,7 @@ def project_history(response, descriptor, start, end, *, received_at):
             reasons.append('future_points')
             continue
         point = HistoryPoint(moment, value, Quality.MISSING if value is None else Quality.GOOD)
-        if worktime:
+        if prefer_absolute:
             old = selected.get(moment)
             if old is None or absolute > old[0]:
                 selected[moment] = (absolute, point)
@@ -144,7 +145,7 @@ def project_history(response, descriptor, start, end, *, received_at):
                 selected[moment] = (absolute, HistoryPoint(moment, None, Quality.UNKNOWN))
         else:
             points.append(point)
-    if worktime:
+    if prefer_absolute:
         # Resolve only within this raw response. Ordinary HistoryPoint DTOs
         # cannot carry this priority into merge_history_points across parts.
         points = [selected[moment][1] for moment in sorted(selected)]
