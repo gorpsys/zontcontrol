@@ -118,12 +118,14 @@ class NoHeatDetector:
             self.samples.clear()
             return self._clear(sample, "reset_or_restart_grace")
         self.samples.append(sample)
+        pulse_span = timedelta(minutes=self.config.pulse_window_minutes)
+        demand_span = timedelta(minutes=5)
         pulse_window = [point.coolant for point in self.samples
-                        if sample.time - point.time <= timedelta(minutes=self.config.pulse_window_minutes)]
+                        if sample.time - point.time <= pulse_span]
         rising = len(self.samples) > 1 and sample.coolant >= self.samples[-2].coolant
         if self.incident_pending and rising and sample.coolant - min(pulse_window) >= 5:
             return self._clear(sample, "heating_response_returned", heat_returned=True)
-        recent = [point for point in self.samples if sample.time - point.time < timedelta(minutes=5)]
+        recent = [point for point in self.samples if sample.time - point.time < demand_span]
         demand = len(recent) >= 5 and sum(point.worktime for point in recent) / len(recent) >= self.config.minimum_worktime
         gap_value = min(sample.coolant_target, self.config.boiler_limit) - sample.coolant
         if not demand or gap_value < self.config.supply_gap:
