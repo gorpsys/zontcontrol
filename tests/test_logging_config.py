@@ -9,10 +9,114 @@ from threading import Barrier, Thread
 from datetime import datetime
 import unittest
 
-from zontcontrol.logging_config import capture_console_output, configure_local_logging, configure_yc_logging
+from zontcontrol.logging_config import (
+    YcLoggingFormatter, capture_console_output, configure_local_logging, configure_yc_logging,
+)
 
 
 class LoggingConfigTests(unittest.TestCase):
+    def diagnostic_fields(self, fields):
+        record = logging.makeLogRecord({'name': 'zontcontrol', 'msg': 'safe', **fields})
+        row = json.loads(YcLoggingFormatter().format(record))
+        return {key: value for key, value in row.items()
+                if key not in ('timestamp', 'message', 'level', 'logger')}
+
+    def test_reason_and_quality_accept_only_the_documented_strings(self):
+        class StringSubclass(str):
+            pass
+        class EqualToEverything:
+            def __eq__(self, other):
+                return True
+        for name in ('decision_reason', 'reason'):
+            for value in (None, 'cancelled', 'future.fixed-v2', 'a' * 128):
+                with self.subTest(name=name, accepted=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {name: value})
+            for value in ('', 'a' * 129, 'private\npayload', True, 1, [],
+                          StringSubclass('cancelled'), EqualToEverything()):
+                with self.subTest(name=name, rejected=type(value).__name__):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {})
+        for name in ('reset_latest_quality', 'current_reset_quality'):
+            for value in (None, 'good', 'unknown', 'missing', 'stale'):
+                with self.subTest(name=name, accepted=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {name: value})
+            for value in ('other', True, 0, {}, StringSubclass('good'), EqualToEverything()):
+                with self.subTest(name=name, rejected=type(value).__name__):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {})
+
+    def test_timestamps_and_period_enforce_utc_and_preserve_fractional_precision(self):
+        stamps = ('2026-10-26T00:00:00+00:00', '2026-10-26T00:00:00.123456+00:00',
+                  '2026-10-26T00:00:00Z')
+        invalid = ('2026-10-26T00:00:00', '2026-10-26T03:00:00+03:00',
+                   '2026-10-26T00:00:00.' + '0' * 30 + '+00:00', 'private', True, {}, 0)
+        for name in ('latest_valid_sample', 'reset_latest_measured_at'):
+            for value in (None, *stamps):
+                with self.subTest(name=name, accepted=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {name: value})
+            for value in invalid:
+                with self.subTest(name=name, rejected=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {})
+        self.assertEqual(self.diagnostic_fields({'requested_period': None}), {'requested_period': None})
+        period = {'start': stamps[0], 'end': stamps[1]}
+        self.assertEqual(self.diagnostic_fields({'requested_period': {**period, 'token': 'private'}}),
+                         {'requested_period': period})
+        for value in ({}, [], {'start': stamps[0]}, {'start': None, 'end': stamps[0]},
+                      *({'start': bad, 'end': stamps[0]} for bad in invalid)):
+            with self.subTest(period=value):
+                self.assertEqual(self.diagnostic_fields({'requested_period': value}), {})
+
+    def test_boolean_count_and_age_fields_keep_null_zero_and_invalid_distinct(self):
+        for name in ('reset_history_available', 'reset_active_at_period_end', 'current_reset_active',
+                     'time_truncated', 'telemetry_time_truncated', 'reset_time_truncated'):
+            for value in (None, False, True):
+                with self.subTest(name=name, accepted=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {name: value})
+            for value in (0, 1, 'false', {}):
+                with self.subTest(name=name, rejected=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {})
+        for name in ('valid_temperature_samples', 'usable_samples', 'detector_buffer_size'):
+            for value in (0, 40, 45):
+                with self.subTest(name=name, accepted=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {name: value})
+            for value in (None, True, -1, 1.0, '0', float('nan'), float('inf')):
+                with self.subTest(name=name, rejected=value):
+                    self.assertEqual(self.diagnostic_fields({name: value}), {})
+        name = 'latest_valid_sample_age_seconds'
+        for value in (None, 0, 120.25, 1e12):
+            with self.subTest(age=value):
+                self.assertEqual(self.diagnostic_fields({name: value}), {name: value})
+        for value in (-1, True, '0', 1e12 + 1, float('nan'), float('inf')):
+            with self.subTest(rejected_age=value):
+                self.assertEqual(self.diagnostic_fields({name: value}), {})
+
+    def test_diagnostics_filter_nested_payloads_invalid_types_and_credentials(self):
+        output = io.StringIO()
+        stamp = '2026-10-26T00:00:00+00:00'
+        with contextlib.redirect_stdout(output):
+            configure_yc_logging()
+            self.logger.info('safe', extra={
+                'requested_period': {'start': stamp, 'end': stamp, 'token': 'private'},
+                'decision_reason': 'truncated_history', 'reason': None,
+                'valid_temperature_samples': True, 'usable_samples': -1,
+                'detector_buffer_size': {}, 'latest_valid_sample': 'private',
+                'latest_valid_sample_age_seconds': float('inf'),
+                'reset_latest_measured_at': stamp, 'reset_latest_quality': 'private',
+                'current_reset_active': 'private', 'current_reset_quality': {},
+                'telemetry_time_truncated': False, 'reset_time_truncated': True,
+                'credentials': 'private', 'assessment': {'token': 'private'}})
+        row = json.loads(output.getvalue())
+        self.assertEqual(row['requested_period'], {'start': stamp, 'end': stamp})
+        self.assertEqual(row['decision_reason'], 'truncated_history')
+        self.assertIsNone(row['reason'])
+        self.assertIs(row['telemetry_time_truncated'], False)
+        self.assertIs(row['reset_time_truncated'], True)
+        self.assertEqual(row['reset_latest_measured_at'], stamp)
+        for name in ('valid_temperature_samples', 'usable_samples', 'detector_buffer_size',
+                     'latest_valid_sample', 'latest_valid_sample_age_seconds',
+                     'reset_latest_quality', 'current_reset_active', 'current_reset_quality',
+                     'credentials', 'assessment'):
+            self.assertNotIn(name, row)
+        self.assertNotIn('private', output.getvalue())
+
     def setUp(self):
         self.logger = logging.getLogger('zontcontrol')
         previous = (self.logger.handlers[:], self.logger.level, self.logger.propagate)

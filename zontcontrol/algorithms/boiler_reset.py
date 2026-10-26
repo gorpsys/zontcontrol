@@ -137,6 +137,14 @@ class BoilerReset:
         self._log('once_finished', 'Boiler assessment finished',
                   state=result.value['assessment']['state_at_period_end'],
                   reset_performed=result.value['reset_performed'],
+                  reason=result.value['reason'],
+                  **{name: result.value['assessment'].get(name) for name in (
+                      'requested_period', 'decision_reason', 'valid_temperature_samples',
+                      'usable_samples', 'detector_buffer_size', 'latest_valid_sample',
+                      'latest_valid_sample_age_seconds', 'reset_history_available',
+                      'reset_active_at_period_end', 'reset_latest_measured_at',
+                      'reset_latest_quality', 'current_reset_active', 'current_reset_quality',
+                      'time_truncated', 'telemetry_time_truncated', 'reset_time_truncated')},
                   elapsed_ms=max(0, (self._clock() - started) * 1000))
         return result
 
@@ -189,6 +197,8 @@ class BoilerReset:
         if context.cancelled.is_set():
             return self._result(reason='cancelled')
         decision = assess_history(history, config=self.config.detector_config)
+        decision = {**decision, 'telemetry_time_truncated': data.time_truncated,
+                    'reset_time_truncated': reset_data.time_truncated}
         if decision['state_at_period_end'] != 'confirmed_pattern':
             return self._result(decision)
         if context.cancelled.is_set():
@@ -203,6 +213,8 @@ class BoilerReset:
         # normal. Missing/stale state still cannot authorize a new pulse.
         active = (value.value if value is not None
                   and value.quality in (Quality.GOOD, Quality.UNKNOWN) else None)
+        decision = {**decision, 'current_reset_active': active if type(active) is bool else None,
+                    'current_reset_quality': value.quality.value if value is not None else None}
         if active is True:
             return self._result({**decision, 'state_at_period_end': 'suppressed'},
                                 reason='already_on')

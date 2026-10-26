@@ -27,8 +27,9 @@ from zontcontrol.heating import HeatingHistory
 from zontcontrol.heating_adapter import from_controller_history
 from zontcontrol.history import project_history
 from zontcontrol.monitor import assess_history, history_samples
+from zontcontrol.logging_config import YcLoggingFormatter
 from tests.fakes.clock import FakeClock
-from tests.test_heating_regressions import canonical_dates, load_cases
+from tests.test_heating_regressions import canonical_dates, frozen_projection, load_cases
 
 
 SETTINGS = dict(device_id=42, circuit_id=20496, air_sensor_id=8207,
@@ -75,6 +76,68 @@ def history_response(device_id, keys, start, end, *, data=None):
 
 
 class BoilerResetTests(unittest.TestCase):
+    def test_cancel_before_assessment_does_not_invent_diagnostics_or_zero_counts(self):
+        self.context.cancelled.set()
+        with self.assertLogs('zontcontrol', level='INFO') as captured:
+            result = self.module().run_once(self.context)
+        self.assertEqual(result.value, {'assessment': {'state_at_period_end': 'unknown'},
+                                      'reason': 'cancelled', 'reset_performed': False})
+        row = json.loads(YcLoggingFormatter().format(captured.records[-1]))
+        row.pop('timestamp')
+        nullable = ('requested_period', 'decision_reason', 'latest_valid_sample',
+                    'latest_valid_sample_age_seconds', 'reset_history_available',
+                    'reset_active_at_period_end', 'reset_latest_measured_at', 'reset_latest_quality',
+                    'current_reset_active', 'current_reset_quality', 'time_truncated',
+                    'telemetry_time_truncated', 'reset_time_truncated')
+        self.assertEqual(row, {'message': 'Boiler assessment finished', 'level': 'INFO',
+            'logger': 'zontcontrol.algorithms.boiler_reset', 'event': 'once_finished',
+            'algorithm_id': 'boiler_reset', 'device_id': 42, 'state': 'unknown',
+            'reset_performed': False, 'reason': 'cancelled', 'elapsed_ms': 0,
+            **dict.fromkeys(nullable)})
+        self.controller.read_history.assert_not_called()
+        self.controller.execute_command.assert_not_called()
+
+    def test_cancel_after_assessment_keeps_completed_diagnostics_and_original_reason(self):
+        decisions = []
+        def evaluate(history, *, config):
+            decision = assess_history(history, config=config)
+            decisions.append(decision)
+            self.context.cancelled.set()
+            return decision
+        with patch('zontcontrol.algorithms.boiler_reset.assess_history', side_effect=evaluate), \
+                self.assertLogs('zontcontrol', level='INFO') as captured:
+            result = self.module().run_once(self.context)
+        expected = {**decisions[0], 'telemetry_time_truncated': False, 'reset_time_truncated': False}
+        self.assertEqual(result.value, {'assessment': expected, 'reason': 'cancelled',
+                                      'reset_performed': False})
+        row = json.loads(YcLoggingFormatter().format(captured.records[-1]))
+        self.assertEqual((row['reason'], row['decision_reason'], row['detector_buffer_size']),
+                         ('cancelled', 'current_no_heating_response', 40))
+        self.assertIsNone(row['current_reset_active'])
+        self.assertIsNone(row['current_reset_quality'])
+        self.assertNotIn('current_reset_active', result.value['assessment'])
+        self.controller.read_current.assert_not_called()
+        self.controller.execute_command.assert_not_called()
+
+    def test_cancel_after_current_check_keeps_the_observed_reset_fields(self):
+        snapshot = self.controller.read_current.return_value
+        def current(*args):
+            self.context.cancelled.set()
+            return snapshot
+        self.controller.read_current.side_effect = current
+        with self.assertLogs('zontcontrol', level='INFO') as captured:
+            result = self.module().run_once(self.context)
+        self.assertEqual(result.value['reason'], 'cancelled')
+        self.assertIs(result.value['assessment']['current_reset_active'], False)
+        self.assertEqual(result.value['assessment']['current_reset_quality'], 'unknown')
+        row = json.loads(YcLoggingFormatter().format(captured.records[-1]))
+        self.assertIs(row['current_reset_active'], False)
+        self.assertEqual((row['current_reset_quality'], row['decision_reason']),
+                         ('unknown', 'current_no_heating_response'))
+        self.assertEqual(self.events, [])
+        self.controller.read_current.assert_called_once_with(42, (self.reset,))
+        self.controller.execute_command.assert_not_called()
+
     def test_broken_diagnostics_cannot_prevent_reset_or_finally_off(self):
         class BrokenHandler(logging.Handler):
             def emit(self, record):
@@ -304,6 +367,13 @@ class BoilerResetTests(unittest.TestCase):
                 decision = result.value['assessment']
                 self.assertEqual((decision['state_at_period_end'], decision['decision_reason']),
                                  (state, reason))
+                causal = [p for p in points or () if p.measured_at <= end]
+                latest = causal[-1] if causal else None
+                self.assertIs(decision['reset_history_available'], points is not None)
+                self.assertEqual(decision['reset_latest_measured_at'],
+                                 latest.measured_at.isoformat() if latest else None)
+                self.assertEqual(decision['reset_latest_quality'],
+                                 latest.quality.value if latest else None)
                 typed = assess.call_args.args[0]
                 self.assertEqual(None if typed.reset is None else tuple(
                     (p.measured_at, p.value, p.quality) for p in typed.reset.points),
@@ -349,6 +419,10 @@ class BoilerResetTests(unittest.TestCase):
                                      tuple((p.value, 'unknown') for p in telemetry.series[0].points))
                     self.assertEqual(result.value['assessment']['decision_reason'],
                         'truncated_history' if truncated else 'reset_state_unknown')
+                    self.assertIs(result.value['assessment']['telemetry_time_truncated'],
+                                  truncated == 'telemetry')
+                    self.assertIs(result.value['assessment']['reset_time_truncated'],
+                                  truncated == 'reset')
                     self.assertEqual(self.events, [])
 
     def test_cancel_after_either_history_never_assesses_or_commands(self):
@@ -398,7 +472,7 @@ class BoilerResetTests(unittest.TestCase):
             with self.subTest(case=case['name']):
                 converted = from_controller_history(history(case['packet']), device_id=42,
                     circuit_id=20496, air_id=8207, coolant_id=8429, reset_id=8832)
-                self.assertEqual(canonical_dates(assess_history(converted)),
+                self.assertEqual(canonical_dates(frozen_projection(assess_history(converted))),
                                  canonical_dates(case['expected']))
 
     def test_unknown_warning_and_old_events_do_not_send_commands(self):

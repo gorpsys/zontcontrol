@@ -147,6 +147,88 @@ class NormalizationTests(unittest.TestCase):
 
 
 class MonitorTests(unittest.TestCase):
+    def test_unusable_telemetry_never_accumulates_usable_samples(self):
+        data = heating_history()
+        cases = {
+            'missing_temperature': replace(data, air=None),
+            'bad_temperature_quality': replace(data, air=replace(data.air, points=tuple(
+                replace(point, quality='stale') for point in data.air.points))),
+            'wrong_sensor': replace(data, target_sensor_id=typed_series(typed_point(0, 999))),
+            'invalid_worktime': replace(data, worktime=typed_series(typed_point(0, 61))),
+        }
+        for name, history in cases.items():
+            with self.subTest(name=name):
+                result = assess_history(history)
+                self.assertEqual((result['usable_samples'], result['detector_buffer_size']), (0, 0))
+                self.assertEqual(result['state_at_period_end'], 'unknown')
+                self.assertEqual(result['valid_temperature_samples'],
+                                 0 if name in ('missing_temperature', 'bad_temperature_quality') else 45)
+
+    def test_future_temperatures_do_not_change_latest_measurement_or_age(self):
+        end = START + timedelta(seconds=2739.5)
+        for received, future_seconds in ((end, 2740), (START + timedelta(seconds=2700), 2730)):
+            with self.subTest(received=received):
+                data = heating_history(end=end, received_at=received)
+                future = typed_point(future_seconds, 99)
+                with_future = replace(data,
+                    air=replace(data.air, points=(*data.air.points, future)),
+                    coolant=replace(data.coolant, points=(*data.coolant.points, future)))
+                decision = assess_history(with_future)
+                self.assertEqual(decision, assess_history(data))
+                self.assertEqual(decision['latest_valid_sample'], typed_point(2700, 0).measured_at.isoformat())
+                self.assertEqual(decision['latest_valid_sample_age_seconds'], 39.5)
+                only_future = replace(with_future, air=typed_series(future))
+                missing = assess_history(only_future)
+                self.assertIsNone(missing['latest_valid_sample'])
+                self.assertIsNone(missing['latest_valid_sample_age_seconds'])
+                self.assertEqual((missing['state_at_period_end'], missing['decision_reason']),
+                                 ('unknown', 'insufficient_or_invalid_telemetry'))
+                self.assertEqual(only_future.air.points, (future,))
+                self.assertEqual(with_future.air.points, (*data.air.points, future))
+
+    def test_last_bad_reset_duplicate_keeps_its_timestamp_and_quality(self):
+        data = heating_history(reset=typed_series(typed_point(0, False),
+            typed_point(2700, False), typed_point(2700, False, 'stale')))
+        decision = assess_history(data)
+        self.assertTrue(decision['reset_history_available'])
+        self.assertEqual(decision['reset_latest_measured_at'], data.end.isoformat())
+        self.assertEqual(decision['reset_latest_quality'], 'stale')
+        self.assertIsNone(decision['reset_active_at_period_end'])
+        self.assertEqual((decision['state_at_period_end'], decision['decision_reason']),
+                         ('unknown', 'reset_state_unknown'))
+        self.assertEqual(len(data.reset.points), 3)
+
+    def test_diagnostics_distinguish_valid_temperatures_usable_samples_and_buffer(self):
+        data = heating_history()
+        decision = assess_history(data)
+        self.assertEqual((decision['valid_temperature_samples'], decision['usable_samples'],
+                          decision['detector_buffer_size']), (45, 45, 40))
+        self.assertEqual(decision['latest_valid_sample_age_seconds'], 0)
+        self.assertEqual(decision['reset_latest_measured_at'], START.isoformat())
+        self.assertEqual(decision['reset_latest_quality'], 'good')
+        # A missing target clears the buffer without invalidating temperatures.
+        target = typed_series(typed_point(0, 23.5), typed_point(2640, None))
+        decision = assess_history(replace(data, air_target=target))
+        self.assertEqual((decision['valid_temperature_samples'], decision['usable_samples'],
+                          decision['detector_buffer_size']), (45, 43, 0))
+
+    def test_diagnostic_age_and_reset_keep_causal_timestamps_quality_and_nulls(self):
+        end = START + timedelta(seconds=2739.5)
+        decision = assess_history(heating_history(end=end, received_at=end,
+            air=typed_series(typed_point(2400, 23.5)),
+            reset=typed_series(typed_point(0, 0), typed_point(2700, 0, 'stale'),
+                               typed_point(2740, 1))))
+        self.assertEqual(decision['latest_valid_sample_age_seconds'], 339.5)
+        self.assertEqual(decision['reset_latest_measured_at'], typed_point(2700, 0).measured_at.isoformat())
+        self.assertEqual(decision['reset_latest_quality'], 'stale')
+        self.assertIsNone(decision['reset_active_at_period_end'])
+        decision = assess_history(heating_history(air=None, reset=None, time_truncated=True))
+        for name in ('latest_valid_sample', 'latest_valid_sample_age_seconds',
+                     'reset_latest_measured_at', 'reset_latest_quality'):
+            self.assertIsNone(decision[name])
+        self.assertTrue(decision['time_truncated'])
+        self.assertEqual(decision['usable_samples'], 0)
+
     def test_read_only_assessment_returns_current_pattern(self):
         result = assess_history(heating_history())
         self.assertEqual(result['state_at_period_end'], 'confirmed_pattern')
