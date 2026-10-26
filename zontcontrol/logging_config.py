@@ -22,6 +22,53 @@ LOGGER_NAME = 'zontcontrol'
 _IDENTIFIER = re.compile(r'[A-Za-z0-9_.:-]{1,128}\Z')
 
 
+def _timestamp(value):
+    if not isinstance(value, str) or len(value) > 40:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+        return parsed.utcoffset() == timezone.utc.utcoffset(None)
+    except ValueError:
+        return False
+
+
+def _diagnostics(record):
+    fields = {}
+    for name in ('decision_reason', 'reason'):
+        value = getattr(record, name, None)
+        if value is None or type(value) is str and _IDENTIFIER.fullmatch(value):
+            if hasattr(record, name):
+                fields[name] = value
+    for name in ('reset_latest_quality', 'current_reset_quality'):
+        value = getattr(record, name, None)
+        if hasattr(record, name) and (value is None or type(value) is str
+                                     and value in ('good', 'unknown', 'missing', 'stale')):
+            fields[name] = value
+    for name in ('latest_valid_sample', 'reset_latest_measured_at'):
+        value = getattr(record, name, None)
+        if hasattr(record, name) and (value is None or _timestamp(value)):
+            fields[name] = value
+    for name in ('reset_history_available', 'reset_active_at_period_end', 'current_reset_active',
+                 'time_truncated', 'telemetry_time_truncated', 'reset_time_truncated'):
+        value = getattr(record, name, None)
+        if hasattr(record, name) and (value is None or type(value) is bool):
+            fields[name] = value
+    for name in ('valid_temperature_samples', 'usable_samples', 'detector_buffer_size'):
+        value = getattr(record, name, None)
+        if type(value) is int and value >= 0:
+            fields[name] = value
+    age = getattr(record, 'latest_valid_sample_age_seconds', None)
+    if hasattr(record, 'latest_valid_sample_age_seconds') and (age is None or (
+            type(age) in (int, float) and 0 <= age <= 1e12)):
+        fields['latest_valid_sample_age_seconds'] = age
+    period = getattr(record, 'requested_period', None)
+    if type(period) is dict and all(_timestamp(period.get(key)) for key in ('start', 'end')):
+        fields['requested_period'] = {key: period[key] for key in ('start', 'end')}
+    elif hasattr(record, 'requested_period') and period is None:
+        fields['requested_period'] = None
+    return fields
+
+
 def _fields(record: logging.LogRecord) -> dict[str, Any]:
     fields = {'timestamp': datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
               'message': record.getMessage(),
@@ -44,7 +91,7 @@ def _fields(record: logging.LogRecord) -> dict[str, Any]:
                 fields['elapsed_ms'] = elapsed
         except OverflowError:
             pass
-    return fields
+    return {**fields, **_diagnostics(record)}
 
 
 class YcLoggingFormatter(logging.Formatter):

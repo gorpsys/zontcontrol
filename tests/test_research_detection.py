@@ -18,7 +18,7 @@ from zontcontrol.detection_profile import SMART_2_HEATING_CONFIG
 from zontcontrol.anomaly import DetectionConfig
 from zontcontrol.heating import HeatingHistory
 from zontcontrol.monitor import assess_history, history_samples
-from tests.test_heating_regressions import load_cases, canonical_dates
+from tests.test_heating_regressions import load_cases, canonical_dates, frozen_projection
 
 
 END = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -88,7 +88,7 @@ class ResearchDetectionTests(unittest.TestCase):
         expected = deepcopy(case['expected'])
         expected['device_id'] = 700877
         expected['requested_period']['start'] = (end - timedelta(minutes=46)).isoformat()
-        self.assertEqual(canonical_dates(assess_history(history)), canonical_dates(expected))
+        self.assertEqual(canonical_dates(frozen_projection(assess_history(history))), canonical_dates(expected))
 
     def test_initial_measurement_age_is_not_relabelled_to_window_start(self):
         values = {**self.series, 'air': [(T - 7200, 23.5)], 'coolant': [(T - 7200, 40)]}
@@ -101,6 +101,9 @@ class ResearchDetectionTests(unittest.TestCase):
             'device_id': 700877, 'circuit_id': 20496, 'state_at_period_end': 'unknown',
             'anomaly': None, 'decision_reason': 'insufficient_or_invalid_telemetry',
             'valid_temperature_samples': 0, 'latest_valid_sample': (END - timedelta(hours=2)).isoformat(),
+            'usable_samples': 0, 'detector_buffer_size': 0, 'latest_valid_sample_age_seconds': 7200,
+            'time_truncated': False, 'reset_latest_measured_at': (END - timedelta(hours=1)).isoformat(),
+            'reset_latest_quality': 'good',
             'reset_history_available': True, 'reset_active_at_period_end': False,
             'events': [], 'automatic_control': False, 'incident_pending': False})
 

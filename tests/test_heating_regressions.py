@@ -103,6 +103,13 @@ def normalized_expected(case):
     return expected
 
 
+def frozen_projection(assessment):
+    """Keep every legacy field; additive diagnostics have dedicated regressions."""
+    added = {'usable_samples', 'detector_buffer_size', 'latest_valid_sample_age_seconds',
+             'time_truncated', 'reset_latest_measured_at', 'reset_latest_quality'}
+    return {key: value for key, value in assessment.items() if key not in added}
+
+
 class HeatingRegressionTests(unittest.TestCase):
     def test_controller_and_archive_match_complete_frozen_assessments(self):
         # These cases have values/timestamps representable at BOTH boundaries.
@@ -125,8 +132,8 @@ class HeatingRegressionTests(unittest.TestCase):
                 controller = from_controller_history(dto, **BINDINGS)
                 archive = from_archive_packet(packet, **BINDINGS)
                 expected = canonical_dates(normalized_expected(case))
-                self.assertEqual(canonical_dates(assess_history(controller)), expected)
-                self.assertEqual(canonical_dates(assess_history(archive)), expected)
+                self.assertEqual(canonical_dates(frozen_projection(assess_history(controller))), expected)
+                self.assertEqual(canonical_dates(frozen_projection(assess_history(archive))), expected)
 
     def test_absent_and_explicit_empty_reset_have_separate_full_results(self):
         cases = {case['name']: case for case in load_cases()}
@@ -136,7 +143,7 @@ class HeatingRegressionTests(unittest.TestCase):
             for history in (from_archive_packet(case['packet'], **BINDINGS),
                             from_controller_history(controller_input(case['packet']), **BINDINGS)):
                 result = assess_history(history)
-                self.assertEqual(canonical_dates(result), canonical_dates(case['expected']))
+                self.assertEqual(canonical_dates(frozen_projection(result)), canonical_dates(case['expected']))
                 self.assertIs(result['reset_history_available'], available)
                 actual[name] = result
         self.assertEqual({**actual['reset_missing'], 'reset_history_available': True}, actual['reset_empty'])
@@ -155,7 +162,7 @@ class HeatingRegressionTests(unittest.TestCase):
                         'valid_temperature_samples': 0, 'latest_valid_sample': None,
                         'events': [], 'incident_pending': False}
             with self.subTest(quality=quality):
-                self.assertEqual(canonical_dates(result), canonical_dates(expected))
+                self.assertEqual(canonical_dates(frozen_projection(result)), canonical_dates(expected))
                 self.assertEqual(typed.air.points[0].value, 23.5)
                 self.assertEqual(typed.air.points[0].quality, quality.value)
                 self.assertEqual(source.series[0], altered)
@@ -167,7 +174,7 @@ class HeatingRegressionTests(unittest.TestCase):
         for name in order:
             case = cases[name]
             history = from_archive_packet(case['packet'], **BINDINGS)
-            self.assertEqual(canonical_dates(assess_history(history)),
+            self.assertEqual(canonical_dates(frozen_projection(assess_history(history))),
                              canonical_dates(normalized_expected(case)), name)
 
     def test_complete_assessments_match_frozen_results(self):
@@ -180,6 +187,7 @@ class HeatingRegressionTests(unittest.TestCase):
                 history = from_archive_packet(packet, device_id=42, circuit_id=20496,
                                               air_id=8207, coolant_id=8429, reset_id=8832)
                 actual = assess_history(history)
-                self.assertEqual(canonical_dates(actual), canonical_dates(normalized_expected(case)))
-                self.assertEqual(set(actual), set(case['expected']))
+                self.assertEqual(canonical_dates(frozen_projection(actual)),
+                                 canonical_dates(normalized_expected(case)))
+                self.assertEqual(set(frozen_projection(actual)), set(case['expected']))
                 self.assertEqual(packet, original)

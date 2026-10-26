@@ -121,13 +121,118 @@ class CloudHandlerTests(unittest.TestCase):
                     'device_id': 1, 'execute': False, 'token': 'event-private'})
                 self.assertEqual(result, {'version': __version__, 'algorithm_id': 'boiler_reset',
                     'status': status, 'state_at_period_end': state, 'reset_performed': False,
-                    'reason': None, 'assessment': {'state_at_period_end': state},
+                    'reason': None, 'assessment': {'state_at_period_end': state,
+                        'telemetry_time_truncated': False, 'reset_time_truncated': False},
                     'log': self.output.getvalue()[output_start:],
                     'notes_saved': True, 'notes_error': None})
                 self.assertTrue(result['log'])
                 self.assertEqual(self.events, ['transport_closed'])
                 self.assertEqual(self.controller.read_history.call_args.args[0], 700877)
         self.assertNotIn('event-private', self.output.getvalue())
+
+    def test_unknown_diagnostics_survive_real_policy_formatter_response_and_notes(self):
+        original_read = self.controller.read_history.side_effect
+        for truncated in ('telemetry', 'reset', 'both'):
+            self.events.clear()
+            self.controller.read_history.reset_mock()
+            def read(device, keys, start, end):
+                data = original_read(device, keys, start, end)
+                is_reset = len(keys) == 1
+                return replace(data, time_truncated=truncated == 'both' or
+                               (is_reset == (truncated == 'reset')))
+            self.controller.read_history.side_effect = read
+            with self.subTest(truncated=truncated):
+                report = self.invoke()
+                decision = report['assessment']
+                rendered = next(line for line in report['log'].splitlines()
+                                if json.loads(line).get('event') == 'once_finished')
+                finished = json.loads(rendered)
+                self.assertEqual(report['status'], 'unknown')
+                self.assertEqual(finished['decision_reason'], 'truncated_history')
+                self.assertIsNone(finished['reason'])
+                assessment_only = {'fetched_at', 'device_id', 'circuit_id', 'state_at_period_end',
+                                   'anomaly', 'events', 'automatic_control', 'incident_pending'}
+                self.assertEqual({key: value for key, value in finished.items()
+                                  if key not in ('timestamp', 'elapsed_ms')},
+                    {'message': 'Boiler assessment finished', 'level': 'INFO',
+                     'logger': 'zontcontrol.algorithms.boiler_reset', 'event': 'once_finished',
+                     'algorithm_id': 'boiler_reset', 'device_id': 700877,
+                     'state': 'unknown', 'reset_performed': False,
+                     **{key: value for key, value in decision.items() if key not in assessment_only},
+                     'reason': None, 'current_reset_active': None, 'current_reset_quality': None})
+                self.assertIs(finished['telemetry_time_truncated'], truncated != 'reset')
+                self.assertIs(finished['reset_time_truncated'], truncated != 'telemetry')
+                self.assertLessEqual(len(rendered.encode('utf-8')), 2048)
+                self.assertNotIn('events', finished)
+                self.assertEqual(json.loads(self.controller.write_notes.call_args.args[1])[0], report['log'])
+                self.assertEqual(self.events, ['transport_closed'])
+
+    def test_current_reset_unknown_keeps_detector_reason_and_current_quality_separate(self):
+        snapshot = self.controller.read_current.return_value
+        self.controller.read_current.return_value = replace(snapshot,
+            values=(replace(snapshot.values[0], value=None, quality=Quality.MISSING),))
+        report = self.invoke()
+        finished = next(row for row in self.log_rows(report) if row.get('event') == 'once_finished')
+        self.assertEqual(report['status'], 'unknown')
+        self.assertEqual((finished['decision_reason'], finished['reason']),
+                         ('current_no_heating_response', 'current_reset_unknown'))
+        self.assertIs(finished['reset_active_at_period_end'], False)
+        self.assertIsNone(finished['current_reset_active'])
+        self.assertEqual(finished['current_reset_quality'], 'missing')
+        self.assertEqual(report['assessment']['current_reset_quality'], 'missing')
+        self.assertEqual(self.events, ['transport_closed'])
+
+    def test_current_reset_diagnostics_distinguish_absent_stale_and_good_null_readings(self):
+        snapshot = self.controller.read_current.return_value
+        reading = snapshot.values[0]
+        for value in (None, replace(reading, quality=Quality.STALE),
+                      replace(reading, value=None, quality=Quality.GOOD)):
+            with self.subTest(quality=value.quality if value else None):
+                self.events.clear()
+                self.controller.read_current.return_value = replace(snapshot,
+                    values=() if value is None else (value,))
+                report = self.invoke()
+                expected_quality = value.quality.value if value else None
+                for container in (report['assessment'], next(
+                        row for row in self.log_rows(report) if row.get('event') == 'once_finished')):
+                    self.assertIn('current_reset_active', container)
+                    self.assertIsNone(container['current_reset_active'])
+                    self.assertIn('current_reset_quality', container)
+                    self.assertEqual(container['current_reset_quality'], expected_quality)
+                self.assertEqual((report['status'], report['reason']),
+                                 ('unknown', 'current_reset_unknown'))
+                self.assertEqual(self.events, ['transport_closed'])
+                self.controller.prepare_command.assert_not_called()
+
+    def test_stale_temperatures_and_absent_reset_remain_distinguishable_in_main_log(self):
+        original_read = self.controller.read_history.side_effect
+        for mode, reason in (('stale', 'insufficient_or_invalid_telemetry'),
+                             ('empty_reset', 'reset_state_unknown')):
+            self.events.clear()
+            def read(device, keys, start, end):
+                data = original_read(device, keys, start, end)
+                if mode == 'empty_reset' and len(keys) == 1:
+                    return replace(data, series=tuple(replace(row, points=()) for row in data.series))
+                if mode == 'stale':
+                    return replace(data, series=tuple(replace(row, points=tuple(
+                        point for point in row.points if point.measured_at <= end - timedelta(minutes=4)))
+                        if row.key.kind == 'sensor' else row for row in data.series))
+                return data
+            self.controller.read_history.side_effect = read
+            with self.subTest(mode=mode):
+                report = self.invoke()
+                finished = next(row for row in self.log_rows(report) if row.get('event') == 'once_finished')
+                self.assertEqual((report['status'], finished['decision_reason']), ('unknown', reason))
+                self.assertEqual(finished['detector_buffer_size'], 0)
+                if mode == 'stale':
+                    self.assertGreaterEqual(finished['latest_valid_sample_age_seconds'], 240)
+                    self.assertIs(finished['reset_active_at_period_end'], False)
+                else:
+                    self.assertIsNone(finished['reset_active_at_period_end'])
+                    self.assertIsNone(finished['reset_latest_measured_at'])
+                    self.assertIsNone(finished['reset_latest_quality'])
+                    self.assertEqual(finished['usable_samples'], 0)
+                self.assertEqual(self.events, ['transport_closed'])
 
     def test_confirmed_sends_one_real_policy_pulse_then_closes(self):
         result = self.invoke(context=SimpleNamespace(request_id='request-123'))
@@ -271,7 +376,9 @@ class CloudHandlerTests(unittest.TestCase):
         with patch('zontcontrol.algorithms.boiler_reset.assess_history', return_value=assessment):
             result = self.invoke()
         self.assertEqual(result['status'], 'success')
-        self.assertEqual(result['assessment'], assessment)
+        self.assertNotIn('telemetry_time_truncated', assessment)
+        self.assertEqual(result['assessment'], {**assessment,
+            'telemetry_time_truncated': False, 'reset_time_truncated': False})
         self.assertEqual(result['assessment']['events'][-1]['reason'], 'heating_response_returned')
         self.assertTrue(result['assessment']['events'][-1]['heat_returned'])
         self.assertEqual(self.events, ['transport_closed'])

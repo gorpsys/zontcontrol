@@ -147,6 +147,30 @@ requested_period — исходный запрос истории, а latest_val
 sample_period/sample_lag_seconds в ответ не добавлены; границы сетки приводятся
 только в [отчёте нормализации](../reports/2026-10-20-typed-heating-regressions.md).
 
+Диагностика assessment и основного события once_finished:
+
+- valid_temperature_samples — минуты с обеими ненулевыми температурами;
+  прежнее поле не проверяет пригодность остальных каналов.
+- usable_samples — число точек, принятых в буфер детектора за весь проход;
+  detector_buffer_size — размер буфера в конце, после очисток, максимум 40.
+- latest_valid_sample_age_seconds — возраст latest_valid_sample на конец
+  requested_period, null при отсутствии точки. Метка сохраняет прежний смысл:
+  минимум последних good ненулевых измерений воздуха и воды.
+- reset_active_at_period_end — историческое состояние reset на T;
+  reset_latest_measured_at/reset_latest_quality — метка и качество последней
+  причинно доступной точки reset, null при её отсутствии. Плохая последняя
+  точка не заменяется предыдущей good.
+- time_truncated — объединённый флаг; BoilerReset дополнительно сохраняет
+  telemetry_time_truncated и reset_time_truncated отдельно для каждого ответа.
+- decision_reason — причина monitor; reason рядом с assessment — причина
+  алгоритма. При current_reset_unknown сохраняются также current_reset_active
+  и current_reset_quality из отдельной проверки перед командой. Они не заменяют
+  исторический reset на T; отсутствие проверки в логе обозначается null.
+
+once_finished содержит эти поля и requested_period без events, исходных рядов,
+конфигов и заголовков. Это ограниченная структурная диагностика, а не снимок
+входа для строгого повтора; правила решения и пороги не меняются.
+
 ## 9. Калибровка и проверка
 
 Числа ниже — сохранённый результат подбора 13.10.2026 до новой нормализации.

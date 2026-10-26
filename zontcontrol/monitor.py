@@ -95,9 +95,12 @@ def assess_history(history: HeatingHistory, *, config=None):
     detector = NoHeatDetector(config, require_known_reset=True)
     events = []
     valid = 0
+    usable_samples = 0
     last_sample = None
     for sample in history_samples(history):
         event = detector.update(sample)
+        if detector.samples and detector.samples[-1] is sample:
+            usable_samples += 1
         last_sample = sample
         if event:
             events.append(event)
@@ -109,6 +112,8 @@ def assess_history(history: HeatingHistory, *, config=None):
         last_measurements.append(max(times) if times else None)
     latest = min(last_measurements) if all(last_measurements) else None
     reset_active, reset_changed_at = _reset_at_end(history)
+    reset_points = _points(history, history.reset)
+    latest_reset = reset_points[-1] if reset_points else None
     in_grace = (reset_changed_at is not None
                 and (history.end - reset_changed_at).total_seconds() < config.reset_grace_minutes * 60)
     values = ((last_sample.air, last_sample.air_target, last_sample.coolant,
@@ -136,9 +141,15 @@ def assess_history(history: HeatingHistory, *, config=None):
         'device_id': history.device_id, 'circuit_id': history.circuit_id,
         'state_at_period_end': state, 'anomaly': anomaly, 'decision_reason': reason,
         'valid_temperature_samples': valid,
+        'usable_samples': usable_samples,
+        'detector_buffer_size': len(detector.samples),
         'latest_valid_sample': latest.isoformat() if latest else None,
+        'latest_valid_sample_age_seconds': (history.end - latest).total_seconds() if latest else None,
+        'time_truncated': history.time_truncated,
         'reset_history_available': history.reset is not None,
         'reset_active_at_period_end': reset_active,
+        'reset_latest_measured_at': latest_reset.measured_at.isoformat() if latest_reset else None,
+        'reset_latest_quality': latest_reset.quality if latest_reset else None,
         'events': events, 'automatic_control': False,
         'incident_pending': detector.incident_pending,
     }
