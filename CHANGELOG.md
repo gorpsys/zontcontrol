@@ -2,6 +2,12 @@
 
 ## Не выпущено
 
+## [0.7.7](docs/reference/anomaly-detection.md) - 2026-10-26
+
+- Детектор создаёт длительности pulse/demand один раз на update вместо
+  каждой точки окна. Буфер 40, арифметика datetime, предметные проверки,
+  пороги и полный результат assessment сохранены. Миграция не требуется.
+
 ## [0.7.6](docs/reference/anomaly-detection.md) - 2026-10-26
 
 - В assessment и основном логе once_finished сохранены причины unknown,
