@@ -1,7 +1,13 @@
+import gc
 import unittest
+import weakref
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from threading import Barrier
+from unittest.mock import patch
 
+from zontcontrol import monitor
 from zontcontrol.monitor import assess_history, history_samples
 from zontcontrol.heating import HeatingHistory, HeatingPoint, HeatingSeries
 
@@ -26,6 +32,274 @@ def heating_history(**changes):
         air_target=typed_series(typed_point(0, 23.5)), coolant_target=typed_series(typed_point(0, 60)),
         worktime=typed_series(typed_point(0, 60)), target_sensor_id=typed_series(typed_point(0, 8207)),
         reset=typed_series(typed_point(0, 0))), **changes)
+
+
+class RowCacheTests(unittest.TestCase):
+    def test_hit_uses_identity_and_retains_immutable_preparation(self):
+        cache = monitor._RowCache()
+        row = typed_series(typed_point(0, 23))
+        prepared = cache.get(row, START)
+        self.assertIs(cache.get(row, START), prepared)
+        self.assertIsInstance(prepared[0], tuple)
+        self.assertIsInstance(prepared[1], tuple)
+        with self.assertRaises(TypeError):
+            prepared[0][0] = typed_point(0, 99)
+        equal_copy = HeatingSeries(row.points)
+        self.assertEqual(row, equal_copy)
+        self.assertIsNot(cache.get(equal_copy, START), prepared)
+        self.assertEqual(len(cache._entries), 2)
+
+    def test_revisions_and_equal_scalar_types_never_alias(self):
+        cache = monitor._RowCache()
+        preparations = []
+        for value, quality in ((False, 'good'), (0, 'good'), (0.0, 'good'),
+                               (1, 'good'), (1.0, 'good'), (None, 'unknown'), (0, 'stale')):
+            with self.subTest(value=value, quality=quality):
+                row = typed_series(typed_point(0, value, quality))
+                prepared = cache.get(row, START)
+                self.assertTrue(all(prepared is not old for old in preparations))
+                self.assertIs(type(prepared[0][0].value), type(value))
+                self.assertEqual(prepared[0][0].quality, quality)
+                preparations.append(prepared)
+
+    def test_exact_cutoff_forward_backward_and_return(self):
+        row = typed_series(typed_point(-1, 10), typed_point(0, 20),
+                           typed_point(.000001, 21), typed_point(1, 22))
+        cache = monitor._RowCache()
+        history = heating_history(air=row)
+        original = cache.get(row, START)
+        for offset in (1, .000001, -1, 0, 2, -2):
+            with self.subTest(offset=offset):
+                cutoff = START + timedelta(seconds=offset)
+                points, index = cache.get(row, cutoff)
+                expected = monitor._points(replace(history, received_at=cutoff), row)
+                self.assertEqual(points, tuple(expected))
+                self.assertEqual(index, tuple(point.measured_at for point in expected))
+        self.assertIs(cache.get(row, START), original)
+
+    def test_stable_filter_retains_anchors_duplicates_null_and_quality(self):
+        values = ((None, 'good'), (22, 'unknown'), (23, 'missing'), (24, 'stale'))
+        row = typed_series(typed_point(-60, 18), typed_point(0, 20),
+                           *(typed_point(0, value, quality) for value, quality in values),
+                           typed_point(1, 99))
+        points, index = monitor._RowCache().get(row, START)
+        self.assertEqual(points, row.points[:-1])
+        self.assertTrue(all(actual is source for actual, source in zip(points, row.points)))
+        self.assertEqual(index, (START - timedelta(minutes=1),) + (START,) * 5)
+        self.assertEqual(points[-1].quality, 'stale')
+
+    def test_none_empty_and_future_rows(self):
+        cache = monitor._RowCache()
+        self.assertEqual(cache.get(None, START), ((), ()))
+        self.assertFalse(cache._entries)
+        empty = HeatingSeries(())
+        future = typed_series(typed_point(1, 20))
+        for row in (empty, future):
+            self.assertEqual(cache.get(row, START), ((), ()))
+        self.assertEqual(len(cache._entries), 2)
+        self.assertIs(cache.get(empty, START), cache.get(empty, START))
+
+    def test_lru_hit_promotes_entry_and_eviction_recomputes(self):
+        cache = monitor._RowCache(capacity=2)
+        a, b, c = (typed_series(typed_point(0, value)) for value in (10, 20, 30))
+        prepared_a = cache.get(a, START)
+        prepared_b = cache.get(b, START)
+        self.assertIs(cache.get(a, START), prepared_a)
+        cache.get(c, START)
+        self.assertEqual(len(cache._entries), 2)
+        self.assertNotIn((id(b), START), cache._entries)
+        self.assertIs(cache.get(a, START), prepared_a)
+        self.assertIsNot(cache.get(b, START), prepared_b)
+        self.assertEqual(len(cache._entries), 2)
+
+    def test_row_reference_is_retained_until_eviction_or_cache_destruction(self):
+        class TrackedSeries(HeatingSeries):
+            pass
+
+        cache = monitor._RowCache(capacity=1)
+        row = TrackedSeries((typed_point(0, 20),))
+        reference = weakref.ref(row)
+        cache.get(row, START)
+        del row
+        gc.collect()
+        self.assertIsNotNone(reference())
+        cache.get(typed_series(typed_point(0, 21)), START)
+        gc.collect()
+        self.assertIsNone(reference())
+        row = TrackedSeries((typed_point(0, 22),))
+        reference = weakref.ref(row)
+        cache.get(row, START)
+        del row, cache
+        gc.collect()
+        self.assertIsNone(reference())
+
+    def test_invalid_capacity(self):
+        for capacity in (True, False, 0, -1, 1.0, None, '7'):
+            with self.subTest(capacity=capacity), self.assertRaises(ValueError):
+                monitor._RowCache(capacity)
+
+    def test_all_capacities_preserve_results_and_expected_assessment_trace(self):
+        history = heating_history()
+        rows = [getattr(history, name) for name in (
+            'air', 'coolant', 'air_target', 'coolant_target', 'worktime', 'target_sensor_id', 'reset')]
+        trace = rows + [history.air, history.coolant, history.reset, history.reset]
+        for capacity in range(6, 15):
+            with self.subTest(capacity=capacity):
+                cache = monitor._RowCache(capacity)
+                hits = misses = evictions = 0
+                for row in trace:
+                    key = (id(row), history.end)
+                    before = set(cache._entries)
+                    hits += key in before
+                    misses += key not in before
+                    points, index = cache.get(row, history.end)
+                    evictions += len(before - set(cache._entries))
+                    expected = monitor._points(history, row)
+                    self.assertEqual(points, tuple(expected))
+                    self.assertEqual(index, tuple(point.measured_at for point in expected))
+                    self.assertLessEqual(len(cache._entries), capacity)
+                self.assertEqual((hits, misses, evictions), (2, 9, 3) if capacity == 6 else (4, 7, 0))
+
+
+class RowCacheIntegrationTests(unittest.TestCase):
+    class ReferenceRows:
+        def get(self, row, cutoff):
+            points = monitor._points(heating_history(received_at=cutoff), row)
+            return points, [point.measured_at for point in points]
+
+    def test_complete_results_and_samples_match_uncached_preparation(self):
+        base = heating_history()
+        cases = [base, replace(base, air=None), replace(base, reset=None),
+                 replace(base, air=HeatingSeries(())), replace(base, time_truncated=True),
+                 replace(base, air_sensor_id=999), replace(base, device_id=99, circuit_id=88),
+                 replace(base, start=base.end - timedelta(minutes=2)),
+                 replace(base, worktime=typed_series(typed_point(0, float('inf')))),
+                 replace(base, coolant=typed_series(typed_point(0, float('nan')))),
+                 replace(base, end=base.end - timedelta(seconds=17)),
+                 replace(base, received_at=base.end - timedelta(seconds=70)),
+                 replace(base, reset=typed_series(typed_point(0, 0), typed_point(2670, 1))),
+                 replace(base, reset=typed_series(typed_point(0, 0), typed_point(2650, 1),
+                                                  typed_point(2680, 0))),
+                 replace(base, coolant=typed_series(*base.coolant.points, typed_point(2700, None, 'missing')))]
+        for index, history in enumerate(cases):
+            with self.subTest(case=index):
+                with patch.object(monitor, '_RowCache', self.ReferenceRows):
+                    expected = assess_history(history)
+                    samples = list(history_samples(history))
+                self.assertEqual(assess_history(history), expected)
+                self.assertEqual(list(history_samples(history)), samples)
+
+    def test_config_and_metadata_are_never_memoized(self):
+        history = heating_history()
+        smart = monitor.SMART_2_HEATING_CONFIG
+        for config in (None, smart, replace(smart, warning_minutes=5, confirm_minutes=5), smart):
+            with self.subTest(config=config):
+                with patch.object(monitor, '_RowCache', self.ReferenceRows):
+                    expected = assess_history(history, config=config)
+                self.assertEqual(assess_history(history, config=config), expected)
+        self.assertEqual(assess_history(history), assess_history(history, config=None))
+
+    def test_cutoff_minimum_and_reset_helper_match_original(self):
+        base = heating_history(reset=typed_series(typed_point(0, 0), typed_point(2690, 1)))
+        for end_offset, received_offset in ((0, 0), (0, -60), (-60, 0), (-60, -60),
+                                            (-.000001, 0), (0, -.000001)):
+            with self.subTest(end=end_offset, received=received_offset):
+                history = replace(base, end=base.end + timedelta(seconds=end_offset),
+                                  received_at=base.end + timedelta(seconds=received_offset))
+                self.assertEqual(monitor._reset_at_end(history, row_cache=monitor._RowCache()),
+                                 monitor._reset_at_end(history))
+                with patch.object(monitor, '_RowCache', self.ReferenceRows):
+                    expected = assess_history(history)
+                self.assertEqual(assess_history(history), expected)
+
+    def test_one_cache_per_call_and_exact_lookup_trace(self):
+        original = monitor._RowCache
+        created = []
+
+        class RecordingCache(original):
+            def __init__(self):
+                super().__init__()
+                self.rows = []
+                created.append(self)
+
+            def get(self, row, cutoff):
+                self.rows.append(row)
+                return super().get(row, cutoff)
+
+        history = heating_history()
+        with patch.object(monitor, '_RowCache', RecordingCache):
+            assess_history(history)
+            assess_history(history)
+        self.assertEqual(len(created), 2)
+        expected = [getattr(history, name) for name in (
+            'air', 'coolant', 'air_target', 'coolant_target', 'worktime', 'target_sensor_id', 'reset')]
+        expected += [history.air, history.coolant, history.reset, history.reset]
+        for cache in created:
+            self.assertEqual(len(cache.rows), 11)
+            self.assertTrue(all(actual is wanted for actual, wanted in zip(cache.rows, expected)))
+            self.assertEqual(len(cache._entries), 7)
+        self.assertIsNot(created[0], created[1])
+
+    def test_generators_are_lazy_interleaved_and_release_their_caches(self):
+        factory = monitor._RowCache
+        references = []
+
+        def create():
+            cache = factory()
+            references.append(weakref.ref(cache))
+            return cache
+
+        first_history = heating_history()
+        second_history = heating_history(air_sensor_id=999)
+        expected_first = list(history_samples(first_history))
+        expected_second = list(history_samples(second_history))
+        with patch.object(monitor, '_RowCache', create):
+            first = history_samples(first_history)
+            second = history_samples(second_history)
+            self.assertFalse(references)
+            self.assertEqual(next(first), expected_first[0])
+            self.assertEqual(next(second), expected_second[0])
+            self.assertEqual(len(references), 2)
+            first.close()
+            gc.collect()
+            self.assertIsNone(references[0]())
+            self.assertIsNotNone(references[1]())
+            self.assertEqual(list(second), expected_second[1:])
+            gc.collect()
+            self.assertIsNone(references[1]())
+
+    def test_parallel_assessments_are_isolated(self):
+        histories = (heating_history(), heating_history(time_truncated=True, reset=None))
+        expected = [assess_history(history) for history in histories]
+        barrier = Barrier(2)
+
+        def run(history):
+            barrier.wait(timeout=5)
+            return assess_history(history)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(list(pool.map(run, histories)), expected)
+
+    def test_new_right_support_recomputes_the_previous_unknown_minute(self):
+        t = START
+        air = typed_series(typed_point(-90, 22),
+                           *(typed_point(30 + 60 * i, 22) for i in range(4)))
+        coolant = typed_series(typed_point(-90, 20),
+                               *(typed_point(30 + 60 * i, 22 + i) for i in range(4)))
+        history = heating_history(start=t - timedelta(minutes=46), end=t, received_at=t,
+                                  air=air, coolant=coolant, worktime=typed_series(typed_point(-7200, 0)),
+                                  air_target=typed_series(typed_point(-7200, 23)),
+                                  coolant_target=typed_series(typed_point(-7200, 50)),
+                                  target_sensor_id=typed_series(typed_point(-7200, 8207)),
+                                  reset=typed_series(typed_point(-7200, False)))
+        past_minute = t - timedelta(minutes=1)
+        before = {sample.time: sample for sample in history_samples(history)}
+        self.assertIsNone(before[past_minute].coolant)
+        advanced = replace(history, end=t + timedelta(minutes=1), received_at=t + timedelta(minutes=1))
+        after = {sample.time: sample for sample in history_samples(advanced)}
+        self.assertAlmostEqual(after[past_minute].coolant, 20.5)
+        current = replace(history, end=t + timedelta(minutes=4), received_at=t + timedelta(minutes=4))
+        self.assertEqual(assess_history(current)['state_at_period_end'], 'normal')
 
 
 class NormalizationTests(unittest.TestCase):

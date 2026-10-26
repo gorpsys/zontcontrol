@@ -2,11 +2,40 @@
 
 import bisect
 import math
+from collections import OrderedDict
 from datetime import timedelta
 
 from .anomaly import HeatingSample, NoHeatDetector
 from .detection_profile import SMART_2_HEATING_CONFIG
 from .heating import HeatingHistory
+
+
+class _RowCache:
+    """Retain exact immutable row preparations for one assessment."""
+
+    def __init__(self, capacity=7):
+        if type(capacity) is not int or capacity <= 0:
+            raise ValueError('row cache capacity must be a positive integer')
+        self._capacity = capacity
+        self._entries = OrderedDict()
+
+    def get(self, row, cutoff):
+        if row is None:
+            return (), ()
+        key = (id(row), cutoff)
+        entry = self._entries.get(key)
+        if entry is not None:
+            if entry[0] is row:
+                self._entries.move_to_end(key)
+                return entry[1]
+            del self._entries[key]
+        points = tuple(point for point in row.points if point.measured_at <= cutoff)
+        prepared = (points, tuple(point.measured_at for point in points))
+        self._entries[key] = (row, prepared)
+        self._entries.move_to_end(key)
+        while len(self._entries) > self._capacity:
+            self._entries.popitem(last=False)
+        return prepared
 
 
 def _value(point):
@@ -23,11 +52,13 @@ def _points(history, row):
                   key=lambda point: point.measured_at) if row is not None else []
 
 
-def _reset_at_end(history: HeatingHistory):
+def _reset_at_end(history: HeatingHistory, *, row_cache=None):
     active = None
     changed_at = None
     previous = None
-    for point in _points(history, history.reset):
+    points = (_points(history, history.reset) if row_cache is None else
+              row_cache.get(history.reset, min(history.end, history.received_at))[0])
+    for point in points:
         value = _value(point)
         state = bool(value) if type(value) in (bool, int) and value in (0, 1) else None
         if previous is not None and state is not None and state != previous:
@@ -57,9 +88,15 @@ def _temperature(points, times, time):
 
 
 def history_samples(history: HeatingHistory):
-    series = {name: _points(history, getattr(history, name)) for name in (
-        'air', 'coolant', 'air_target', 'coolant_target', 'worktime', 'target_sensor_id', 'reset')}
-    indexes = {name: [point.measured_at for point in points] for name, points in series.items()}
+    yield from _history_samples(history, _RowCache())
+
+
+def _history_samples(history: HeatingHistory, row_cache):
+    cutoff = min(history.end, history.received_at)
+    series = {}
+    indexes = {}
+    for name in ('air', 'coolant', 'air_target', 'coolant_target', 'worktime', 'target_sensor_id', 'reset'):
+        series[name], indexes[name] = row_cache.get(getattr(history, name), cutoff)
     transitions = []
     previous = None
     for point in series['reset']:
@@ -92,12 +129,14 @@ def history_samples(history: HeatingHistory):
 
 def assess_history(history: HeatingHistory, *, config=None):
     config = config or SMART_2_HEATING_CONFIG
+    row_cache = _RowCache()
+    cutoff = min(history.end, history.received_at)
     detector = NoHeatDetector(config, require_known_reset=True)
     events = []
     valid = 0
     usable_samples = 0
     last_sample = None
-    for sample in history_samples(history):
+    for sample in _history_samples(history, row_cache):
         event = detector.update(sample)
         if detector.samples and detector.samples[-1] is sample:
             usable_samples += 1
@@ -108,11 +147,11 @@ def assess_history(history: HeatingHistory, *, config=None):
             valid += 1
     last_measurements = []
     for row in (history.air, history.coolant):
-        times = [point.measured_at for point in _points(history, row) if _value(point) is not None]
+        times = [point.measured_at for point in row_cache.get(row, cutoff)[0] if _value(point) is not None]
         last_measurements.append(max(times) if times else None)
     latest = min(last_measurements) if all(last_measurements) else None
-    reset_active, reset_changed_at = _reset_at_end(history)
-    reset_points = _points(history, history.reset)
+    reset_active, reset_changed_at = _reset_at_end(history, row_cache=row_cache)
+    reset_points = row_cache.get(history.reset, cutoff)[0]
     latest_reset = reset_points[-1] if reset_points else None
     in_grace = (reset_changed_at is not None
                 and (history.end - reset_changed_at).total_seconds() < config.reset_grace_minutes * 60)
