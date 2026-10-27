@@ -72,6 +72,11 @@ ID, имена и общие/отдельные ресурсы собраны в
 - [История сброса за два часа и приоритет меток worktime](plans/completed/20261022174030-reset-history-worktime-implementation-plan.md)
   — реализация и итоговое ревью завершены 23.10.2026;
   [постановка и уточнения](plans/completed/20261022174030-reset-history-worktime-request.md).
+- [RowCache: точное переиспользование рядов](plans/completed/20261026173000-rowcache-implementation-plan.md)
+  — локальная реализация и приёмка A–D завершены 26.10.2026;
+  [холодное ревью плана](reviews/2026-10-26-rowcache-plan-cold-review.md),
+  [эквивалентность и выбор capacity](reports/2026-10-26-rowcache-acceptance.md).
+  PR и выпуск — отдельный этап.
 
 Исходные постановки, заменённый облачный эскиз и команды bootstrap находятся
 в [историческом индексе](history/README.md); действующая процедура — облачный how-to выше.
