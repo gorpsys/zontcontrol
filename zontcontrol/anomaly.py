@@ -139,7 +139,8 @@ class NoHeatDetector:
             self.baseline = sample.coolant
         if self.last_pulse is None:
             self.last_pulse = sample.time
-        absence = (sample.time - max(self.last_pulse, self.evidence_since)).total_seconds() / 60
+        # _clear resets evidence; new evidence cannot precede last_pulse.
+        absence = (sample.time - self.evidence_since).total_seconds() / 60
         if absence < self.config.warning_minutes:
             return None
         # A warm, steady supply can be normal continuous heating, not a missing response.
