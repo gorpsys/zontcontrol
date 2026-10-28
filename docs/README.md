@@ -77,6 +77,10 @@ ID, имена и общие/отдельные ресурсы собраны в
   [холодное ревью плана](reviews/2026-10-26-rowcache-plan-cold-review.md),
   [эквивалентность и выбор capacity](reports/2026-10-26-rowcache-acceptance.md).
   PR и выпуск — отдельный этап.
+- [Упрощение absence с сохранением last_pulse](plans/completed/20261028012917-absence-simplification-implementation-plan.md)
+  — локальная реализация и офлайн-приёмка A–C завершены 28.10.2026;
+  [эквивалентность и CPU](reports/2026-10-28-absence-simplification-acceptance.md).
+  Подготовлены metadata 0.7.9; публикация и деплой здесь не подтверждаются.
 
 Исходные постановки, заменённый облачный эскиз и команды bootstrap находятся
 в [историческом индексе](history/README.md); действующая процедура — облачный how-to выше.
